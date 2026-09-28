@@ -107,9 +107,12 @@ measured number, plus our own mod for whatever is still slow.
 - Tools: Fabric GameTest for scripted scenarios and correctness tests; spark and
   Java Flight Recorder (JFR) for automated profiles; JMH for micro-benchmarks of hot
   methods.
-- **JProfiler** is our tool for digging in by hand, on your computer. JProfiler can
-  open the JFR recordings made in the cloud, so both sides share the same data.
-  See [`JPROFILER.md`](JPROFILER.md) for the learning guide.
+- **Hands-on profiling on your computer** uses free tools: JDK Mission Control
+  (opens JFR recordings, including the ones made in the cloud), spark (in-game),
+  and VisualVM (memory leaks). See [`PROFILING.md`](PROFILING.md) for the learning
+  guide.
+- **Before/after reports:** a script compares the JFR recordings of two runs and
+  writes a table of which methods got faster or slower.
 - **Parity tests:** run each scenario on the unmodded game and with our mod, then
   compare the results: farm output after N ticks, redstone state at tick N, and a
   hash of block states in a region. Exact comparison where the game is
@@ -220,7 +223,7 @@ candidate.
 
 - **Scope:** our own mod plus a recommended setup of existing mods. We replace an
   existing mod's work only when ours measurably beats it (ground rule 3).
-- **Profiler for hands-on work:** JProfiler.
+- **Profiling tools:** free only. JFR + JDK Mission Control, spark, and VisualVM.
 
 **Still open.** A default is marked for each. Say "go with the defaults" and I'll
 use them.
@@ -228,9 +231,7 @@ use them.
 1. **Minecraft version.** Default: **latest (26.3 now, 26.4 once released).**
    The alternative is an older modpack favorite like 1.20.1 or 1.21.1. More people
    play those, but they use OpenGL and obfuscated code, and they no longer get
-   updates. **If you want to use this mod in the modpacks you play with friends,
-   it has to match their Minecraft version and mod loader.** That could change
-   this default.
+   updates.
 2. **Mod loader.** Default: **Fabric.** Most optimization mods live there and it's
    lightweight. NeoForge support could come later.
 3. **Focus first.** Default: **server and game logic**, for the renderer reasons
@@ -240,9 +241,8 @@ use them.
    options as opt-in.**
 5. **Name.** The mod needs a name and mod ID. Any ideas? If not, I'll propose a few.
 6. **Public or private.** Publish releases on Modrinth/GitHub, or keep them for
-   yourself? Going public as open source also makes us eligible to apply for a free
-   JProfiler open-source license (see [`JPROFILER.md`](JPROFILER.md)).
-7. **Your hardware.** For client benchmarks and JProfiler setup: CPU, GPU, RAM, and
+   yourself?
+7. **Your hardware.** For client benchmarks and profiling setup: CPU, GPU, RAM, and
    operating system.
 
 ## 8. Limits and risks

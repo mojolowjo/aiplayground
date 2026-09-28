@@ -13,7 +13,7 @@ changes it.
 |---|---|
 | [`docs/PLAN.md`](docs/PLAN.md) | Strategy, the state of Minecraft modding as of Sept 2026, roadmap, decisions for you to make |
 | [`docs/CATALOG.md`](docs/CATALOG.md) | Every optimization idea, grouped by part of the game, with who already does it and what we'd do |
-| [`docs/JPROFILER.md`](docs/JPROFILER.md) | Hands-on guide to profiling Minecraft with JProfiler, with exercises |
+| [`docs/PROFILING.md`](docs/PROFILING.md) | Hands-on guide to profiling Minecraft with free tools (JFR, JDK Mission Control, spark, VisualVM), with exercises |
 
 ## Summary
 

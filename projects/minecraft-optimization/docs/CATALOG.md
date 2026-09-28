@@ -197,10 +197,10 @@ Phase 3 re-ranks this list using real profiling numbers. Until then, the
 
 | Tool | Used for |
 |---|---|
-| JProfiler | Hands-on profiling on your computer: CPU, memory, threads, and snapshot comparison. See [`JPROFILER.md`](JPROFILER.md). |
 | spark | In-game profiler: finds which code is using the time |
 | Java Flight Recorder (JFR) | Low-overhead profiling of CPU time, allocations, and GC pauses. Minecraft's `/jfr` command adds game-specific events. |
-| JDK Mission Control | Free viewer for JFR files |
+| JDK Mission Control | Free desktop app for reading JFR files: hot methods, flame graphs, allocations, GC pauses, locks. See [`PROFILING.md`](PROFILING.md). |
+| VisualVM | Free desktop app for live graphs and heap dumps (memory leaks) |
 | async-profiler | Detailed CPU flame graphs |
 | JMH | Micro-benchmarks of single hot methods |
 | Fabric GameTest | Scripted in-world scenarios and correctness tests |
