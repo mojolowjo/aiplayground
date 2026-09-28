@@ -13,6 +13,7 @@ changes it.
 |---|---|
 | [`docs/PLAN.md`](docs/PLAN.md) | Strategy, the state of Minecraft modding as of Sept 2026, roadmap, decisions for you to make |
 | [`docs/CATALOG.md`](docs/CATALOG.md) | Every optimization idea, grouped by part of the game, with who already does it and what we'd do |
+| [`docs/JPROFILER.md`](docs/JPROFILER.md) | Hands-on guide to profiling Minecraft with JProfiler, with exercises |
 
 ## Summary
 
@@ -20,7 +21,8 @@ changes it.
    Nothing ships without a before/after number.
 2. **Stand on existing work.** Sodium, Lithium, and others already cover the big,
    well-known wins. We use them, test them together, and pick the best setup by
-   measurement.
+   measurement. Where we think we can beat one of them, we build our version and
+   race it head-to-head. Ours ships only if it wins.
 3. **Write our own mod for the gaps.** After profiling the fully optimized setup,
    whatever is still slow becomes our target list.
 4. **Server side first, client rendering later.** Minecraft's renderer is being

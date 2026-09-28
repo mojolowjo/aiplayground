@@ -17,8 +17,12 @@ Make Minecraft: Java Edition as fast as it can be across the whole game:
 2. **Same gameplay by default.** Farms, redstone timing, and mob behavior must
    match the unmodded game exactly. Anything that changes behavior, such as slowing
    the AI of distant mobs, is off by default and clearly labeled.
-3. **Don't rebuild what exists.** Sodium, Lithium, and similar mods are mature and
-   maintained by experts. We run alongside them and target what they don't cover.
+3. **Only rebuild what we can beat.** Sodium, Lithium, and similar mods are mature
+   and maintained by experts, so by default we run alongside them and target what
+   they don't cover. If profiling shows we could do a specific job better than an
+   existing mod, we build our version and race it head-to-head against theirs in
+   the same benchmark. Ours ships only if it wins, and it stays a toggle so players
+   can switch back.
 4. **One switch per optimization.** Each optimization can be turned off on its
    own, so a bug can be tracked down by turning things off one at a time.
 5. **Fail safe.** If a Minecraft update or another mod conflicts with one of our
@@ -101,7 +105,11 @@ measured number, plus our own mod for whatever is still slow.
 - Metrics: MSPT (mean, 95th and 99th percentile, max), heap use, GC pause times,
   chunks per second, save duration, and startup time to "Done".
 - Tools: Fabric GameTest for scripted scenarios and correctness tests; spark and
-  Java Flight Recorder (JFR) for profiles; JMH for micro-benchmarks of hot methods.
+  Java Flight Recorder (JFR) for automated profiles; JMH for micro-benchmarks of hot
+  methods.
+- **JProfiler** is our tool for digging in by hand, on your computer. JProfiler can
+  open the JFR recordings made in the cloud, so both sides share the same data.
+  See [`JPROFILER.md`](JPROFILER.md) for the learning guide.
 - **Parity tests:** run each scenario on the unmodded game and with our mod, then
   compare the results: farm output after N ticks, redstone state at tick N, and a
   hash of block states in a region. Exact comparison where the game is
@@ -187,6 +195,13 @@ existing coverage looks thin:
 Every idea, including the ones already covered by other mods, is listed in
 [`CATALOG.md`](CATALOG.md).
 
+**Head-to-head challengers.** Separately from the gaps, Phase 3 profiling may
+show that an existing mod leaves speed on the table for a job it already does.
+When that happens, the item goes on a challenger list. We build our version,
+race both in the same scenario, and keep the winner. For example, if Lithium's
+hopper code still shows up as a top cost in the hopper scenario, that's a
+candidate.
+
 ## 6. Roadmap
 
 | Phase | What happens | Output |
@@ -199,28 +214,36 @@ Every idea, including the ones already covered by other mods, is listed in
 | **5. Client** | Client benchmark on your computer. Client-side targets once 26.4 (Vulkan default) is a stable release. | Client optimizations |
 | **6. Ongoing** | Port to each new Minecraft version. Optional NeoForge version. Publish on Modrinth/GitHub. | Releases |
 
-## 7. Decisions for you
+## 7. Decisions
 
-A default is marked for each. Say "go with the defaults" and I'll use them.
+**Decided:**
+
+- **Scope:** our own mod plus a recommended setup of existing mods. We replace an
+  existing mod's work only when ours measurably beats it (ground rule 3).
+- **Profiler for hands-on work:** JProfiler.
+
+**Still open.** A default is marked for each. Say "go with the defaults" and I'll
+use them.
 
 1. **Minecraft version.** Default: **latest (26.3 now, 26.4 once released).**
    The alternative is an older modpack favorite like 1.20.1 or 1.21.1. More people
    play those, but they use OpenGL and obfuscated code, and they no longer get
-   updates.
+   updates. **If you want to use this mod in the modpacks you play with friends,
+   it has to match their Minecraft version and mod loader.** That could change
+   this default.
 2. **Mod loader.** Default: **Fabric.** Most optimization mods live there and it's
    lightweight. NeoForge support could come later.
 3. **Focus first.** Default: **server and game logic**, for the renderer reasons
    above. The alternative is client FPS first, accepting some rework after the
    Vulkan switch.
-4. **Scope.** Default: **our mod plus a recommended setup of existing mods.** The
-   alternative is a stand-alone all-in-one mod. That would mean redoing years of
-   Sodium- and Lithium-level work, which isn't a good use of effort.
-5. **Vanilla behavior.** Default: **strict by default, with gameplay-changing
+4. **Vanilla behavior.** Default: **strict by default, with gameplay-changing
    options as opt-in.**
-6. **Name.** The mod needs a name and mod ID. Any ideas? If not, I'll propose a few.
-7. **Public or private.** Publish releases on Modrinth/GitHub, or keep them for
-   yourself?
-8. **Your hardware.** For client benchmarks: CPU, GPU, RAM, and operating system.
+5. **Name.** The mod needs a name and mod ID. Any ideas? If not, I'll propose a few.
+6. **Public or private.** Publish releases on Modrinth/GitHub, or keep them for
+   yourself? Going public as open source also makes us eligible to apply for a free
+   JProfiler open-source license (see [`JPROFILER.md`](JPROFILER.md)).
+7. **Your hardware.** For client benchmarks and JProfiler setup: CPU, GPU, RAM, and
+   operating system.
 
 ## 8. Limits and risks
 
