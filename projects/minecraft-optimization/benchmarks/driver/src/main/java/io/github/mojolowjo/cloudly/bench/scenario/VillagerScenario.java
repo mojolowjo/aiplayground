@@ -28,6 +28,16 @@ public final class VillagerScenario implements Scenario {
 		return COLUMNS * ROWS + " villagers in one-block trading cells, each beside a workstation.";
 	}
 
+	/**
+	 * New villagers spend their first minutes searching for and walking to workstations,
+	 * which costs about twice the steady-state tick time. Measure the trading hall after
+	 * they've settled into their jobs.
+	 */
+	@Override
+	public int minimumWarmupTicks() {
+		return 3600;
+	}
+
 	@Override
 	public void build(WorldBuilder world, ServerLevel level) {
 		Scenario.buildPlatform(world);

@@ -19,6 +19,14 @@ public interface Scenario {
 	/** One sentence describing the workload, copied into the results. */
 	String description();
 
+	/**
+	 * The shortest warm-up this scenario needs before its load is steady. The driver uses
+	 * the larger of this and the requested warm-up.
+	 */
+	default int minimumWarmupTicks() {
+		return 0;
+	}
+
 	/** Block area that must be loaded before {@link #build} runs, and stays loaded. */
 	default Area area() {
 		return PLATFORM;

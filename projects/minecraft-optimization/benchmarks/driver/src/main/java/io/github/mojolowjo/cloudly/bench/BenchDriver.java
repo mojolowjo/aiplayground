@@ -104,7 +104,7 @@ public final class BenchDriver implements ModInitializer {
 				}
 			}
 			case WARM_UP -> {
-				if (phaseTicks >= settings.warmupTicks()) {
+				if (phaseTicks >= warmupTicks()) {
 					startMeasuring(level);
 				}
 			}
@@ -230,7 +230,7 @@ public final class BenchDriver implements ModInitializer {
 		out.put("minecraft", SharedConstants.getCurrentVersion().name());
 		out.put("mods", modList());
 		out.put("jvm", jvmInfo());
-		out.put("warmupTicks", settings.warmupTicks());
+		out.put("warmupTicks", warmupTicks());
 		out.putAll(result);
 		try {
 			Path output = settings.output().toAbsolutePath();
@@ -248,6 +248,10 @@ public final class BenchDriver implements ModInitializer {
 	private Path jfrPath() {
 		String name = settings.output().getFileName().toString().replaceFirst("\\.json$", "") + ".jfr";
 		return settings.output().toAbsolutePath().resolveSibling(name);
+	}
+
+	private int warmupTicks() {
+		return Math.max(settings.warmupTicks(), scenario.minimumWarmupTicks());
 	}
 
 	private void nextPhase(Phase next) {
