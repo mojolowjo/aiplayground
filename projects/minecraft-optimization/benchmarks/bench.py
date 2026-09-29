@@ -45,20 +45,37 @@ SERVER_PROPERTIES = {
 
 # ---------------------------------------------------------------- downloads
 
+def with_retries(action, what):
+    """Network calls fail now and then; one hiccup shouldn't end a multi-hour session."""
+    for attempt in range(1, 5):
+        try:
+            return action()
+        except (OSError, ValueError) as error:
+            if attempt == 4:
+                sys.exit(f"Giving up on {what}: {error}")
+            print(f"    network error on {what} ({error}), retrying")
+            time.sleep(2 ** attempt)
+
+
 def fetch_json(url):
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return json.load(response)
+    def fetch():
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.load(response)
+    return with_retries(fetch, url)
 
 
 def download(url, dest, sha512=None):
     if dest.exists() and (sha512 is None or file_sha512(dest) == sha512):
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     partial = dest.with_suffix(dest.suffix + ".part")
-    with urllib.request.urlopen(request, timeout=300) as response, open(partial, "wb") as out:
-        shutil.copyfileobj(response, out)
+
+    def fetch():
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(request, timeout=300) as response, open(partial, "wb") as out:
+            shutil.copyfileobj(response, out)
+    with_retries(fetch, url)
     if sha512 is not None and file_sha512(partial) != sha512:
         partial.unlink()
         sys.exit(f"Checksum mismatch downloading {url}")
@@ -93,12 +110,24 @@ def fabric_server_launcher(minecraft, loader):
 
 
 def modrinth_mod(slug, version):
+    """Downloads a mod once. Later runs use the cached file without asking Modrinth again."""
+    index_path = CACHE_DIR / "mods" / "index.json"
+    index = json.loads(index_path.read_text()) if index_path.exists() else {}
+    key = f"{slug}@{version}"
+    cached = index.get(key)
+    if cached and (CACHE_DIR / "mods" / cached["filename"]).exists():
+        path = CACHE_DIR / "mods" / cached["filename"]
+        if file_sha512(path) == cached["sha512"]:
+            return path
     versions = fetch_json(f"https://api.modrinth.com/v2/project/{slug}/version")
     match = next((v for v in versions if v["version_number"] == version), None)
     if match is None:
         sys.exit(f"Modrinth has no version '{version}' of '{slug}'")
     file = next((f for f in match["files"] if f["primary"]), match["files"][0])
-    return download(file["url"], CACHE_DIR / "mods" / file["filename"], file["hashes"]["sha512"])
+    path = download(file["url"], CACHE_DIR / "mods" / file["filename"], file["hashes"]["sha512"])
+    index[key] = {"filename": file["filename"], "sha512": file["hashes"]["sha512"]}
+    index_path.write_text(json.dumps(index, indent=2))
+    return path
 
 
 def built_jar(subdir, prefix):
@@ -230,7 +259,7 @@ def cmd_run(args):
     # Rotate through stacks inside each repeat, so slow drift on the machine (heat, other
     # load) spreads evenly instead of favoring whichever stack ran first.
     failures = 0
-    for run_index in range(1, args.repeats + 1):
+    for run_index in range(args.start_run, args.repeats + 1):
         for scenario in scenarios:
             for stack_name, stack in stacks.items():
                 print(f"[run {run_index}/{args.repeats}] {scenario} on {stack_name}")
@@ -389,6 +418,8 @@ def main():
     run.add_argument("--stacks", default="baseline", help="comma-separated stack names from benchmarks/stacks")
     run.add_argument("--scenarios", default=",".join(SCENARIOS), help="comma-separated scenario names")
     run.add_argument("--repeats", type=int, default=3)
+    run.add_argument("--start-run", type=int, default=1,
+                     help="first repeat number to run, for filling in missing runs of a session")
     run.add_argument("--warmup", type=int, default=1200, help="warm-up ticks before measuring (20 per second)")
     run.add_argument("--measure", type=int, default=1200, help="measured ticks per run")
     run.add_argument("--worldgen-cap", type=int, default=12000, help="tick limit for the worldgen scenario")
