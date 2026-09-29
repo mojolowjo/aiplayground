@@ -18,6 +18,7 @@ import io.github.mojolowjo.cloudly.bench.scenario.CrammingScenario;
 import io.github.mojolowjo.cloudly.bench.scenario.HopperScenario;
 import io.github.mojolowjo.cloudly.bench.scenario.IdleScenario;
 import io.github.mojolowjo.cloudly.bench.scenario.ItemScenario;
+import io.github.mojolowjo.cloudly.bench.scenario.PrepareScenario;
 import io.github.mojolowjo.cloudly.bench.scenario.VillagerScenario;
 import io.github.mojolowjo.cloudly.bench.scenario.WorldgenScenario;
 import jdk.jfr.Configuration;
@@ -50,6 +51,7 @@ public final class BenchDriver implements ModInitializer {
 		SCENARIOS.put("items", ItemScenario::new);
 		SCENARIOS.put("hoppers", HopperScenario::new);
 		SCENARIOS.put("worldgen", WorldgenScenario::new);
+		SCENARIOS.put("prepare", PrepareScenario::new);
 	}
 
 	private enum Phase { PREPARE, LOAD_CHUNKS, WARM_UP, MEASURE, DONE }

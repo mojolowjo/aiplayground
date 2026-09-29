@@ -127,13 +127,39 @@ def load_stack(name):
     return json.loads(path.read_text())
 
 
-def prepare_server(stack_name, stack, launcher):
+def template_world(launcher, args):
+    """The saved world every run starts from, created once with no optimization mods.
+
+    A brand-new world keeps generating and saving the area around spawn for minutes, which
+    showed up as stretches of slow ticks during measurements. Starting from a settled copy
+    removes that.
+    """
+    props = gradle_properties()
+    template = WORK_DIR / "templates" / f"{props['minecraft_version']}-seed-{SERVER_PROPERTIES['level-seed']}"
+    if (template / "level.dat").exists():
+        return template
+    print("Creating the template world (once)...")
+    stack = load_stack("baseline")
+    server_dir = prepare_server("template", stack, launcher, None)
+    out_json = WORK_DIR / "templates" / "prepare.json"
+    prepare_args = argparse.Namespace(**{**vars(args), "warmup": 2400, "measure": 20, "no_jfr": True})
+    result = run_once(server_dir, "template", stack, "prepare", 1, out_json, prepare_args)
+    if result is None or result.get("status") != "ok":
+        sys.exit("Could not create the template world.")
+    shutil.rmtree(template, ignore_errors=True)
+    shutil.copytree(server_dir / "world", template)
+    return template
+
+
+def prepare_server(stack_name, stack, launcher, template):
     """A server folder per stack. Libraries persist between runs; the world and mods don't."""
     server_dir = WORK_DIR / "servers" / stack_name
     server_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(launcher, server_dir / "fabric-server-launch.jar")
     for folder in ("mods", "world", "config", "logs"):
         shutil.rmtree(server_dir / folder, ignore_errors=True)
+    if template is not None:
+        shutil.copytree(template, server_dir / "world")
     mods_dir = server_dir / "mods"
     mods_dir.mkdir()
     jars = [modrinth_mod(m["modrinth"], m["version"]) for m in stack["mods"]]
@@ -165,6 +191,8 @@ def run_once(server_dir, stack_name, stack, scenario, run_index, out_json, args)
     command += ["-jar", "fabric-server-launch.jar", "nogui"]
 
     log_path = WORK_DIR / "logs" / f"{out_json.parent.parent.name}-{stack_name}-{scenario}-{run_index}.log"
+    if scenario == "prepare":
+        log_path = WORK_DIR / "logs" / "prepare-template.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
     with open(log_path, "w") as log:
@@ -195,6 +223,7 @@ def cmd_run(args):
     label = args.label or datetime.date.today().isoformat() + "-" + "-".join(stacks)
     out_dir = RESULTS_DIR / label
     launcher = fabric_server_launcher(props["minecraft_version"], props["loader_version"])
+    template = template_world(launcher, args)
     print(f"Minecraft {props['minecraft_version']}, Fabric Loader {props['loader_version']}")
     print(f"Results: {out_dir}")
 
@@ -205,7 +234,7 @@ def cmd_run(args):
         for scenario in scenarios:
             for stack_name, stack in stacks.items():
                 print(f"[run {run_index}/{args.repeats}] {scenario} on {stack_name}")
-                server_dir = prepare_server(stack_name, stack, launcher)
+                server_dir = prepare_server(stack_name, stack, launcher, template)
                 out_json = out_dir / stack_name / f"{scenario}-run{run_index}.json"
                 out_json.parent.mkdir(parents=True, exist_ok=True)
                 out_json.unlink(missing_ok=True)
@@ -360,7 +389,7 @@ def main():
     run.add_argument("--stacks", default="baseline", help="comma-separated stack names from benchmarks/stacks")
     run.add_argument("--scenarios", default=",".join(SCENARIOS), help="comma-separated scenario names")
     run.add_argument("--repeats", type=int, default=3)
-    run.add_argument("--warmup", type=int, default=600, help="warm-up ticks before measuring (20 per second)")
+    run.add_argument("--warmup", type=int, default=1200, help="warm-up ticks before measuring (20 per second)")
     run.add_argument("--measure", type=int, default=1200, help="measured ticks per run")
     run.add_argument("--worldgen-cap", type=int, default=12000, help="tick limit for the worldgen scenario")
     run.add_argument("--heap", default="4G", help="server heap size, e.g. 4G")
