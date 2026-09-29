@@ -1,0 +1,27 @@
+{
+  "description": "Lithium, FerriteCore, C2ME (multithreaded chunks) and ScalableLux (lighting). C2ME and ScalableLux are alpha builds.",
+  "mods": [
+    {
+      "modrinth": "fabric-api",
+      "version": "0.161.0+26.3"
+    },
+    {
+      "modrinth": "lithium",
+      "version": "mc26.3-0.26.2-fabric"
+    },
+    {
+      "modrinth": "ferrite-core",
+      "version": "9.0.0-fabric"
+    },
+    {
+      "modrinth": "c2me-fabric",
+      "version": "0.4.2-alpha.0.88+26.3"
+    },
+    {
+      "modrinth": "scalablelux",
+      "version": "0.3.0-alpha.0.6+26.3"
+    }
+  ],
+  "cloudly": false,
+  "jvmArgs": []
+}

@@ -10,12 +10,14 @@ import net.minecraft.world.entity.EntityTypes;
 
 /**
  * An overcrowded animal pen: every cow pushes against its neighbors every tick. The driver
- * turns off cramming damage so the crowd stays the same size for the whole run.
+ * turns off cramming damage so the crowd stays the same size for the whole run. The pen is
+ * small enough that the crowd fills it evenly; in a roomier pen the cows bunched up
+ * differently every run, which swung the results more than any mod did.
  */
 public final class CrammingScenario implements Scenario {
 	private static final int COWS = 200;
 	private static final int PEN_MIN = 10;
-	private static final int PEN_SIZE = 8;
+	private static final int PEN_SIZE = 5;
 	private static final int Y = FLOOR_Y + 1;
 
 	@Override
@@ -25,7 +27,7 @@ public final class CrammingScenario implements Scenario {
 
 	@Override
 	public String description() {
-		return COWS + " cows packed into an " + PEN_SIZE + "x" + PEN_SIZE + " pen.";
+		return COWS + " cows packed into a " + PEN_SIZE + "x" + PEN_SIZE + " pen.";
 	}
 
 	@Override

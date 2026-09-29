@@ -23,6 +23,7 @@ import io.github.mojolowjo.cloudly.bench.scenario.WorldgenScenario;
 import jdk.jfr.Configuration;
 import jdk.jfr.Recording;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.ModContainer;
@@ -81,6 +82,8 @@ public final class BenchDriver implements ModInitializer {
 		tickNanos = new long[settings.measureTicks()];
 		LOGGER.info("Benchmark '{}' armed: {} warm-up ticks, up to {} measured ticks", scenario.name(),
 				settings.warmupTicks(), settings.measureTicks());
+		ServerLifecycleEvents.SERVER_STARTED.register(server -> result.put("startupMillis",
+				System.currentTimeMillis() - ManagementFactory.getRuntimeMXBean().getStartTime()));
 		ServerTickEvents.START_SERVER_TICK.register(server -> tickStartNanos = System.nanoTime());
 		ServerTickEvents.END_SERVER_TICK.register(this::endTick);
 	}
@@ -198,6 +201,11 @@ public final class BenchDriver implements ModInitializer {
 		Runtime runtime = Runtime.getRuntime();
 		result.put("heapUsedMbAtEnd", (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024));
 		result.put("scenarioResults", scenario.results(level));
+		// Memory still in use after a full collection: what the world actually needs, without
+		// the garbage that happens to be waiting. Measured last so the pause affects nothing.
+		System.gc();
+		long heapAfterGc = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
+		result.put("heapAfterGcMb", heapAfterGc / (1024 * 1024));
 		result.put("entitiesAtEnd", LevelQueries.entityCensus(level));
 		result.put("tickMillis", TickStats.toMillis(tickNanos, measured));
 		write(server, "ok");

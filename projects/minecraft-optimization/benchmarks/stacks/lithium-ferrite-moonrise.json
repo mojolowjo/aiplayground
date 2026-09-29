@@ -1,0 +1,23 @@
+{
+  "description": "Lithium, FerriteCore and Moonrise (Paper's chunk system). Moonrise can't be combined with C2ME.",
+  "mods": [
+    {
+      "modrinth": "fabric-api",
+      "version": "0.161.0+26.3"
+    },
+    {
+      "modrinth": "lithium",
+      "version": "mc26.3-0.26.2-fabric"
+    },
+    {
+      "modrinth": "ferrite-core",
+      "version": "9.0.0-fabric"
+    },
+    {
+      "modrinth": "moonrise-opt",
+      "version": "1.2.0+61c1328"
+    }
+  ],
+  "cloudly": false,
+  "jvmArgs": []
+}

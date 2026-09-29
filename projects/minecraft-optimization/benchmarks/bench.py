@@ -264,6 +264,18 @@ def write_report(out_dir, baseline, include_hot_methods, jfr_tool=None):
     lines.append("  Numbers are the average over runs, with the lowest and highest run in brackets.")
     lines.append("")
 
+    startup = {}
+    for (stack, _), runs in results.items():
+        startup.setdefault(stack, []).extend(r["startupMillis"] / 1000 for r in runs if "startupMillis" in r)
+    if any(startup.values()):
+        lines += ["## Startup", "", "Seconds from launching Java to the server being ready, including creating a fresh",
+                  "world. Averaged over every run of every scenario.", "",
+                  "| Stack | Runs | Launch to ready (s) |", "|---|---|---|"]
+        for stack in stacks:
+            if startup.get(stack):
+                lines.append(f"| `{stack}` | {len(startup[stack])} | {spread(startup[stack], 1)} |")
+        lines.append("")
+
     for scenario in scenarios:
         description = next(r for (st, sc), rs in results.items() if sc == scenario for r in rs)["description"]
         lines += [f"## {scenario}", "", description, ""]
@@ -293,7 +305,10 @@ def write_report(out_dir, baseline, include_hot_methods, jfr_tool=None):
         extras = {}
         for stack in stacks:
             for run in results.get((stack, scenario), []):
-                for key, value in run.get("scenarioResults", {}).items():
+                values = dict(run.get("scenarioResults", {}))
+                if "heapAfterGcMb" in run:
+                    values["heap after GC (MB)"] = run["heapAfterGcMb"]
+                for key, value in values.items():
                     extras.setdefault(key, {}).setdefault(stack, []).append(value)
         if extras:
             lines.append("| Stack | " + " | ".join(extras) + " |")
