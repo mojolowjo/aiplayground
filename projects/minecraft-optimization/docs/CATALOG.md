@@ -6,8 +6,8 @@ Every optimization idea we know of, grouped by part of the game. Each has an ID
 Phase 3 re-ranks this list using real profiling numbers. Until then, the
 **Impact** column is an educated guess.
 
-Measured so far: [first benchmark findings](../benchmarks/results/2026-09-29-baseline-vs-lithium/FINDINGS.md)
-(Sept 29, 2026). Entries backed by a measurement say so in the **Covered by** column.
+Measured so far (Sept 29, 2026): [baseline vs. Lithium](../benchmarks/results/2026-09-29-baseline-vs-lithium/FINDINGS.md)
+and [mods on top of Lithium](../benchmarks/results/2026-09-29-mod-stack/FINDINGS.md). Entries backed by a measurement say so in the **Covered by** column.
 
 ## How to read the tables
 
@@ -44,7 +44,7 @@ Measured so far: [first benchmark findings](../benchmarks/results/2026-09-29-bas
 
 | ID | Idea | Covered by | Gameplay | Impact | Verdict |
 |---|---|---|---|---|---|
-| B1 | Build item and block models only when first needed, not all at startup | ModernFix | Same | High (startup, RAM) | Use |
+| B1 | Build item and block models only when first needed, not all at startup | ModernFix, but it has no 26.x build | Same | High (startup, RAM) | **Gap** on 26.x (client side) |
 | B2 | Parallel texture-atlas stitching and resource parsing | Partly vanilla and ModernFix (verify) | Same | Medium | Gap? |
 | B3 | Keep our own mod cheap at startup: few patches, lazy setup | Us | Same | Low | Always |
 | B4 | Save compiled shaders and pipelines to disk between launches | Check vanilla 26.4 | Same | Medium (first-load stutter) | Wait |
@@ -60,7 +60,7 @@ Measured so far: [first benchmark findings](../benchmarks/results/2026-09-29-bas
 | C2 | Faster "which entities are in this area" lookups | Lithium | Same | Medium | Use |
 | C3 | Skip idle goals in older-style mob AI | Lithium | Same | Medium | Use |
 | C4 | Villager, piglin, allay, and other "brain" AI: reuse sensor results when nothing relevant changed | Partly Lithium. Measured: 300 villagers still cost 23 ms/tick with Lithium | Same | High | **Gap (confirmed)** |
-| C5 | Spatial index for "nearest entity" and "nearest point of interest" queries | Partial | Same | High | **Gap?** |
+| C5 | Spatial index for "nearest entity" and "nearest point of interest" queries | Partial. Measured: Moonrise's point-of-interest search makes 300 villagers 47% slower | Same | High | **Gap (confirmed)** |
 | C6 | Entity cramming: crowded mobs check every neighbor every tick (quadratic cost) | Unknown | Same | High (farms, pens) | **Gap?** |
 | C7 | Pathfinding: cache block-type lookups during a search | Lithium | Same | Medium | Use |
 | C8 | Pathfinding: remember recently failed searches toward unreachable targets | Nothing known | Same if the cache is exact; otherwise Changes | Medium | Gap? |
@@ -105,7 +105,7 @@ Measured so far: [first benchmark findings](../benchmarks/results/2026-09-29-bas
 
 | ID | Idea | Covered by | Gameplay | Impact | Verdict |
 |---|---|---|---|---|---|
-| F1 | Chunk loading and scheduling system | Moonrise **or** C2ME (they're incompatible) | Same | High | Use; pick one by benchmark |
+| F1 | Chunk loading and scheduling system | Moonrise **or** C2ME (they're incompatible). Measured: C2ME +23% chunks/s but +61% tick time while generating; Moonrise −45% tick time but −33% chunks/s | Same | High | Use; depends on the server (see findings) |
 | F2 | World-generation noise and density-function math | C2ME (compiles it to fast code); vanilla 26.3 improvements. Measured: Lithium alone gives +18% chunks/s | Same | High | Use; compare C2ME next |
 | F3 | Feature placement (trees, ores, plants) | Unknown | Same | Medium | Research |
 | F4 | Structure placement checks and jigsaw assembly (villages, trial chambers, ancient cities) | Partly vanilla 26.3 | Same | Medium | Research |
@@ -132,7 +132,7 @@ Measured so far: [first benchmark findings](../benchmarks/results/2026-09-29-bas
 
 | ID | Idea | Covered by | Gameplay | Impact | Verdict |
 |---|---|---|---|---|---|
-| H1 | Deduplicate block-state and model data | FerriteCore, ModernFix | Same | High | Use |
+| H1 | Deduplicate block-state and model data | FerriteCore (measured: −8 MB on a server), ModernFix (no 26.x build) | Same | High | Use |
 | H2 | Compact object headers | See A2 | Same | Medium–High | Use |
 | H3 | Find and remove the hottest allocation sites (temporary positions, vectors, iterators, lambdas) | Us, using JFR allocation profiling | Same | High (less GC) | **Gap?** |
 | H4 | Fix known memory leaks in each version | ModernFix | Same | Medium | Use |
