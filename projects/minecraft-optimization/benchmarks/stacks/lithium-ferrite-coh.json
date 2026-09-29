@@ -1,0 +1,21 @@
+{
+  "description": "Lithium + FerriteCore with compact object headers (Java 25): smaller objects, same G1 collector.",
+  "mods": [
+    {
+      "modrinth": "fabric-api",
+      "version": "0.161.0+26.3"
+    },
+    {
+      "modrinth": "lithium",
+      "version": "mc26.3-0.26.2-fabric"
+    },
+    {
+      "modrinth": "ferrite-core",
+      "version": "9.0.0-fabric"
+    }
+  ],
+  "cloudly": false,
+  "jvmArgs": [
+    "-XX:+UseCompactObjectHeaders"
+  ]
+}

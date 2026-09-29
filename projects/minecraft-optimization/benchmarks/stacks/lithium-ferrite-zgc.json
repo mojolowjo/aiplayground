@@ -1,0 +1,21 @@
+{
+  "description": "Lithium + FerriteCore with the ZGC garbage collector (very short pauses).",
+  "mods": [
+    {
+      "modrinth": "fabric-api",
+      "version": "0.161.0+26.3"
+    },
+    {
+      "modrinth": "lithium",
+      "version": "mc26.3-0.26.2-fabric"
+    },
+    {
+      "modrinth": "ferrite-core",
+      "version": "9.0.0-fabric"
+    }
+  ],
+  "cloudly": false,
+  "jvmArgs": [
+    "-XX:+UseZGC"
+  ]
+}
