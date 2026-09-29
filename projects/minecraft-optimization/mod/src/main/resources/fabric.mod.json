@@ -1,0 +1,29 @@
+{
+	"schemaVersion": 1,
+	"id": "cloudly",
+	"version": "${version}",
+	"name": "Cloudly",
+	"description": "Measured, vanilla-faithful performance optimizations. Every optimization can be switched off in config/cloudly.properties.",
+	"authors": [
+		"mojolowjo"
+	],
+	"contact": {
+		"sources": "https://github.com/mojolowjo/aiplayground",
+		"issues": "https://github.com/mojolowjo/aiplayground/issues"
+	},
+	"license": "MIT",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"io.github.mojolowjo.cloudly.Cloudly"
+		]
+	},
+	"mixins": [
+		"cloudly.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25"
+	}
+}

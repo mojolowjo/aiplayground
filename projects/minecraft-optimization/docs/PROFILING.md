@@ -46,6 +46,9 @@ The free setup covers everything this project needs, with two differences:
 | spark CPU profiling | ✔ (built-in Java sampler) | ✔ (built-in Java sampler) | ✔ (async-profiler, most accurate) |
 | spark allocation profiling (`--alloc`) | ✘, use JFR instead | ✘, use JFR instead | ✔ |
 
+You're on Bazzite, which is Linux, so every tool and feature in this guide works for
+you. See [Notes for Bazzite](#notes-for-bazzite) for the few things that are different.
+
 ## Setup
 
 1. **Install JDK Mission Control 9.** It's a free download from
@@ -60,6 +63,22 @@ The free setup covers everything this project needs, with two differences:
 5. **Make a test world and keep a clean copy.** Copy the world folder before each
    test so every run starts from the identical state. Otherwise you're comparing
    different worlds, not different mods.
+
+### Notes for Bazzite
+
+- **Installing without root.** Bazzite's system files are read-only, so install these
+  tools in your home folder. Download the Linux x64 `.tar.gz` of JDK Mission Control and
+  of VisualVM, unpack each in your home folder, and start them from there. Java itself:
+  see `benchmarks/README.md`.
+- **Prism Launcher is a Flatpak.** It runs in a sandbox, which changes two things:
+  - JMC's JVM Browser (recording method A) usually can't see a game started from a
+    Flatpak launcher. Use method B or C instead. Both always work.
+  - The game folder is inside the sandbox, at
+    `~/.var/app/org.prismlauncher.PrismLauncher/data/PrismLauncher/instances/<instance>/`,
+    in its `minecraft` (or `.minecraft`) subfolder. Recordings from method B are saved
+    there.
+- **spark** uses async-profiler on Linux, so you get the most accurate CPU profiles and
+  allocation profiling (`--alloc`).
 
 ## Recording with JFR: three ways
 
@@ -253,10 +272,16 @@ Do these in order. Keep your recordings, name them clearly (like
    kept in memory that shouldn't be.
 4. Take a **Heap Dump** and look at which classes have the most instances.
 
-### 6. Open a recording from the cloud (≈15 min)
+### 6. Open a benchmark recording (≈15 min)
 
-Once the benchmark harness exists (Phase 1), its recordings will be saved in
-`benchmarks/`. Open one in JMC and compare it with what you recorded yourself.
+The benchmark harness records a JFR file for every run. The recordings are too large to
+commit, so there are two ways to get one:
+
+- **Run a benchmark yourself** (see `benchmarks/README.md`). The `.jfr` files appear in
+  `benchmarks/results/<folder>/<stack>/` next to the results.
+- **Ask Claude** to send you a recording from the cloud runs.
+
+Open one in JMC, then compare it with what you recorded in your own game.
 
 ## Not fooling yourself
 

@@ -7,7 +7,7 @@ its own folder under `projects/` and does not touch the others.
 
 | Folder | What it is | Status |
 |---|---|---|
-| [`projects/minecraft-optimization`](projects/minecraft-optimization/) | Plan and (later) code for a Minecraft Java Edition performance mod | Planning |
+| [`projects/minecraft-optimization`](projects/minecraft-optimization/) | Cloudly, a performance mod for Minecraft: Java Edition, with its benchmark harness | Phase 1 done |
 
 ## Adding a new project
 
@@ -18,6 +18,11 @@ its own folder under `projects/` and does not touch the others.
 Keep everything for a project inside its folder: code, docs, build files, and
 its own `.gitignore` if it needs one. Nothing at the top level should belong to a
 single project.
+
+The one exception is automation: GitHub only reads workflows from
+`.github/workflows/`. Give each project its own workflow file named after the project,
+and limit it to that project's folder with a `paths:` filter, as
+`minecraft-optimization.yml` does.
 
 ## How GitHub is organized here (short version)
 

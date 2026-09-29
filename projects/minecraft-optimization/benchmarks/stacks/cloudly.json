@@ -1,0 +1,8 @@
+{
+  "description": "Baseline plus Cloudly, built from this repository.",
+  "mods": [
+    {"modrinth": "fabric-api", "version": "0.161.0+26.3"}
+  ],
+  "cloudly": true,
+  "jvmArgs": []
+}

@@ -1,11 +1,12 @@
-# Minecraft Optimization
+# Minecraft Optimization — Cloudly
 
 Goal: make Minecraft: Java Edition run as fast as possible. That means higher and
 steadier FPS, lower server tick time, less RAM, and faster startup and world
 loading. Gameplay stays the same unless the player turns on an option that
 changes it.
 
-**Status:** Planning (Phase 0). No code yet.
+**Status:** Phase 1 done: mod skeleton, benchmark harness, and first baseline results.
+Next: Phase 2, tuning the existing mod stack.
 
 ## Documents
 
@@ -29,13 +30,39 @@ changes it.
    swapped from OpenGL to Vulkan right now (26.4 snapshots). Rendering work done
    today would likely be thrown away. Server-side work isn't affected.
 
-## Planned layout (once code starts)
+## Layout
 
 ```
 projects/minecraft-optimization/
-├── README.md          this file
-├── docs/              plans and design notes
-├── mod/               the Fabric mod (Gradle project)
-├── benchmarks/        scenarios, scripts, and recorded results
-└── setups/            recommended JVM flags, server settings, and mod lists
+├── README.md              this file
+├── LICENSE                MIT
+├── docs/                  plans, catalog, profiling guide
+├── mod/                   Cloudly, the Fabric mod
+├── benchmarks/            benchmark harness and committed results (see its README)
+│   ├── bench.py           runs benchmarks and writes reports
+│   ├── driver/            helper mod that builds scenarios and measures ticks
+│   ├── stacks/            mod sets to compare
+│   └── results/           reports and per-run results
+├── build.gradle, settings.gradle, gradle.properties, gradlew
+└── setups/                (Phase 2) recommended JVM flags, server settings, mod lists
 ```
+
+## Building
+
+Needs Java 25. From this folder:
+
+```
+./gradlew build
+```
+
+The mod jar ends up in `mod/build/libs/cloudly-<version>.jar`. GitHub also builds it
+automatically on every push that touches this folder (the "minecraft-optimization"
+workflow); the jar is attached to each run as an artifact.
+
+## Cloudly settings
+
+Every optimization is a switch in `config/cloudly.properties`, which Cloudly creates on
+first launch with every option listed and commented. Explicit settings always win. When
+another mod that already does the same job is installed (Lithium, for example), the
+matching Cloudly option turns itself off unless you turn it back on. There are no
+optimizations yet: Phase 1 built the switchboard and the benchmarks first.

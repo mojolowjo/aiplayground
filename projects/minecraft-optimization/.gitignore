@@ -1,0 +1,19 @@
+# Gradle
+.gradle/
+build/
+**/build/
+.kotlin/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+out/
+
+# Minecraft run folders (contain Mojang's game files, never commit them)
+run/
+**/run/
+
+# Benchmark servers and raw recordings (large; results summaries are committed)
+benchmarks/work/
+*.jfr

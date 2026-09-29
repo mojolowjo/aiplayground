@@ -1,0 +1,23 @@
+{
+	"schemaVersion": 1,
+	"id": "cloudly_bench",
+	"version": "${version}",
+	"name": "Cloudly Benchmark Driver",
+	"description": "Runs a benchmark scenario on a headless server and writes the results. Does nothing unless started with -Dcloudly.bench.scenario=<name>. Not for normal play.",
+	"authors": [
+		"mojolowjo"
+	],
+	"license": "MIT",
+	"environment": "server",
+	"entrypoints": {
+		"main": [
+			"io.github.mojolowjo.cloudly.bench.BenchDriver"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

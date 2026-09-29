@@ -1,0 +1,21 @@
+pluginManagement {
+	repositories {
+		maven {
+			name = 'Fabric'
+			url = 'https://maven.fabricmc.net/'
+		}
+		mavenCentral()
+		gradlePluginPortal()
+	}
+}
+
+rootProject.name = 'minecraft-optimization'
+
+// The Cloudly mod itself.
+include 'cloudly'
+project(':cloudly').projectDir = file('mod')
+
+// A separate helper mod that runs benchmark scenarios on a headless server.
+// It is never shipped to players.
+include 'bench-driver'
+project(':bench-driver').projectDir = file('benchmarks/driver')

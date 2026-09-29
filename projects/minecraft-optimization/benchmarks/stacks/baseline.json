@@ -1,0 +1,8 @@
+{
+  "description": "Fabric and Fabric API only, no optimization mods. Everything is compared against this.",
+  "mods": [
+    {"modrinth": "fabric-api", "version": "0.161.0+26.3"}
+  ],
+  "cloudly": false,
+  "jvmArgs": []
+}

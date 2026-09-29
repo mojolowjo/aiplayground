@@ -1,0 +1,9 @@
+{
+  "description": "Baseline plus Lithium.",
+  "mods": [
+    {"modrinth": "fabric-api", "version": "0.161.0+26.3"},
+    {"modrinth": "lithium", "version": "mc26.3-0.26.2-fabric"}
+  ],
+  "cloudly": false,
+  "jvmArgs": []
+}

@@ -221,39 +221,31 @@ candidate.
 
 **Decided:**
 
+- **Name:** **Cloudly** (mod ID `cloudly`), a play on "Claude". Java package
+  `io.github.mojolowjo.cloudly`.
 - **Scope:** our own mod plus a recommended setup of existing mods. We replace an
   existing mod's work only when ours measurably beats it (ground rule 3).
+- **Minecraft version:** latest release (26.3 now, 26.4 once released).
+- **Mod loader:** Fabric. NeoForge could come later.
+- **Focus first:** server and game logic. Client rendering waits for the Vulkan
+  switch to settle.
+- **Vanilla behavior:** strict by default. Gameplay-changing options are opt-in.
+- **Public:** open source, with releases on GitHub and Modrinth. License: MIT (easy
+  to change before the first release if you prefer another).
 - **Profiling tools:** free only. JFR + JDK Mission Control, spark, and VisualVM.
+- **Your test machine:** Linux (Bazzite).
 
-**Still open.** A default is marked for each. Say "go with the defaults" and I'll
-use them.
+**Still open:**
 
-1. **Minecraft version.** Default: **latest (26.3 now, 26.4 once released).**
-   The alternative is an older modpack favorite like 1.20.1 or 1.21.1. More people
-   play those, but they use OpenGL and obfuscated code, and they no longer get
-   updates.
-2. **Mod loader.** Default: **Fabric.** Most optimization mods live there and it's
-   lightweight. NeoForge support could come later.
-3. **Focus first.** Default: **server and game logic**, for the renderer reasons
-   above. The alternative is client FPS first, accepting some rework after the
-   Vulkan switch.
-4. **Vanilla behavior.** Default: **strict by default, with gameplay-changing
-   options as opt-in.**
-5. **Name.** The mod needs a name and mod ID. Any ideas? If not, I'll propose a few.
-6. **Public or private.** Publish releases on Modrinth/GitHub, or keep them for
-   yourself?
-7. **Your hardware.** For client benchmarks and profiling setup: CPU, GPU, RAM, and
-   operating system.
+1. **Your hardware details** (CPU, GPU, RAM), needed once client benchmarks start
+   in Phase 5.
 
 ## 8. Limits and risks
 
-- **Network access (blocks Phase 1).** This cloud environment currently blocks
-  Mojang's and Fabric's download servers, as well as Modrinth. Blocked hosts:
-  `piston-meta.mojang.com`, `piston-data.mojang.com`, `libraries.minecraft.net`,
-  `resources.download.minecraft.net`, `maven.fabricmc.net`, `meta.fabricmc.net`,
-  `api.modrinth.com`, `cdn.modrinth.com`. The build tools need these to download
-  Minecraft and Fabric. The fix is in the environment's Network access settings.
-  Java 25 itself is installable here.
+- **Network access.** The cloud environment has to be able to reach Mojang's,
+  Fabric's, and Modrinth's download servers. It can now (fixed Sept 29, 2026). If
+  builds start failing with download errors, check the environment's Network
+  access setting first.
 - **No GPU here.** Server-side work can be fully built and tested in the cloud.
   Client FPS can only be measured on your computer.
 - **Updates break things.** Minecraft releases about every three months, and our
