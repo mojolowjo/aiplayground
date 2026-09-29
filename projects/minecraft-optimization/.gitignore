@@ -17,3 +17,6 @@ run/
 # Benchmark servers and raw recordings (large; results summaries are committed)
 benchmarks/work/
 *.jfr
+
+# Python
+__pycache__/
