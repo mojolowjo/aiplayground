@@ -210,7 +210,7 @@ candidate.
 | Phase | What happens | Output |
 |---|---|---|
 | **0. Plan** | This document | `docs/` ✔ |
-| **1. Skeleton + server harness** | Fabric mod skeleton for 26.3 with automatic builds on GitHub, headless benchmark scenarios, unmodded baseline numbers | `mod/`, `benchmarks/`, first results |
+| **1. Skeleton + server harness** | Fabric mod skeleton for 26.3 with automatic builds on GitHub, headless benchmark scenarios, unmodded baseline numbers | `mod/`, `benchmarks/`, first results ✔ |
 | **2. Tune the known stack** | Compare unmodded vs. JVM tuning vs. JVM + mod stack. Answer Moonrise or C2ME, ZGC or G1, and how much compact headers help. | `setups/`, the recommended configuration with numbers |
 | **3. Profile what's left** | Profile the best Layer 1+2 setup under every scenario. Re-rank the catalog by measured cost. | Updated `CATALOG.md` with real numbers |
 | **4. Our mod, server side** | Build the top 3–5 targets with parity tests. Each one can be toggled. | First release of the mod |
