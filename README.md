@@ -8,6 +8,7 @@ its own folder under `projects/` and does not touch the others.
 | Folder | What it is | Status |
 |---|---|---|
 | [`projects/minecraft-optimization`](projects/minecraft-optimization/) | Cloudly, a performance mod for Minecraft: Java Edition, with its benchmark harness | Phase 1 done |
+| [`projects/minecraft-bot`](projects/minecraft-bot/) | A chat-controlled bot that joins a friend's modded server to mine and build | Planned |
 
 ## Adding a new project
 
