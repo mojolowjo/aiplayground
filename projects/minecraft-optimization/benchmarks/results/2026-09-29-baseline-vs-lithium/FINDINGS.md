@@ -47,9 +47,17 @@ slows down.
    - Garbage collection is the likely cause: 200–550 ms of GC per minute in the busy
      scenarios.
    - Phase 2 tests whether ZGC and compact object headers remove these spikes.
+   - **Update (Phase 2):** only partly right. With a settled world, G1's real pauses in
+     these scenarios are 60–115 ms. Much of these spikes came from the brand-new world
+     still generating and saving in the background. G1 does pause for up to 0.5 s during
+     world generation. See [the GC findings](../2026-09-29-jvm/FINDINGS.md).
 
 ## Caveats
 
+- **Villager and item runs started too early** (fixed in Phase 2). Every run began in a
+  brand-new world, which was still generating and saving around spawn during
+  measurement. Newly spawned villagers were also still walking to their workstations.
+  Phase 2 re-measured both with a settled template world and longer warm-ups.
 - **Cramming is too noisy.**
   - Plain Fabric alone ranged from 7.7 to 13.7 ms between runs.
   - The cows wander randomly and bunch up differently each time, so crowd shape swings

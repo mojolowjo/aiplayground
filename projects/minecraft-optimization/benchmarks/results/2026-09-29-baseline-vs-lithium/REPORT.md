@@ -5,6 +5,9 @@
 - Baseline for comparisons: `baseline`
 - MSPT = milliseconds of work per server tick (lower is better; 50 is the limit).
   Numbers are the average over runs, with the lowest and highest run in brackets.
+- GC ms is the collector's total time as Java reports it. For ZGC, Shenandoah and G1's
+  concurrent phases that includes work done while the game keeps running, so compare
+  collectors with the GC pause columns instead (read from each run's JFR recording).
 
 ## idle
 
@@ -14,6 +17,11 @@ An empty platform: the cost of the server doing nothing.
 |---|---|---|---|---|---|---|---|---|
 | `baseline` | 3 | 0.34 (0.33–0.35) | 0.30 (0.30–0.31) | 0.52 (0.50–0.54) | 0.93 (0.83–1.09) | 2.93 (2.13–3.74) | 0 (0–0) |  |
 | `lithium` | 3 | 0.34 (0.33–0.34) | 0.30 (0.29–0.30) | 0.51 (0.48–0.53) | 0.80 (0.73–0.85) | 4.02 (2.79–5.04) | 0 (0–0) | -1.3% |
+
+| Stack | GC pauses total (ms) | longest GC pause (ms) |
+|---|---|---|
+| `baseline` | 0.00 (0.00–0.00) | 0.00 (0.00–0.00) |
+| `lithium` | 0.00 (0.00–0.00) | 0.00 (0.00–0.00) |
 
 <details><summary>Hot methods: <code>baseline</code> (run 1)</summary>
 
@@ -68,10 +76,10 @@ java.util.concurrent.ConcurrentHashMap.get(Object)                              
 | `baseline` | 3 | 27.45 (25.61–30.78) | 24.14 (23.61–24.68) | 48.62 (38.40–68.63) | 59.85 (44.17–90.73) | 209.43 (60.48–290.57) | 211 (34–341) |  |
 | `lithium` | 3 | 22.93 (17.35–27.11) | 17.50 (14.08–19.73) | 46.41 (37.02–53.77) | 58.10 (46.45–68.35) | 318.77 (285.29–344.50) | 293 (257–333) | -16.5% |
 
-| Stack | villagersAtEnd |
-|---|---|
-| `baseline` | 300.00 (300.00–300.00) |
-| `lithium` | 300.00 (300.00–300.00) |
+| Stack | villagersAtEnd | GC pauses total (ms) | longest GC pause (ms) |
+|---|---|---|---|
+| `baseline` | 300.00 (300.00–300.00) | 211.00 (34.00–342.00) | 173.00 (34.00–264.00) |
+| `lithium` | 300.00 (300.00–300.00) | 292.33 (257.00–333.00) | 292.33 (257.00–333.00) |
 
 <details><summary>Hot methods: <code>baseline</code> (run 1)</summary>
 
@@ -126,10 +134,10 @@ net.minecraft.world.entity.ai.behavior.declarative.MemoryCondition$Registered.cr
 | `baseline` | 3 | 11.47 (7.69–13.73) | 8.73 (7.00–9.75) | 21.67 (10.94–27.72) | 27.31 (15.00–33.88) | 74.49 (40.43–96.29) | 62 (29–84) |  |
 | `lithium` | 3 | 10.18 (9.02–11.91) | 8.83 (6.41–13.60) | 20.65 (18.88–23.12) | 26.71 (22.23–30.97) | 112.51 (33.20–257.46) | 81 (0–244) | -11.2% |
 
-| Stack | cowsAtEnd |
-|---|---|
-| `baseline` | 200.00 (200.00–200.00) |
-| `lithium` | 200.00 (200.00–200.00) |
+| Stack | cowsAtEnd | GC pauses total (ms) | longest GC pause (ms) |
+|---|---|---|---|
+| `baseline` | 200.00 (200.00–200.00) | 61.63 (29.10–83.50) | 61.63 (29.10–83.50) |
+| `lithium` | 200.00 (200.00–200.00) | 81.33 (0.00–244.00) | 81.33 (0.00–244.00) |
 
 <details><summary>Hot methods: <code>baseline</code> (run 1)</summary>
 
@@ -184,10 +192,10 @@ net.minecraft.server.level.ServerChunkCache.getChunk(int, int, ChunkStatus, bool
 | `baseline` | 3 | 28.30 (23.98–30.68) | 21.62 (21.21–22.01) | 54.30 (37.66–65.19) | 70.53 (42.99–89.37) | 221.43 (175.54–285.41) | 202 (98–290) |  |
 | `lithium` | 3 | 7.62 (5.82–8.91) | 5.53 (4.61–6.01) | 16.98 (9.64–20.89) | 23.61 (18.47–27.06) | 199.47 (90.02–285.66) | 255 (80–425) | -73.1% |
 
-| Stack | itemsAtEnd |
-|---|---|
-| `baseline` | 1200.00 (1200.00–1200.00) |
-| `lithium` | 1200.00 (1200.00–1200.00) |
+| Stack | itemsAtEnd | GC pauses total (ms) | longest GC pause (ms) |
+|---|---|---|---|
+| `baseline` | 1200.00 (1200.00–1200.00) | 202.80 (98.40–290.00) | 170.80 (98.40–233.00) |
+| `lithium` | 1200.00 (1200.00–1200.00) | 254.47 (80.40–425.00) | 184.13 (80.40–258.00) |
 
 <details><summary>Hot methods: <code>baseline</code> (run 1)</summary>
 
@@ -242,10 +250,10 @@ net.minecraft.world.entity.Entity.updateFluidInteraction()                      
 | `baseline` | 3 | 1.23 (1.19–1.27) | 1.08 (1.05–1.11) | 1.69 (1.67–1.74) | 3.19 (2.68–3.54) | 15.10 (10.78–17.68) | 0 (0–0) |  |
 | `lithium` | 3 | 1.07 (0.95–1.13) | 0.95 (0.86–1.01) | 1.47 (1.35–1.55) | 3.31 (2.35–4.46) | 11.71 (6.85–20.45) | 0 (0–0) | -13.0% |
 
-| Stack | itemsDeliveredDuringMeasurement |
-|---|---|
-| `baseline` | 7500.00 (7500.00–7500.00) |
-| `lithium` | 7500.00 (7500.00–7500.00) |
+| Stack | itemsDeliveredDuringMeasurement | GC pauses total (ms) | longest GC pause (ms) |
+|---|---|---|---|
+| `baseline` | 7500.00 (7500.00–7500.00) | 0.00 (0.00–0.00) | 0.00 (0.00–0.00) |
+| `lithium` | 7500.00 (7500.00–7500.00) | 0.00 (0.00–0.00) | 0.00 (0.00–0.00) |
 
 <details><summary>Hot methods: <code>baseline</code> (run 1)</summary>
 
@@ -300,10 +308,10 @@ Generate 625 new chunks (25x25) far from spawn.
 | `baseline` | 3 | 6.55 (6.00–6.93) | 3.44 (3.34–3.60) | 21.94 (21.41–22.86) | 53.26 (49.34–58.68) | 179.78 (142.04–249.76) | 525 (478–551) |  |
 | `lithium` | 3 | 5.95 (5.57–6.26) | 2.80 (2.57–2.95) | 22.28 (21.63–22.81) | 59.67 (58.02–60.70) | 207.76 (175.84–242.42) | 543 (219–948) | -9.1% |
 
-| Stack | chunksReady | complete | seconds | chunksPerSecond |
-|---|---|---|---|---|
-| `baseline` | 625.00 (625.00–625.00) | True, True, True | 26.44 (24.95–27.40) | 23.68 (22.81–25.05) |
-| `lithium` | 625.00 (625.00–625.00) | True, True, True | 22.40 (21.19–23.77) | 27.96 (26.29–29.49) |
+| Stack | chunksReady | complete | seconds | chunksPerSecond | GC pauses total (ms) | longest GC pause (ms) |
+|---|---|---|---|---|---|---|
+| `baseline` | 625.00 (625.00–625.00) | True, True, True | 26.44 (24.95–27.40) | 23.68 (22.81–25.05) | 525.00 (479.00–551.00) | 269.67 (244.00–291.00) |
+| `lithium` | 625.00 (625.00–625.00) | True, True, True | 22.40 (21.19–23.77) | 27.96 (26.29–29.49) | 543.00 (219.00–949.00) | 249.53 (86.60–396.00) |
 
 <details><summary>Hot methods: <code>baseline</code> (run 1)</summary>
 

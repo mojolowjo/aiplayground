@@ -6,8 +6,10 @@ Every optimization idea we know of, grouped by part of the game. Each has an ID
 Phase 3 re-ranks this list using real profiling numbers. Until then, the
 **Impact** column is an educated guess.
 
-Measured so far (Sept 29, 2026): [baseline vs. Lithium](../benchmarks/results/2026-09-29-baseline-vs-lithium/FINDINGS.md)
-and [mods on top of Lithium](../benchmarks/results/2026-09-29-mod-stack/FINDINGS.md). Entries backed by a measurement say so in the **Covered by** column.
+Measured so far (Sept 29, 2026): [baseline vs. Lithium](../benchmarks/results/2026-09-29-baseline-vs-lithium/FINDINGS.md),
+[mods on top of Lithium](../benchmarks/results/2026-09-29-mod-stack/FINDINGS.md), and
+[garbage collectors](../benchmarks/results/2026-09-29-jvm/FINDINGS.md). The resulting setup is in
+[`setups/`](../setups/README.md). Entries backed by a measurement say so in the **Covered by** column.
 
 ## How to read the tables
 
@@ -31,8 +33,8 @@ and [mods on top of Lithium](../benchmarks/results/2026-09-29-mod-stack/FINDINGS
 
 | ID | Idea | Covered by | Gameplay | Impact | Verdict |
 |---|---|---|---|---|---|
-| A1 | Pick the best garbage collector: Generational ZGC, G1, or Generational Shenandoah | Launch flags | Same | High (stutter) | Use, after benchmarking |
-| A2 | Compact object headers (`-XX:+UseCompactObjectHeaders`, Java 25) | Launch flag | Same | Medium–High (RAM) | Use, after benchmarking |
+| A1 | Pick the best garbage collector: Generational ZGC, G1, or Generational Shenandoah | Launch flags. Measured: G1 pauses up to 0.5 s; ZGC pauses under 0.1 ms but costs some average speed on 4 cores; Shenandoah erratic | Same | High (stutter) | Use: G1 on ≤4 cores, ZGC on 6+ |
+| A2 | Compact object headers (`-XX:+UseCompactObjectHeaders`, Java 25) | Launch flag. Measured: 7–9% less memory, no slowdown with G1 | Same | Medium–High (RAM) | Use |
 | A3 | Heap sizing; on servers set min = max heap and pre-touch memory | Launch flags | Same | Medium | Use |
 | A4 | AOT cache from Project Leyden, for faster startup | Nothing yet | Same | Medium (startup) | Research. Mod loaders limit what can be cached. |
 | A5 | Transparent huge pages (Linux) | Launch flag | Same | Low | Research |

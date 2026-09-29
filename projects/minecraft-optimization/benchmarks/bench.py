@@ -11,6 +11,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -304,12 +305,33 @@ def hot_methods(jfr_file, jfr_tool, lines=12):
     return "\n".join(table[:lines + 3])
 
 
+def gc_pauses(jfr_file, jfr_tool):
+    """Total and longest stop-the-world GC pause in a recording, in ms.
+
+    The GC time Java reports through its management API also counts work that ZGC,
+    Shenandoah and G1's concurrent phases do while the game keeps running, so it can't
+    compare collectors. JFR records the actual pauses.
+    """
+    try:
+        output = subprocess.run([jfr_tool, "view", "gc-pauses", str(jfr_file)],
+                                capture_output=True, text=True, timeout=300, check=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    units = {"ns": 1e-6, "us": 1e-3, "ms": 1.0, "s": 1000.0}
+
+    def value(label):
+        match = re.search(label + r":\s*([\d.]+)\s*(ns|us|ms|s)\b", output)
+        return float(match.group(1)) * units[match.group(2)] if match else 0.0
+    return value("Total Pause Time"), value("Maximum Pause Time")
+
+
 def write_report(out_dir, baseline, include_hot_methods, jfr_tool=None):
     results = load_results(out_dir)
     if not results:
         print("No successful results to report.")
         return
     stacks = sorted({stack for stack, _ in results}, key=lambda s: (s != baseline, s))
+    tool = jfr_tool or java_tool("jfr")
     scenarios = [s for s in SCENARIOS if any(key[1] == s for key in results)]
     first = next(iter(results.values()))[0]
     jvm = first["jvm"]
@@ -320,6 +342,9 @@ def write_report(out_dir, baseline, include_hot_methods, jfr_tool=None):
     lines.append(f"- Baseline for comparisons: `{baseline}`")
     lines.append("- MSPT = milliseconds of work per server tick (lower is better; 50 is the limit).")
     lines.append("  Numbers are the average over runs, with the lowest and highest run in brackets.")
+    lines.append("- GC ms is the collector's total time as Java reports it. For ZGC, Shenandoah and G1's")
+    lines.append("  concurrent phases that includes work done while the game keeps running, so compare")
+    lines.append("  collectors with the GC pause columns instead (read from each run's JFR recording).")
     lines.append("")
 
     startup = {}
@@ -366,6 +391,9 @@ def write_report(out_dir, baseline, include_hot_methods, jfr_tool=None):
                 values = dict(run.get("scenarioResults", {}))
                 if "heapAfterGcMb" in run:
                     values["heap after GC (MB)"] = run["heapAfterGcMb"]
+                pauses = gc_pauses(run["_path"].parent / run["jfr"], tool) if run.get("jfr") else None
+                if pauses is not None:
+                    values["GC pauses total (ms)"], values["longest GC pause (ms)"] = pauses
                 for key, value in values.items():
                     extras.setdefault(key, {}).setdefault(stack, []).append(value)
         if extras:
@@ -387,7 +415,6 @@ def write_report(out_dir, baseline, include_hot_methods, jfr_tool=None):
                 lines.append("")
 
         if include_hot_methods:
-            tool = jfr_tool or java_tool("jfr")
             for stack in stacks:
                 runs = results.get((stack, scenario), [])
                 jfr_name = runs[0].get("jfr") if runs else None

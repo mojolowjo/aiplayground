@@ -5,6 +5,9 @@
 - Baseline for comparisons: `lithium`
 - MSPT = milliseconds of work per server tick (lower is better; 50 is the limit).
   Numbers are the average over runs, with the lowest and highest run in brackets.
+- GC ms is the collector's total time as Java reports it. For ZGC, Shenandoah and G1's
+  concurrent phases that includes work done while the game keeps running, so compare
+  collectors with the GC pause columns instead (read from each run's JFR recording).
 
 ## Startup
 
@@ -29,12 +32,12 @@ world. Averaged over every run of every scenario.
 | `lithium-ferrite-c2me-lux` | 3 | 15.30 (14.20–16.36) | 13.31 (13.05–13.70) | 26.05 (20.07–33.60) | 37.03 (24.03–45.51) | 118.73 (41.36–173.08) | 91 (0–143) | -1.6% |
 | `lithium-ferrite-moonrise` | 3 | 22.90 (22.09–23.50) | 21.21 (20.78–21.95) | 32.79 (30.77–34.61) | 46.55 (44.58–49.80) | 116.64 (66.56–208.67) | 92 (20–209) | +47.3% |
 
-| Stack | villagersAtEnd | heap after GC (MB) |
-|---|---|---|
-| `lithium` | 300.00 (300.00–300.00) | 171.00 (171.00–171.00) |
-| `lithium-ferrite` | 300.00 (300.00–300.00) | 163.00 (163.00–163.00) |
-| `lithium-ferrite-c2me-lux` | 300.00 (300.00–300.00) | 177.00 (176.00–179.00) |
-| `lithium-ferrite-moonrise` | 300.00 (300.00–300.00) | 250.00 (250.00–250.00) |
+| Stack | villagersAtEnd | heap after GC (MB) | GC pauses total (ms) | longest GC pause (ms) |
+|---|---|---|---|---|
+| `lithium` | 300.00 (300.00–300.00) | 171.00 (171.00–171.00) | 193.00 (0.00–380.00) | 143.33 (0.00–231.00) |
+| `lithium-ferrite` | 300.00 (300.00–300.00) | 163.00 (163.00–163.00) | 17.00 (0.00–51.00) | 17.00 (0.00–51.00) |
+| `lithium-ferrite-c2me-lux` | 300.00 (300.00–300.00) | 177.00 (176.00–179.00) | 91.33 (0.00–143.00) | 91.33 (0.00–143.00) |
+| `lithium-ferrite-moonrise` | 300.00 (300.00–300.00) | 250.00 (250.00–250.00) | 92.13 (20.60–209.00) | 78.07 (20.60–186.00) |
 
 <details><summary>Hot methods: <code>lithium</code> (run 1)</summary>
 
@@ -135,12 +138,12 @@ java.util.ArrayList.grow(int)                                                   
 | `lithium-ferrite-c2me-lux` | 3 | 5.34 (4.53–6.58) | 4.44 (4.05–4.98) | 9.29 (6.54–14.07) | 16.67 (8.11–30.42) | 137.73 (56.88–293.57) | 152 (51–348) | +5.2% |
 | `lithium-ferrite-moonrise` | 3 | 4.23 (4.18–4.31) | 3.80 (3.75–3.87) | 6.33 (6.03–6.55) | 8.83 (7.95–9.30) | 13.25 (11.81–15.69) | 17 (0–26) | -16.6% |
 
-| Stack | itemsAtEnd | heap after GC (MB) |
-|---|---|---|
-| `lithium` | 1200.00 (1200.00–1200.00) | 156.67 (156.00–157.00) |
-| `lithium-ferrite` | 1200.00 (1200.00–1200.00) | 148.00 (148.00–148.00) |
-| `lithium-ferrite-c2me-lux` | 1200.00 (1200.00–1200.00) | 160.67 (160.00–162.00) |
-| `lithium-ferrite-moonrise` | 1200.00 (1200.00–1200.00) | 234.33 (234.00–235.00) |
+| Stack | itemsAtEnd | heap after GC (MB) | GC pauses total (ms) | longest GC pause (ms) |
+|---|---|---|---|---|
+| `lithium` | 1200.00 (1200.00–1200.00) | 156.67 (156.00–157.00) | 85.07 (28.50–186.00) | 85.03 (28.40–186.00) |
+| `lithium-ferrite` | 1200.00 (1200.00–1200.00) | 148.00 (148.00–148.00) | 108.87 (65.80–179.00) | 108.87 (65.80–179.00) |
+| `lithium-ferrite-c2me-lux` | 1200.00 (1200.00–1200.00) | 160.67 (160.00–162.00) | 151.73 (51.70–348.00) | 131.07 (51.70–286.00) |
+| `lithium-ferrite-moonrise` | 1200.00 (1200.00–1200.00) | 234.33 (234.00–235.00) | 16.60 (0.00–26.10) | 16.43 (0.00–25.80) |
 
 <details><summary>Hot methods: <code>lithium</code> (run 1)</summary>
 

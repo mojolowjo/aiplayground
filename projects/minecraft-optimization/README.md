@@ -5,8 +5,8 @@ steadier FPS, lower server tick time, less RAM, and faster startup and world
 loading. Gameplay stays the same unless the player turns on an option that
 changes it.
 
-**Status:** Phase 1 done: mod skeleton, benchmark harness, and first baseline results.
-Next: Phase 2, tuning the existing mod stack.
+**Status:** Phase 2 done: the recommended server setup is in [`setups/`](setups/README.md),
+backed by benchmarks. Next: Phase 3/4, Cloudly's first optimization (villager AI).
 
 ## Documents
 
@@ -44,7 +44,7 @@ projects/minecraft-optimization/
 │   ├── stacks/            mod sets to compare
 │   └── results/           reports and per-run results
 ├── build.gradle, settings.gradle, gradle.properties, gradlew
-└── setups/                (Phase 2) recommended JVM flags, server settings, mod lists
+└── setups/                recommended mods and Java flags, with a start script
 ```
 
 ## Building
