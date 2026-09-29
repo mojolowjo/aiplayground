@@ -6,6 +6,9 @@ Every optimization idea we know of, grouped by part of the game. Each has an ID
 Phase 3 re-ranks this list using real profiling numbers. Until then, the
 **Impact** column is an educated guess.
 
+Measured so far: [first benchmark findings](../benchmarks/results/2026-09-29-baseline-vs-lithium/FINDINGS.md)
+(Sept 29, 2026). Entries backed by a measurement say so in the **Covered by** column.
+
 ## How to read the tables
 
 - **Covered by:** an existing mod or game setting that already does it.
@@ -56,7 +59,7 @@ Phase 3 re-ranks this list using real profiling numbers. Until then, the
 | C1 | Faster collision checks against blocks and entities | Lithium, Moonrise | Same | High | Use |
 | C2 | Faster "which entities are in this area" lookups | Lithium | Same | Medium | Use |
 | C3 | Skip idle goals in older-style mob AI | Lithium | Same | Medium | Use |
-| C4 | Villager, piglin, allay, and other "brain" AI: reuse sensor results when nothing relevant changed | Partly Lithium (verify) | Same | High | **Gap?** |
+| C4 | Villager, piglin, allay, and other "brain" AI: reuse sensor results when nothing relevant changed | Partly Lithium. Measured: 300 villagers still cost 23 ms/tick with Lithium | Same | High | **Gap (confirmed)** |
 | C5 | Spatial index for "nearest entity" and "nearest point of interest" queries | Partial | Same | High | **Gap?** |
 | C6 | Entity cramming: crowded mobs check every neighbor every tick (quadratic cost) | Unknown | Same | High (farms, pens) | **Gap?** |
 | C7 | Pathfinding: cache block-type lookups during a search | Lithium | Same | Medium | Use |
@@ -64,7 +67,7 @@ Phase 3 re-ranks this list using real profiling numbers. Until then, the
 | C9 | Pathfinding on background threads | Some Paper forks, not Fabric | Changes (timing) | Medium | Skip |
 | C10 | Entity activation range: tick distant mobs less often | ServerCore, Paper | Changes | High | Opt-in |
 | C11 | Entity tracking: decide more cheaply which players get updates about which entities | Paper; Moonrise (verify) | Same | Medium–High (busy servers) | Gap?, verify |
-| C12 | Item entity merging: cheaper nearby-item scans | Lithium (verify) | Same | Medium | Gap? |
+| C12 | Item entity merging: cheaper nearby-item scans | Lithium. Measured: −73% in the `items` scenario | Same | Medium | Use |
 | C13 | Merge experience orbs more aggressively | Clumps | Changes (pickup) | Low–Medium | Opt-in |
 | C14 | Faster explosion ray calculations (TNT) | Lithium | Same | Medium | Use |
 | C15 | Cheaper mob spawning checks and mob-cap counting | Partly Lithium | Same | Medium | Research |
@@ -75,7 +78,7 @@ Phase 3 re-ranks this list using real profiling numbers. Until then, the
 
 | ID | Idea | Covered by | Gameplay | Impact | Verdict |
 |---|---|---|---|---|---|
-| D1 | Hoppers: track inventory changes and skip idle hoppers | Lithium | Same | High | Use |
+| D1 | Hoppers: track inventory changes and skip idle hoppers | Lithium. Measured: −13%, exact hopper parity | Same | High | Use |
 | D2 | Put idle furnaces, brewing stands, and campfires to sleep | Lithium | Same | Medium | Use |
 | D3 | Cache comparator reads of inventories | Lithium | Same | Medium | Use |
 | D4 | Cache recipe lookups for furnaces, smokers, blast furnaces, and crafters | Nothing known for 26.x | Same | Medium | **Gap?** |
@@ -103,7 +106,7 @@ Phase 3 re-ranks this list using real profiling numbers. Until then, the
 | ID | Idea | Covered by | Gameplay | Impact | Verdict |
 |---|---|---|---|---|---|
 | F1 | Chunk loading and scheduling system | Moonrise **or** C2ME (they're incompatible) | Same | High | Use; pick one by benchmark |
-| F2 | World-generation noise and density-function math | C2ME (compiles it to fast code); vanilla 26.3 improvements | Same | High | Use; re-measure |
+| F2 | World-generation noise and density-function math | C2ME (compiles it to fast code); vanilla 26.3 improvements. Measured: Lithium alone gives +18% chunks/s | Same | High | Use; compare C2ME next |
 | F3 | Feature placement (trees, ores, plants) | Unknown | Same | Medium | Research |
 | F4 | Structure placement checks and jigsaw assembly (villages, trial chambers, ancient cities) | Partly vanilla 26.3 | Same | Medium | Research |
 | F5 | Structure search (`/locate`, explorer maps, dolphins) | Vanilla 26.3 made it faster | Same | High (spikes) | Re-measure |
