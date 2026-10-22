@@ -1,0 +1,13 @@
+{
+	"required": true,
+	"minVersion": "0.8",
+	"package": "net.mb.minescripthud.mixin",
+	"compatibilityLevel": "JAVA_17",
+	"client": [
+		"MinescriptMixin",
+		"JobMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

@@ -8,6 +8,7 @@ its own folder under `projects/` and does not touch the others.
 | Folder | What it is | Status |
 |---|---|---|
 | [`projects/minecraft-optimization`](projects/minecraft-optimization/) | Cloudly, a performance mod for Minecraft: Java Edition, with its benchmark harness | Phase 2 done |
+| [`projects/minescript-hud-forge`](projects/minescript-hud-forge/) | Forge 1.20.1 / Minescript 4.0 port of Minescript HUD Addon | Builds; untested in-game |
 
 ## Adding a new project
 
