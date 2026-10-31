@@ -171,8 +171,11 @@ public final class BackpackSupport {
         try {
             Object storage = storageGet.invoke(null);
             for (UUID uuid : knownBackpacks) {
-                Object opt = getContents.invoke(storage, uuid);
-                if (!(opt instanceof Optional<?> o) || o.isEmpty() || !(o.get() instanceof CompoundTag tag)) {
+                Object result = getContents.invoke(storage, uuid);
+                if (result instanceof Optional<?> o) {
+                    result = o.orElse(null);
+                }
+                if (!(result instanceof CompoundTag tag)) {
                     continue;
                 }
                 CompoundTag inventory = tag.getCompound("inventory");
@@ -236,7 +239,11 @@ public final class BackpackSupport {
             step = "BackpackStorage";
             Class<?> storageClass = Class.forName(SB + "backpack.BackpackStorage");
             storageGet = storageClass.getMethod("get");
-            getContents = storageClass.getMethod("getBackpackContents", UUID.class);
+            try {
+                getContents = storageClass.getMethod("getBackpackContents", UUID.class); // newer: Optional<CompoundTag>
+            } catch (NoSuchMethodException older) {
+                getContents = storageClass.getMethod("getOrCreateBackpackContents", UUID.class); // 3.24: CompoundTag
+            }
 
             available = true;
             failReason = "";
