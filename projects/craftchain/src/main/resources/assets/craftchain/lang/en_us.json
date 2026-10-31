@@ -1,0 +1,28 @@
+{
+  "key.categories.craftchain": "CraftChain",
+  "key.craftchain.craft": "Craft hovered item (Shift: a stack)",
+  "key.craftchain.pin": "Pin hovered item (Shift: +stack, Ctrl: unpin)",
+  "key.craftchain.cancel": "Cancel crafting",
+
+  "craftchain.msg.starting": "Crafting %s x %s: %s recipes, %s crafts",
+  "craftchain.msg.done": "Done: %s x %s",
+  "craftchain.msg.cancelled": "Cancelled",
+  "craftchain.msg.busy": "Already crafting; press the cancel key to stop",
+  "craftchain.msg.screen_closed": "Stopped: the crafting screen closed",
+  "craftchain.msg.unsupported_menu": "Open your inventory or a vanilla crafting table first",
+  "craftchain.msg.needs_table": "One of the recipes needs a 3x3 grid: open a crafting table",
+  "craftchain.msg.too_many_crafts": "That needs %s crafts; the limit is %s (crafting.maxCraftsPerRun in the config)",
+  "craftchain.msg.no_recipes": "Recipes are not loaded yet",
+  "craftchain.msg.no_recipe": "No crafting-table recipe for %s",
+  "craftchain.msg.already_have": "You already have %s",
+  "craftchain.msg.missing": "Missing: %s",
+  "craftchain.msg.backpacks_todo": "(Backpack contents are not searched yet)",
+  "craftchain.msg.ran_out": "Ran out of %s",
+  "craftchain.msg.inventory_full": "Inventory is full",
+  "craftchain.msg.no_result": "The server did not produce a result; recipe mismatch?",
+  "craftchain.msg.grid_not_empty": "The grid did not empty after crafting; stopped (inventory full?)",
+  "craftchain.msg.open_inventory": "Open your inventory or a crafting table, then press the craft key again",
+  "craftchain.msg.pinned": "Pinned %s x %s",
+  "craftchain.msg.unpinned": "Unpinned %s",
+  "craftchain.msg.cleared": "Pinned list cleared"
+}

@@ -9,6 +9,7 @@ its own folder under `projects/` and does not touch the others.
 |---|---|---|
 | [`projects/minecraft-optimization`](projects/minecraft-optimization/) | Cloudly, a performance mod for Minecraft: Java Edition, with its benchmark harness | Phase 1 done |
 | [`projects/minecraft-bot`](projects/minecraft-bot/) | A chat-controlled bot that joins a friend's modded server to mine and build | Planned |
+| [`projects/craftchain`](projects/craftchain/) | CraftChain, a client-side Forge 1.20.1 mod: pick an item in JEI and it crafts the whole chain from your inventory | Researched, skeleton builds |
 
 ## Adding a new project
 
