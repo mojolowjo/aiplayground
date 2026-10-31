@@ -23,6 +23,9 @@
   "craftchain.msg.grid_not_empty": "The grid did not empty after crafting; stopped (inventory full?)",
   "craftchain.msg.open_inventory": "Open your inventory or a crafting table, then press the craft key again",
   "craftchain.msg.pinned": "Pinned %s x %s",
+  "craftchain.msg.auto_pinned": "Not enough materials; pinned %s x %s to the list",
+  "craftchain.msg.in_backpack": "Some of that is in a backpack: %s. Move it to your inventory first.",
+  "craftchain.msg.hud_moved": "Pinned list moved to %s, %s",
   "craftchain.msg.unpinned": "Unpinned %s",
   "craftchain.msg.cleared": "Pinned list cleared"
 }

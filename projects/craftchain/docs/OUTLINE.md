@@ -8,11 +8,13 @@ Target pack: MC Eternal 2 v1.3. Nothing is installed on the server.
 
 | Action | Where | Result |
 |---|---|---|
-| Hover an item in JEI (list, bookmarks or recipe screen) or in an inventory slot, press **G** | Inventory or crafting-table screen open | CraftChain plans the chain, then crafts 1 of the item. **Shift+G** crafts a full stack. |
+| Hover an item in JEI (list, bookmarks or recipe screen) or in an inventory slot, press **G** | Any screen | A prompt opens by the mouse: "Craft X x1". **Scroll** changes the amount (Shift: by 16). The prompt says live whether the amount is craftable, what is missing, and whether some of it sits in a backpack. |
+| Press **G** again | Prompt open | Confirms. With the materials on hand it crafts that many new ones (what you already hold is ignored). Without them, the item is pinned with that amount automatically. **Esc** or a click cancels the prompt. |
 | Press **P** on a hovered item | Any screen with JEI | Pins the item (+1). **Shift+P** adds a stack. **Ctrl+P** unpins. |
-| Look at the top-left corner | In the world | The pinned list: each item, how many, and the raw materials it breaks down into, with have/need counts coloured green or red. |
+| Look at the pinned list | In the world and on top of any screen | Each pinned item with a progress bar (raw materials gathered / needed, counting inventory and backpacks), `[READY]` when complete, and the material lines underneath. |
 | Press **Esc** while a craft runs | Crafting screen | Stops, returning anything still in the grid to the inventory. |
-| `/craftchain clear`, `/craftchain cancel`, `/craftchain status` | Chat | Housekeeping. |
+| `/craftchain hud <x> <y>` | Chat | Moves the pinned list (default 4,150, below a top-left minimap). |
+| `/craftchain clear`, `/craftchain cancel`, `/craftchain status` | Chat | Housekeeping; `status` reports whether backpack hooks resolved and how many backpacks were seen. |
 
 Keys are rebindable under Controls > CraftChain. They only apply while a screen is open, so they
 cannot clash with movement keys. Chat tells the player what happened ("Missing: 12x Oak Log",
@@ -124,7 +126,8 @@ have/need numbers come from the inventory every frame, which is cheap.
 | 0 | Skeleton builds against Forge 47.4.2 + JEI + Curios API; dev client (`runClient`) loads the mod next to JEI 15 on LWJGL 3.3.1 and JEI registers the plugin | done |
 | 1 | JEI hook, planner, executor for 2x2 and 3x3, chat feedback, keybinds, config | code written, compiles, loads; **no craft run in-game yet** |
 | 2 | Pinned list with raw-material breakdown and HUD, persistence, `/craftchain` commands | code written, compiles, loads; **not yet exercised in-game** |
-| 3 | Backpacks (below) | researched, not started |
+| 3a | Count backpack contents (Sophisticated Backpacks contents-request packet via reflection, inventory + Curios slots) for the pinned bars and the prompt | code written, compiles; **not yet tested in the pack** |
+| 3b | Pull items out of backpacks for a craft | researched, not started |
 | 4 | Polish: drag-split to cut click count, "craft pinned amount" key, consume `getRemainingItems` (buckets), handle JEI-hidden recipes | not started |
 
 ## 4. Phase 3: backpacks

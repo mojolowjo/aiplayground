@@ -2,11 +2,13 @@ package com.mojolowjo.craftchain;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojolowjo.craftchain.backpack.BackpackSupport;
 import com.mojolowjo.craftchain.execution.CraftExecutor;
 import com.mojolowjo.craftchain.execution.GridLayout;
 import com.mojolowjo.craftchain.jei.JeiHover;
 import com.mojolowjo.craftchain.pins.PinnedList;
+import com.mojolowjo.craftchain.pins.PinnedOverlay;
 import com.mojolowjo.craftchain.planning.CraftPlan;
 import com.mojolowjo.craftchain.planning.CraftPlanner;
 import com.mojolowjo.craftchain.planning.ItemCounts;
@@ -27,15 +29,16 @@ import net.minecraftforge.client.event.ScreenEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.Map;
 import java.util.Optional;
 
-/** Forge event glue: keys, ticks, recipe reloads, and the /craftchain client command. */
+/** Forge event glue: keys, scroll, ticks, screen rendering, recipe reloads, and the /craftchain client command. */
 public final class ClientEvents {
     private static final String PREFIX = "[CraftChain] ";
 
-    /** A craft requested from JEI's recipe screen; it runs once a container screen is back in front. */
+    /** A craft confirmed from JEI's recipe screen; it runs once a container screen is back in front. */
     private ItemStack pendingTarget;
     private int pendingCount;
 
@@ -43,12 +46,27 @@ public final class ClientEvents {
         CraftExecutor.get().setFeedback(ClientEvents::say);
     }
 
+    // ---- input -----------------------------------------------------------------------------
+
     // HIGH priority so we see the key before JEI's own handler (which runs at NORMAL).
     @SubscribeEvent(priority = EventPriority.HIGH)
     public void onKey(ScreenEvent.KeyPressed.Pre event) {
         Screen screen = event.getScreen();
         InputConstants.Key key = InputConstants.getKey(event.getKeyCode(), event.getScanCode());
+        CraftPrompt prompt = CraftPrompt.get();
 
+        if (event.getKeyCode() == GLFW.GLFW_KEY_ESCAPE) {
+            if (prompt.isActive()) {
+                prompt.close();
+                event.setCanceled(true);
+                return;
+            }
+            if (CraftExecutor.get().isRunning()) {
+                CraftExecutor.get().cancel("craftchain.msg.cancelled");
+                event.setCanceled(true);
+                return;
+            }
+        }
         if (Keybinds.CANCEL.isActiveAndMatches(key) && CraftExecutor.get().isRunning()) {
             CraftExecutor.get().cancel("craftchain.msg.cancelled");
             event.setCanceled(true);
@@ -62,6 +80,23 @@ public final class ClientEvents {
         if (!craft && !pin) {
             return;
         }
+
+        // Second G: confirm the prompt.
+        if (craft && prompt.isActive()) {
+            event.setCanceled(true);
+            ItemStack target = prompt.target();
+            int amount = prompt.amount();
+            prompt.close();
+            if (screen instanceof AbstractContainerScreen<?>) {
+                requestCraft(target, amount);
+            } else {
+                pendingTarget = target;
+                pendingCount = amount;
+                screen.onClose();
+            }
+            return;
+        }
+
         Optional<ItemStack> hovered = JeiHover.itemUnderMouse(screen);
         if (hovered.isEmpty()) {
             return;
@@ -79,28 +114,49 @@ public final class ClientEvents {
                 int n = Screen.hasShiftDown() ? stackSize : 1;
                 PinnedList.get().add(stack.getItem(), n);
                 say(Component.translatable("craftchain.msg.pinned", n, stack.getHoverName()));
+                BackpackSupport.requestNow();
             }
             return;
         }
 
-        int count = Screen.hasShiftDown() ? stackSize : 1;
-        if (screen instanceof AbstractContainerScreen<?>) {
-            requestCraft(stack, count);
-        } else {
-            // JEI's recipe screen (or another non-container screen): go back and craft when the container shows.
-            pendingTarget = stack.copy();
-            pendingCount = count;
-            screen.onClose();
+        // First G: open the amount prompt.
+        prompt.open(screen, stack, Screen.hasShiftDown() ? stackSize : 1);
+        BackpackSupport.requestNow();
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public void onScroll(ScreenEvent.MouseScrolled.Pre event) {
+        CraftPrompt prompt = CraftPrompt.get();
+        if (!prompt.isActive()) {
+            return;
+        }
+        int step = Screen.hasShiftDown() ? 16 : 1;
+        prompt.adjust(event.getScrollDelta() > 0 ? step : -step);
+        event.setCanceled(true); // keep JEI's list from scrolling underneath
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGH)
+    public void onClick(ScreenEvent.MouseButtonPressed.Pre event) {
+        if (CraftPrompt.get().isActive()) {
+            CraftPrompt.get().close(); // clicking anywhere cancels the prompt; the click itself goes through
         }
     }
+
+    @SubscribeEvent
+    public void onScreenRender(ScreenEvent.Render.Post event) {
+        PinnedOverlay.draw(event.getGuiGraphics());
+        CraftPrompt.get().render(event.getScreen(), event.getGuiGraphics(), event.getMouseX(), event.getMouseY());
+    }
+
+    // ---- ticks and world -------------------------------------------------------------------
 
     @SubscribeEvent
     public void onTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) {
             return;
         }
+        Minecraft mc = Minecraft.getInstance();
         if (pendingTarget != null) {
-            Minecraft mc = Minecraft.getInstance();
             if (mc.screen instanceof AbstractContainerScreen<?>) {
                 ItemStack t = pendingTarget;
                 pendingTarget = null;
@@ -111,6 +167,7 @@ public final class ClientEvents {
             }
         }
         CraftExecutor.get().tick();
+        BackpackSupport.tick(mc.player != null && (!PinnedList.get().entries().isEmpty() || CraftPrompt.get().isActive()));
     }
 
     @SubscribeEvent
@@ -123,6 +180,7 @@ public final class ClientEvents {
     public void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
         RecipeIndex.clear();
         pendingTarget = null;
+        CraftPrompt.get().close();
     }
 
     @SubscribeEvent
@@ -139,11 +197,22 @@ public final class ClientEvents {
                     return 1;
                 }))
                 .then(Commands.literal("status").executes(ctx -> {
-                    say(Component.literal("Sophisticated Backpacks: " + BackpackSupport.sophisticatedBackpacksLoaded()
-                            + ", Curios: " + BackpackSupport.curiosLoaded()
-                            + ", running: " + CraftExecutor.get().isRunning()));
+                    say(Component.literal("backpacks " + BackpackSupport.describe()
+                            + ", running: " + CraftExecutor.get().isRunning()
+                            + ", pinned: " + PinnedList.get().entries().size()));
                     return 1;
-                })));
+                }))
+                .then(Commands.literal("hud")
+                        .then(Commands.argument("x", IntegerArgumentType.integer(0, 10000))
+                                .then(Commands.argument("y", IntegerArgumentType.integer(0, 10000)).executes(ctx -> {
+                                    int x = IntegerArgumentType.getInteger(ctx, "x");
+                                    int y = IntegerArgumentType.getInteger(ctx, "y");
+                                    ClientConfig.HUD_X.set(x);
+                                    ClientConfig.HUD_Y.set(y);
+                                    ClientConfig.SPEC.save();
+                                    say(Component.translatable("craftchain.msg.hud_moved", x, y));
+                                    return 1;
+                                })))));
     }
 
     // ---- crafting --------------------------------------------------------------------------
@@ -166,30 +235,38 @@ public final class ClientEvents {
         }
         Item item = target.getItem();
         ItemCounts inventory = ItemCounts.ofPlayerInventory(mc.player.getInventory());
+        inventory.take(item, Integer.MAX_VALUE); // the player wants N new ones, whatever they already hold
         CraftPlan plan = new CraftPlanner(index, layout.gridSize()).plan(item, count, inventory);
 
-        if (plan.steps().isEmpty()) {
-            if (inventory.get(item) >= count) {
-                say(Component.translatable("craftchain.msg.already_have", target.getHoverName()));
-            } else if (plan.needsBigGrid()) {
-                say(Component.translatable("craftchain.msg.needs_table"));
-            } else {
-                say(Component.translatable("craftchain.msg.no_recipe", target.getHoverName()));
-            }
+        if (plan.steps().isEmpty() && plan.missing().isEmpty()) {
+            say(Component.translatable(plan.needsBigGrid() ? "craftchain.msg.needs_table" : "craftchain.msg.no_recipe",
+                    target.getHoverName()));
             return;
         }
         if (!plan.missing().isEmpty()) {
-            StringBuilder sb = new StringBuilder();
+            ItemCounts packs = BackpackSupport.cachedContents();
+            StringBuilder missing = new StringBuilder();
+            StringBuilder inPacks = new StringBuilder();
             for (Map.Entry<Item, Integer> e : plan.missing().asMap().entrySet()) {
-                if (sb.length() > 0) {
-                    sb.append(", ");
+                String name = new ItemStack(e.getKey()).getHoverName().getString();
+                if (missing.length() > 0) {
+                    missing.append(", ");
                 }
-                sb.append(e.getValue()).append("x ").append(new ItemStack(e.getKey()).getHoverName().getString());
+                missing.append(e.getValue()).append("x ").append(name);
+                int inPack = packs.get(e.getKey());
+                if (inPack > 0) {
+                    if (inPacks.length() > 0) {
+                        inPacks.append(", ");
+                    }
+                    inPacks.append(inPack).append("x ").append(name);
+                }
             }
-            say(Component.translatable("craftchain.msg.missing", sb.toString()));
-            if (BackpackSupport.sophisticatedBackpacksLoaded()) {
-                say(Component.translatable("craftchain.msg.backpacks_todo"));
+            say(Component.translatable("craftchain.msg.missing", missing.toString()));
+            if (inPacks.length() > 0) {
+                say(Component.translatable("craftchain.msg.in_backpack", inPacks.toString()));
             }
+            PinnedList.get().add(item, count);
+            say(Component.translatable("craftchain.msg.auto_pinned", count, target.getHoverName()));
             return;
         }
         if (plan.needsBigGrid()) {

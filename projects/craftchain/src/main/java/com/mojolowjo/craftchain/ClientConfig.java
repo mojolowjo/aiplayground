@@ -17,9 +17,12 @@ public final class ClientConfig {
     public static final ForgeConfigSpec.IntValue MAX_PLAN_DEPTH;
     public static final ForgeConfigSpec.IntValue MAX_RECIPES_PER_ITEM;
     public static final ForgeConfigSpec.BooleanValue SHOW_PINNED_HUD;
+    public static final ForgeConfigSpec.BooleanValue SHOW_MATERIALS;
     public static final ForgeConfigSpec.IntValue HUD_X;
     public static final ForgeConfigSpec.IntValue HUD_Y;
     public static final ForgeConfigSpec.BooleanValue CHAT_FEEDBACK;
+    public static final ForgeConfigSpec.BooleanValue BACKPACKS_ENABLED;
+    public static final ForgeConfigSpec.IntValue BACKPACK_REFRESH_TICKS;
 
     static {
         ForgeConfigSpec.Builder b = new ForgeConfigSpec.Builder();
@@ -65,9 +68,22 @@ public final class ClientConfig {
 
         b.push("hud");
         SHOW_PINNED_HUD = b.comment("Draw the pinned-items list on screen.").define("showPinnedList", true);
-        HUD_X = b.comment("Left edge of the pinned list, in GUI pixels.").defineInRange("x", 4, 0, 10000);
-        HUD_Y = b.comment("Top edge of the pinned list, in GUI pixels.").defineInRange("y", 4, 0, 10000);
+        SHOW_MATERIALS = b.comment("Under each pinned item, list its raw materials with have/need. Off = bars only.")
+                .define("showMaterials", true);
+        HUD_X = b.comment("Left edge of the pinned list, in GUI pixels. Also set with /craftchain hud <x> <y>.")
+                .defineInRange("x", 4, 0, 10000);
+        HUD_Y = b.comment("Top edge of the pinned list, in GUI pixels. The default sits below a top-left minimap.")
+                .defineInRange("y", 150, 0, 10000);
         CHAT_FEEDBACK = b.comment("Print what CraftChain is doing to chat.").define("chatFeedback", true);
+        b.pop();
+
+        b.push("backpacks");
+        BACKPACKS_ENABLED = b.comment(
+                "Count items inside Sophisticated Backpacks you carry (inventory and Curios slot).",
+                "Uses the backpack mod's own contents-request packet, the same one its hover tooltip uses.")
+                .define("countBackpackContents", true);
+        BACKPACK_REFRESH_TICKS = b.comment("How often to ask the server for backpack contents, in ticks, while something is pinned.")
+                .defineInRange("refreshTicks", 100, 20, 1200);
         b.pop();
 
         SPEC = b.build();

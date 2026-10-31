@@ -20,13 +20,16 @@ to be missing.
 ## Features
 
 * **Craft from JEI.** Hover an item in JEI's list, bookmarks or recipe screen (or an inventory
-  slot) and press **G**. Shift+G crafts a stack. Works in the 2x2 inventory grid for small recipes
-  and in a crafting table for 3x3 ones.
+  slot) and press **G**. A prompt opens; scroll to pick the amount (Shift scrolls by 16), press
+  **G** again to craft. Works in the 2x2 inventory grid for small recipes and in a crafting table
+  for 3x3 ones. If you lack materials, the item is pinned instead.
 * **Pinned list.** Press **P** on a hovered item to pin it (Shift+P pins a stack, Ctrl+P unpins).
-  The corner of the screen then shows each pinned item and the raw materials it needs, broken
-  down as far as crafting-table recipes go (64 ladders -> 20 logs), with have/need counts.
-* **Backpacks:** planned, not built. The pack's Sophisticated Backpacks keep their contents on
-  the server, so this needs the mod to open the backpack first. The plan is in the outline.
+  Each pinned item shows a progress bar of raw materials gathered versus needed, `[READY]` when
+  complete, and the material lines (64 ladders -> 20 logs). Shown in the world and over any
+  screen; move it with `/craftchain hud <x> <y>`.
+* **Backpacks:** the bars and the prompt count items inside Sophisticated Backpacks you carry
+  (inventory and Curios back slot) by asking the server the way the backpack tooltip does.
+  Pulling items out of a backpack for a craft is not built yet.
 
 Keys are rebindable under Options > Controls > CraftChain. Settings live in
 `config/craftchain-client.toml`; pins in `config/craftchain-pins.json`.
