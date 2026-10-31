@@ -45,9 +45,12 @@ public final class BackpackSupport {
 
     private static boolean initialised;
     private static boolean available;
+    private static String failReason = "";
     private static Class<?> backpackItemClass;
     private static Constructor<?> referenceCtor;
     private static Constructor<?> requestCtor;
+    /** Parameter kinds of requestCtor, resolved at init: 'u' = UUID, 'r' = ItemStackReference, 'i' = int slot, 's' = String. */
+    private static char[] requestShape;
     private static Object packetHandler;
     private static Method sendToServer;
     private static Method storageGet;
@@ -137,9 +140,29 @@ public final class BackpackSupport {
             return; // a backpack that was never opened has no contents yet
         }
         knownBackpacks.add(uuid.get());
-        Object reference = referenceCtor.newInstance(containerId, slot, handler, identifier);
-        Object message = requestCtor.newInstance(uuid.get(), reference);
+        Object[] args = new Object[requestShape.length];
+        for (int i = 0; i < requestShape.length; i++) {
+            args[i] = switch (requestShape[i]) {
+                case 'u' -> uuid.get();
+                case 'r' -> referenceCtor.newInstance(containerId, slot, handler, identifier);
+                case 'i' -> slot;
+                default -> handler;
+            };
+        }
+        if (containerId == -2 && !hasShape('r')) {
+            return; // an older message cannot point at an equipment slot; inventory backpacks still work
+        }
+        Object message = requestCtor.newInstance(args);
         sendToServer.invoke(packetHandler, message);
+    }
+
+    private static boolean hasShape(char kind) {
+        for (char c : requestShape) {
+            if (c == kind) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Re-read the client-side copy of every known backpack's contents. */
@@ -188,23 +211,70 @@ public final class BackpackSupport {
         if (!sophisticatedBackpacksLoaded()) {
             return;
         }
+        String step = "BackpackItem";
         try {
             backpackItemClass = Class.forName(SB + "backpack.BackpackItem");
-            Class<?> referenceClass = Class.forName(CORE + "network.ItemStackReference");
-            referenceCtor = referenceClass.getConstructor(int.class, int.class, String.class, String.class);
+
+            step = "ItemStackReference";
+            Class<?> referenceClass = null;
+            try {
+                referenceClass = Class.forName(CORE + "network.ItemStackReference");
+                referenceCtor = referenceClass.getConstructor(int.class, int.class, String.class, String.class);
+            } catch (ClassNotFoundException | NoSuchMethodException ignored) {
+                // Older Sophisticated Core: the request message then takes a slot number instead.
+            }
+
+            step = "RequestBackpackInventoryContentsMessage";
             Class<?> requestClass = Class.forName(SB + "network.RequestBackpackInventoryContentsMessage");
-            requestCtor = requestClass.getConstructor(UUID.class, referenceClass);
+            requestCtor = pickRequestConstructor(requestClass, referenceClass);
+
+            step = "SBPPacketHandler";
             Class<?> handlerClass = Class.forName(SB + "network.SBPPacketHandler");
             packetHandler = handlerClass.getField("INSTANCE").get(null);
             sendToServer = findMethod(packetHandler.getClass(), "sendToServer", 1);
+
+            step = "BackpackStorage";
             Class<?> storageClass = Class.forName(SB + "backpack.BackpackStorage");
             storageGet = storageClass.getMethod("get");
             getContents = storageClass.getMethod("getBackpackContents", UUID.class);
+
             available = true;
-            CraftChain.LOGGER.info("Sophisticated Backpacks hooks ready");
+            failReason = "";
+            CraftChain.LOGGER.info("Sophisticated Backpacks hooks ready; request shape {}", new String(requestShape));
         } catch (Throwable t) {
-            disable("hooks did not resolve: " + t);
+            disable("hooks did not resolve at " + step + ": " + t);
         }
+    }
+
+    /** Finds a public constructor we can satisfy and records which argument goes where. */
+    private static Constructor<?> pickRequestConstructor(Class<?> requestClass, Class<?> referenceClass) throws NoSuchMethodException {
+        StringBuilder seen = new StringBuilder();
+        for (Constructor<?> c : requestClass.getConstructors()) {
+            Class<?>[] p = c.getParameterTypes();
+            char[] shape = new char[p.length];
+            boolean ok = true;
+            boolean hasUuid = false;
+            for (int i = 0; i < p.length; i++) {
+                if (p[i] == UUID.class) {
+                    shape[i] = 'u';
+                    hasUuid = true;
+                } else if (referenceClass != null && p[i] == referenceClass) {
+                    shape[i] = 'r';
+                } else if (p[i] == int.class) {
+                    shape[i] = 'i';
+                } else if (p[i] == String.class) {
+                    shape[i] = 's';
+                } else {
+                    ok = false;
+                }
+            }
+            seen.append(c.toGenericString()).append("; ");
+            if (ok && hasUuid) {
+                requestShape = shape;
+                return c;
+            }
+        }
+        throw new NoSuchMethodException("no usable constructor; found: " + seen);
     }
 
     private static Method findMethod(Class<?> type, String name, int params) throws NoSuchMethodException {
@@ -220,14 +290,13 @@ public final class BackpackSupport {
     }
 
     private static void disable(String why) {
-        if (available || !initialised) {
-            CraftChain.LOGGER.warn("Backpack support disabled: {}", why);
-        }
+        CraftChain.LOGGER.warn("Backpack support disabled: {}", why);
+        failReason = why;
         available = false;
         cached = new ItemCounts();
     }
 
-    /** For /craftchain status. */
+    /** For /craftchain status. Includes the failure reason so nobody has to dig through logs. */
     public static String describe() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("sophisticatedbackpacks", sophisticatedBackpacksLoaded());
@@ -235,6 +304,9 @@ public final class BackpackSupport {
         m.put("hooks", working());
         m.put("backpacksSeen", knownBackpacks.size());
         m.put("itemsCounted", cached.total());
+        if (!failReason.isEmpty()) {
+            m.put("why", failReason);
+        }
         return m.toString();
     }
 }
