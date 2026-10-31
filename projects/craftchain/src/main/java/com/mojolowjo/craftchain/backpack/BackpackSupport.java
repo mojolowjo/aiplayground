@@ -58,6 +58,9 @@ public final class BackpackSupport {
 
     /** UUIDs of the backpacks we know the player carries, refreshed on every scan. */
     private static final List<UUID> knownBackpacks = new ArrayList<>();
+    private static int backpackItemsFound;
+    private static int curiosChecked;
+    private static int requestsSent;
     private static ItemCounts cached = new ItemCounts();
     private static int ticksUntilScan;
 
@@ -113,17 +116,23 @@ public final class BackpackSupport {
             return;
         }
         knownBackpacks.clear();
+        backpackItemsFound = 0;
+        curiosChecked = 0;
         try {
             // Main inventory + hotbar (slots 0-35), armor (36-39), offhand (40).
             int size = player.getInventory().getContainerSize();
             for (int slot = 0; slot < size; slot++) {
                 ItemStack stack = player.getInventory().getItem(slot);
                 if (isBackpack(stack)) {
+                    backpackItemsFound++;
                     request(stack, -1, slot, "", "");
                 }
             }
             if (curiosLoaded()) {
-                for (CuriosAccess.Found f : CuriosAccess.findBackpacks(player, BackpackSupport::isBackpack)) {
+                List<CuriosAccess.Found> found = CuriosAccess.findBackpacks(player, BackpackSupport::isBackpack);
+                curiosChecked = found.size();
+                for (CuriosAccess.Found f : found) {
+                    backpackItemsFound++;
                     request(f.stack(), -2, f.slot(), "curios", f.identifier());
                 }
             }
@@ -154,6 +163,7 @@ public final class BackpackSupport {
         }
         Object message = requestCtor.newInstance(args);
         sendToServer.invoke(packetHandler, message);
+        requestsSent++;
     }
 
     private static boolean hasShape(char kind) {
@@ -309,8 +319,14 @@ public final class BackpackSupport {
         m.put("sophisticatedbackpacks", sophisticatedBackpacksLoaded());
         m.put("curios", curiosLoaded());
         m.put("hooks", working());
-        m.put("backpacksSeen", knownBackpacks.size());
+        m.put("backpackItems", backpackItemsFound);
+        m.put("inCurios", curiosChecked);
+        m.put("withContentsId", knownBackpacks.size());
+        m.put("requestsSent", requestsSent);
         m.put("itemsCounted", cached.total());
+        if (requestShape != null) {
+            m.put("shape", new String(requestShape));
+        }
         if (!failReason.isEmpty()) {
             m.put("why", failReason);
         }

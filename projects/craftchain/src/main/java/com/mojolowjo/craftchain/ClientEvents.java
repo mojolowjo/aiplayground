@@ -197,6 +197,7 @@ public final class ClientEvents {
                     return 1;
                 }))
                 .then(Commands.literal("status").executes(ctx -> {
+                    BackpackSupport.requestNow(); // scan now; the server's answer shows up on the next status
                     say(Component.literal("backpacks " + BackpackSupport.describe()
                             + ", running: " + CraftExecutor.get().isRunning()
                             + ", pinned: " + PinnedList.get().entries().size()));
