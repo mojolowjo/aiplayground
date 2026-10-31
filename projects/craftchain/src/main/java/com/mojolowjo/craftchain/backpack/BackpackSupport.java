@@ -158,8 +158,8 @@ public final class BackpackSupport {
                 default -> handler;
             };
         }
-        if (containerId == -2 && !hasShape('r')) {
-            return; // an older message cannot point at an equipment slot; inventory backpacks still work
+        if (containerId == -2 && hasShape('i') && !hasShape('r')) {
+            return; // a slot-number-only message cannot point at an equipment slot; a UUID-only one can
         }
         Object message = requestCtor.newInstance(args);
         sendToServer.invoke(packetHandler, message);
