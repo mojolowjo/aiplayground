@@ -1,11 +1,11 @@
 package com.mojolowjo.craftchain;
 
-import com.mojolowjo.craftchain.backpack.BackpackSupport;
 import com.mojolowjo.craftchain.execution.GridLayout;
 import com.mojolowjo.craftchain.planning.CraftPlan;
 import com.mojolowjo.craftchain.planning.CraftPlanner;
 import com.mojolowjo.craftchain.planning.ItemCounts;
 import com.mojolowjo.craftchain.planning.RecipeIndex;
+import com.mojolowjo.craftchain.planning.Stock;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
@@ -20,7 +20,7 @@ import java.util.Map;
 /**
  * The "how many?" prompt. First G press on a hovered item opens it, the scroll wheel changes the
  * amount, a second G confirms, Esc or a click cancels. While open it shows whether the amount is
- * craftable from the inventory right now.
+ * craftable from what you own, and what would have to come out of a backpack.
  */
 public final class CraftPrompt {
     private static final CraftPrompt INSTANCE = new CraftPrompt();
@@ -31,8 +31,8 @@ public final class CraftPrompt {
     private int amount = 1;
     @Nullable
     private Screen screen;
-    // Cached check for the current amount, so we do not re-plan every frame.
     private int checkedAmount = -1;
+    private int checkedStock = 0;
     private String checkText = "";
     private int checkColor = 0xFFFFFFFF;
 
@@ -71,13 +71,12 @@ public final class CraftPrompt {
         amount = Math.max(1, Math.min(MAX_AMOUNT, amount + delta));
     }
 
-    /** Draws the prompt near the mouse. Called from ScreenEvent.Render.Post. */
     public void render(Screen current, GuiGraphics graphics, int mouseX, int mouseY) {
         if (!active) {
             return;
         }
         if (current != screen) {
-            close(); // the screen changed underneath us
+            close();
             return;
         }
         Minecraft mc = Minecraft.getInstance();
@@ -92,7 +91,7 @@ public final class CraftPrompt {
         int y = Math.min(mouseY + 12, graphics.guiHeight() - h - 2);
 
         graphics.pose().pushPose();
-        graphics.pose().translate(0, 0, 500); // above JEI's overlay and tooltips
+        graphics.pose().translate(0, 0, 500);
         graphics.fill(x - 3, y - 3, x + w + 3, y + h, 0xF0100010);
         graphics.renderOutline(x - 3, y - 3, w + 6, h + 3, 0xFF5000FF);
         graphics.renderItem(target, x, y);
@@ -103,10 +102,12 @@ public final class CraftPrompt {
     }
 
     private void refreshCheck(Minecraft mc) {
-        if (checkedAmount == amount || mc.player == null) {
+        Stock stock = Stock.snapshot();
+        if ((checkedAmount == amount && checkedStock == stock.key()) || mc.player == null) {
             return;
         }
         checkedAmount = amount;
+        checkedStock = stock.key();
         RecipeIndex index = RecipeIndex.get();
         if (index == null) {
             checkText = "Recipes not loaded";
@@ -117,14 +118,13 @@ public final class CraftPrompt {
         GridLayout layout = GridLayout.of(menu);
         int grid = layout == null ? 3 : layout.gridSize();
         Item item = target.getItem();
-        ItemCounts inventory = ItemCounts.ofPlayerInventory(mc.player.getInventory());
-        inventory.take(item, Integer.MAX_VALUE); // we want N new ones, whatever is already there
-        CraftPlan plan = new CraftPlanner(index, grid).plan(item, amount, inventory);
+        ItemCounts owned = stock.total().copy();
+        owned.take(item, Integer.MAX_VALUE);
+        CraftPlan plan = new CraftPlanner(index, grid, stock.inventory()).plan(item, amount, owned);
         if (plan.steps().isEmpty() && plan.missing().isEmpty()) {
             checkText = "No crafting recipe";
             checkColor = 0xFFFF5555;
         } else if (!plan.missing().isEmpty()) {
-            ItemCounts packs = BackpackSupport.cachedContents();
             StringBuilder sb = new StringBuilder("Missing: ");
             boolean first = true;
             for (Map.Entry<Item, Integer> e : plan.missing().asMap().entrySet()) {
@@ -133,9 +133,6 @@ public final class CraftPrompt {
                 }
                 first = false;
                 sb.append(e.getValue()).append("x ").append(new ItemStack(e.getKey()).getHoverName().getString());
-                if (packs.get(e.getKey()) > 0) {
-                    sb.append(" (").append(packs.get(e.getKey())).append(" in backpack)");
-                }
             }
             sb.append("  - G pins it");
             checkText = sb.toString();
@@ -144,7 +141,12 @@ public final class CraftPrompt {
             checkText = "Needs a crafting table";
             checkColor = 0xFFFFAA00;
         } else {
-            checkText = "Ready: " + plan.steps().size() + " recipes, " + plan.totalCrafts() + " crafts";
+            int fromPacks = 0;
+            for (Map.Entry<Item, Integer> e : plan.used().asMap().entrySet()) {
+                fromPacks += Math.max(0, e.getValue() - stock.inventory().get(e.getKey()));
+            }
+            checkText = "Ready: " + plan.steps().size() + " recipes, " + plan.totalCrafts() + " crafts"
+                    + (fromPacks > 0 ? ", " + fromPacks + " items from backpacks" : "");
             checkColor = 0xFF55FF55;
         }
     }

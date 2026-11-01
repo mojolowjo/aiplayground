@@ -1,8 +1,8 @@
 package com.mojolowjo.craftchain.pins;
 
 import com.mojolowjo.craftchain.ClientConfig;
-import com.mojolowjo.craftchain.backpack.BackpackSupport;
-import com.mojolowjo.craftchain.planning.ItemCounts;
+import com.mojolowjo.craftchain.planning.RecipeIndex;
+import com.mojolowjo.craftchain.planning.Stock;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
@@ -15,16 +15,16 @@ import java.util.Map;
 
 /**
  * Draws the pinned list, in the world (as a Forge GUI overlay) and on top of any open screen
- * (from ScreenEvent.Render.Post), so it is visible while browsing JEI:
+ * (from ScreenEvent.Render.Post):
  *
  * <pre>
- * [icon] Ladder x64                 [READY]
+ * [icon] Ladder x64                        [READY]
  *        [##########----------]  12/20
- *          Oak Log  3/20
+ *          Oak Log (any #minecraft:logs)  3/20
  * </pre>
  *
- * The bar is "raw materials gathered / raw materials needed", counting the inventory and any
- * backpack contents we have heard about. The breakdown is cached in {@link PinnedList}.
+ * The bar is how much of the raw-material total is already covered by what you own, inventory and
+ * backpacks included, with intermediate items (sticks you already have) counting toward it.
  */
 public final class PinnedOverlay implements IGuiOverlay {
     private static final int LINE = 10;
@@ -62,27 +62,24 @@ public final class PinnedOverlay implements IGuiOverlay {
         if (pins.entries().isEmpty()) {
             return;
         }
-        pins.refresh();
-        ItemCounts have = ItemCounts.ofPlayerInventory(mc.player.getInventory());
-        for (Map.Entry<Item, Integer> e : BackpackSupport.cachedContents().asMap().entrySet()) {
-            have.add(e.getKey(), e.getValue());
-        }
+        Stock stock = Stock.snapshot();
+        pins.refresh(stock);
+        RecipeIndex index = RecipeIndex.get();
         Font font = mc.font;
         boolean materials = ClientConfig.SHOW_MATERIALS.get();
 
         int x = ClientConfig.HUD_X.get();
         int y = ClientConfig.HUD_Y.get();
 
-        // Measure first so the background fits.
         int height = 0;
-        int width = ICON + 4 + BAR_W + 40;
+        int width = ICON + 4 + BAR_W + 50;
         for (PinnedList.Entry e : pins.entries()) {
             height += LINE + BAR_H + 4;
             width = Math.max(width, ICON + 2 + font.width(headerText(e)) + 50);
             if (materials && e.raw != null) {
-                for (Map.Entry<Item, Integer> r : e.raw.asMap().entrySet()) {
+                for (Map.Entry<Item, Integer> r : e.raw.entrySet()) {
                     height += LINE;
-                    width = Math.max(width, ICON + 6 + font.width(rawText(r.getKey(), have.get(r.getKey()), r.getValue())));
+                    width = Math.max(width, ICON + 6 + font.width(rawText(index, e, stock, r.getKey(), r.getValue())));
                 }
             }
             height += 4;
@@ -93,21 +90,14 @@ public final class PinnedOverlay implements IGuiOverlay {
 
         int cy = y;
         for (PinnedList.Entry e : pins.entries()) {
-            ItemStack icon = new ItemStack(e.item);
-            graphics.renderItem(icon, x, cy - 3);
+            graphics.renderItem(new ItemStack(e.item), x, cy - 3);
             graphics.drawString(font, headerText(e), x + ICON + 2, cy, WHITE, true);
 
-            int need = 0;
-            int got = 0;
-            if (e.raw != null) {
-                for (Map.Entry<Item, Integer> r : e.raw.asMap().entrySet()) {
-                    need += r.getValue();
-                    got += Math.min(have.get(r.getKey()), r.getValue());
-                }
-            }
-            boolean ready = e.raw != null && need > 0 && got >= need;
-            boolean noRecipe = e.raw != null && need == 0;
-            if (ready) {
+            int need = e.rawTotal();
+            int missing = e.missingNow.total();
+            int got = Math.max(0, need - missing);
+            boolean noRecipe = e.raw != null && need == 0 && !e.craftable;
+            if (e.craftable) {
                 graphics.drawString(font, "[READY]", x + width - font.width("[READY]"), cy, GREEN, true);
             } else if (noRecipe) {
                 graphics.drawString(font, "no recipe", x + width - font.width("no recipe"), cy, GREY, true);
@@ -117,10 +107,10 @@ public final class PinnedOverlay implements IGuiOverlay {
             int bx = x + ICON + 4;
             graphics.fill(bx, cy, bx + BAR_W, cy + BAR_H, BAR_BG);
             if (need > 0) {
-                int fill = (int) Math.round((double) BAR_W * got / need);
-                graphics.fill(bx, cy, bx + Math.max(0, Math.min(BAR_W, fill)), cy + BAR_H, ready ? BAR_DONE : BAR_FILL);
+                int fill = e.craftable ? BAR_W : (int) Math.round((double) BAR_W * got / need);
+                graphics.fill(bx, cy, bx + Math.max(0, Math.min(BAR_W, fill)), cy + BAR_H, e.craftable ? BAR_DONE : BAR_FILL);
             }
-            graphics.drawString(font, got + "/" + need, bx + BAR_W + 4, cy - 2, ready ? GREEN : WHITE, true);
+            graphics.drawString(font, (e.craftable ? need : got) + "/" + need, bx + BAR_W + 4, cy - 2, e.craftable ? GREEN : WHITE, true);
             cy += BAR_H + 4;
 
             if (materials) {
@@ -128,10 +118,11 @@ public final class PinnedOverlay implements IGuiOverlay {
                     graphics.drawString(font, "...", x + ICON + 6, cy, GREY, true);
                     cy += LINE;
                 } else {
-                    for (Map.Entry<Item, Integer> r : e.raw.asMap().entrySet()) {
-                        int g = have.get(r.getKey());
+                    for (Map.Entry<Item, Integer> r : e.raw.entrySet()) {
+                        int have = stock.totalOfAny(r.getKey(), e.alternatives.get(r.getKey()));
                         int n = r.getValue();
-                        graphics.drawString(font, rawText(r.getKey(), g, n), x + ICON + 6, cy, g >= n ? GREEN : RED, true);
+                        boolean ok = e.craftable || have >= n;
+                        graphics.drawString(font, rawText(index, e, stock, r.getKey(), n), x + ICON + 6, cy, ok ? GREEN : RED, true);
                         cy += LINE;
                     }
                 }
@@ -145,7 +136,13 @@ public final class PinnedOverlay implements IGuiOverlay {
         return new ItemStack(e.item).getHoverName().getString() + " x" + e.count;
     }
 
-    private static String rawText(Item item, int have, int need) {
-        return new ItemStack(item).getHoverName().getString() + "  " + have + "/" + need;
+    private static String rawText(RecipeIndex index, PinnedList.Entry e, Stock stock, Item item, int need) {
+        Item[] alts = e.alternatives.get(item);
+        String label = index == null || alts == null ? null : index.groupLabel(alts);
+        String name = new ItemStack(item).getHoverName().getString();
+        if (label != null) {
+            name += " (any " + label + ")";
+        }
+        return name + "  " + stock.totalOfAny(item, alts) + "/" + need;
     }
 }

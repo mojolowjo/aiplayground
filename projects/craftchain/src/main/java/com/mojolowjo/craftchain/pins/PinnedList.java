@@ -7,9 +7,11 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojolowjo.craftchain.CraftChain;
+import com.mojolowjo.craftchain.planning.CraftPlan;
 import com.mojolowjo.craftchain.planning.CraftPlanner;
 import com.mojolowjo.craftchain.planning.ItemCounts;
 import com.mojolowjo.craftchain.planning.RecipeIndex;
+import com.mojolowjo.craftchain.planning.Stock;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
 import net.minecraftforge.fml.loading.FMLPaths;
@@ -20,11 +22,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Items the player wants to craft, with a count each, plus the raw-material breakdown for each one.
- * Saved to config/craftchain-pins.json so the list survives restarts.
+ * Breakdowns are planned against an empty stock but with the real stock used to choose between
+ * alternatives, so "any log" becomes the log you actually own. Saved to config/craftchain-pins.json.
  */
 public final class PinnedList {
     private static final PinnedList INSTANCE = new PinnedList();
@@ -33,8 +39,24 @@ public final class PinnedList {
     public static final class Entry {
         public final Item item;
         public int count;
-        /** Raw materials for {@code count}, recomputed when the count or the recipes change. May be null before the first compute. */
-        public ItemCounts raw;
+        /** Raw material -> count needed for {@code count}. Null before the first compute. */
+        public Map<Item, Integer> raw;
+        /** Raw material -> the other items that would do instead (tag groups). */
+        public Map<Item, Item[]> alternatives = Collections.emptyMap();
+        /** Raw materials still missing once the current stock (inventory + backpacks) is counted. */
+        public ItemCounts missingNow = new ItemCounts();
+        /** True when the full chain can be crafted from the current stock. */
+        public boolean craftable;
+
+        public int rawTotal() {
+            int n = 0;
+            if (raw != null) {
+                for (int v : raw.values()) {
+                    n += v;
+                }
+            }
+            return n;
+        }
 
         Entry(Item item, int count) {
             this.item = item;
@@ -44,6 +66,7 @@ public final class PinnedList {
 
     private final List<Entry> entries = new ArrayList<>();
     private boolean dirty = true;
+    private int lastStockKey;
 
     public static PinnedList get() {
         return INSTANCE;
@@ -57,7 +80,6 @@ public final class PinnedList {
         for (Entry e : entries) {
             if (e.item == item) {
                 e.count += amount;
-                e.raw = null;
                 dirty = true;
                 save();
                 return;
@@ -81,30 +103,40 @@ public final class PinnedList {
         save();
     }
 
-    /** Recipes changed (new world, datapack reload): throw away the breakdowns. */
     public void invalidate() {
-        for (Entry e : entries) {
-            e.raw = null;
-        }
         dirty = true;
     }
 
-    /** Fills in missing breakdowns. Cheap when nothing changed. */
-    public void refresh() {
-        if (!dirty) {
+    /** Recomputes breakdowns when the stock changed. Cheap when nothing changed. */
+    public void refresh(Stock stock) {
+        int key = stock.key();
+        if (!dirty && key == lastStockKey) {
             return;
         }
         RecipeIndex index = RecipeIndex.get();
         if (index == null) {
             return;
         }
-        CraftPlanner planner = new CraftPlanner(index, 3);
-        for (Entry e : entries) {
-            if (e.raw == null) {
-                e.raw = planner.rawMaterials(e.item, e.count);
-            }
-        }
+        lastStockKey = key;
         dirty = false;
+        for (Entry e : entries) {
+            ItemCounts owned = stock.total().copy();
+            owned.take(e.item, Integer.MAX_VALUE); // the pin means "make N new ones"
+
+            // What is still missing once everything owned (inventory + backpacks) is counted.
+            CraftPlan withStock = new CraftPlanner(index, 3, stock.inventory()).plan(e.item, e.count, owned);
+            e.missingNow = withStock.missing();
+            e.craftable = withStock.missing().isEmpty() && !withStock.steps().isEmpty();
+
+            // The full raw list, choosing between alternatives by what we own.
+            CraftPlan full = new CraftPlanner(index, 3, stock.inventory()).planWithChoicesFrom(e.item, e.count, owned);
+            Map<Item, Integer> raw = new LinkedHashMap<>();
+            for (Map.Entry<Item, Integer> m : full.missing().asMap().entrySet()) {
+                raw.merge(m.getKey(), m.getValue(), Integer::sum);
+            }
+            e.raw = raw;
+            e.alternatives = full.alternatives();
+        }
     }
 
     // ---- persistence ---------------------------------------------------------------------

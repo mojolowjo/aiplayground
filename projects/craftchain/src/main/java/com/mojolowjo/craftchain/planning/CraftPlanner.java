@@ -1,61 +1,117 @@
 package com.mojolowjo.craftchain.planning;
 
 import com.mojolowjo.craftchain.ClientConfig;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.crafting.CraftingRecipe;
+import net.minecraftforge.registries.ForgeRegistries;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
- * Turns "I want N of item X" into an ordered list of crafts, using what is in a (virtual) inventory.
+ * Turns "I want N of item X" into an ordered list of crafts, using a stock snapshot (inventory plus
+ * backpacks).
  *
- * The algorithm is depth-first: take what the inventory already has, and for the rest pick a recipe,
- * plan each of its ingredients recursively, then append the recipe itself. Ingredients therefore
- * always come before the recipes that consume them.
+ * Depth-first: take what the stock already has, and for the rest pick a recipe, plan each of its
+ * ingredients recursively, then append the recipe itself. Ingredients therefore always come before
+ * the recipes that consume them.
  *
- * Choosing between recipes: up to {@code maxRecipesPerItem} candidates are each tried on a copy of
- * the state and the one leaving the fewest missing raw materials wins. A work budget keeps that
- * from exploding on packs with hundreds of alternative recipes; past the budget the planner goes
- * greedy (first candidate only).
+ * Choosing between items that satisfy one ingredient (a tag such as "any log"):
+ * <ol>
+ *   <li>the item we hold the most of, inventory first, then backpacks</li>
+ *   <li>items the player listed as preferred in the config</li>
+ *   <li>never items listed as blocked (unless nothing else exists)</li>
+ *   <li>vanilla items before mod items</li>
+ *   <li>the recipe's first option</li>
+ * </ol>
  *
- * Cycles: an item already being expanded higher up the chain is never expanded again (iron ingot ->
- * iron block -> iron ingot). On top of that, "reversible" recipes (ingot <-> block, ingot <-> nugget)
- * are only used when the inventory already holds enough of the input, so the planner never invents
- * blocks from ingots it does not have, and the raw-material breakdown stops at the ingot.
+ * Choosing between recipes: up to {@code maxRecipesPerItem} candidates are tried on a copy of the
+ * state and the one leaving the fewest missing raw materials wins, within a work budget.
+ *
+ * Cycles: an item already being expanded higher up the chain is never expanded again. Reversible
+ * pairs (ingot <-> block) are only used when the input is already in stock.
  */
 public final class CraftPlanner {
     private final RecipeIndex index;
     private final int gridSize;
     private final int maxDepth;
     private final int maxCandidates;
+    private final Set<Item> preferred = new HashSet<>();
+    private final Set<Item> blocked = new HashSet<>();
+    private final ItemCounts inventoryOnly;
+    /** Counts used only to choose between alternatives; usually the stock being planned against. */
+    private ItemCounts choiceStock = new ItemCounts();
     private int budget = 20_000;
     private boolean needsBigGrid;
+    private Map<Item, Item[]> alternatives;
 
-    public CraftPlanner(RecipeIndex index, int gridSize) {
+    /**
+     * @param inventoryOnly what is in the player's own inventory (used to prefer those items over
+     *                      backpack items); may be the same as the full stock
+     */
+    public CraftPlanner(RecipeIndex index, int gridSize, ItemCounts inventoryOnly) {
         this.index = index;
         this.gridSize = gridSize;
+        this.inventoryOnly = inventoryOnly;
         this.maxDepth = ClientConfig.MAX_PLAN_DEPTH.get();
         this.maxCandidates = ClientConfig.MAX_RECIPES_PER_ITEM.get();
+        for (String id : ClientConfig.PREFERRED_ITEMS.get()) {
+            Item item = ForgeRegistries.ITEMS.getValue(ResourceLocation.tryParse(id.trim()));
+            if (item != null) {
+                preferred.add(item);
+            }
+        }
+        for (String id : ClientConfig.BLOCKED_ITEMS.get()) {
+            Item item = ForgeRegistries.ITEMS.getValue(ResourceLocation.tryParse(id.trim()));
+            if (item != null) {
+                blocked.add(item);
+            }
+        }
     }
 
-    /** Plan using an inventory. {@code inventory} is not modified. */
-    public CraftPlan plan(Item target, int count, ItemCounts inventory) {
-        ItemCounts inv = inventory.copy();
+    public CraftPlanner(RecipeIndex index, int gridSize) {
+        this(index, gridSize, new ItemCounts());
+    }
+
+    /** Plan using a stock snapshot. {@code stock} is not modified. */
+    public CraftPlan plan(Item target, int count, ItemCounts stock) {
+        choiceStock = stock;
+        return run(target, count, stock);
+    }
+
+    /**
+     * The full raw-material list: plans as if nothing were owned, but picks between alternatives
+     * ("any log") by what {@code choices} holds, so the list names the log you actually have.
+     */
+    public CraftPlan planWithChoicesFrom(Item target, int count, ItemCounts choices) {
+        choiceStock = choices;
+        budget = 20_000;
+        return run(target, count, new ItemCounts());
+    }
+
+    private CraftPlan run(Item target, int count, ItemCounts stock) {
+        ItemCounts inv = stock.copy();
         List<CraftPlan.CraftStep> steps = new ArrayList<>();
         ItemCounts missing = new ItemCounts();
+        alternatives = new HashMap<>();
         needsBigGrid = false;
         expand(target, count, new ArrayDeque<>(), inv, steps, missing, 0);
-        return new CraftPlan(target, count, steps, missing, needsBigGrid);
-    }
-
-    /** The full raw-material breakdown of N items, as if the inventory were empty. */
-    public ItemCounts rawMaterials(Item target, int count) {
-        return plan(target, count, new ItemCounts()).missing();
+        ItemCounts used = new ItemCounts();
+        for (Map.Entry<Item, Integer> e : stock.asMap().entrySet()) {
+            int left = inv.get(e.getKey());
+            if (left < e.getValue()) {
+                used.add(e.getKey(), e.getValue() - left);
+            }
+        }
+        return new CraftPlan(target, count, steps, missing, used, alternatives, needsBigGrid);
     }
 
     private void expand(Item item, int need, Deque<Item> path, ItemCounts inv,
@@ -80,7 +136,6 @@ public final class CraftPlanner {
                 apply(candidates.get(0), item, need, path, inv, steps, missing, depth);
                 return;
             }
-            // Try each candidate on a copy; keep the one that leaves the least missing.
             Best best = null;
             for (CraftingRecipe recipe : candidates) {
                 budget--;
@@ -95,10 +150,9 @@ public final class CraftPlanner {
                     best = b;
                 }
                 if (missingCopy.isEmpty()) {
-                    break; // can't beat zero missing
+                    break;
                 }
             }
-            // Commit the winner.
             inv.asMap().clear();
             inv.asMap().putAll(best.inv.asMap());
             steps.addAll(best.steps);
@@ -125,7 +179,6 @@ public final class CraftPlanner {
         }
     }
 
-    /** Runs one recipe enough times to cover {@code need}, planning its ingredients first. */
     private void apply(CraftingRecipe recipe, Item item, int need, Deque<Item> path, ItemCounts inv,
                        List<CraftPlan.CraftStep> steps, ItemCounts missing, int depth) {
         int perCraft = index.resultCount(recipe);
@@ -140,21 +193,24 @@ public final class CraftPlanner {
             Item pick = pickAlternative(alts[i], inv, path);
             chosen[i] = pick;
             perItem.merge(pick, times, Integer::sum);
+            if (alts[i].length > 1) {
+                alternatives.putIfAbsent(pick, alts[i]);
+            }
         }
         for (Map.Entry<Item, Integer> e : perItem.entrySet()) {
             expand(e.getKey(), e.getValue(), path, inv, steps, missing, depth + 1);
         }
         steps.add(new CraftPlan.CraftStep(recipe, times, chosen));
-        inv.add(item, times * perCraft - need); // leftovers stay available for later steps
+        inv.add(item, times * perCraft - need);
     }
 
-    /** Prefer what we hold the most of; then something craftable; then the recipe's first option. */
     private Item pickAlternative(Item[] alts, ItemCounts inv, Deque<Item> path) {
+        // 1. most of in the player's own inventory
         Item best = null;
         int bestCount = 0;
         for (Item alt : alts) {
-            int have = inv.get(alt);
-            if (have > bestCount) {
+            int have = Math.min(inventoryOnly.get(alt), choiceStock.get(alt));
+            if (have > bestCount && !blocked.contains(alt)) {
                 best = alt;
                 bestCount = have;
             }
@@ -162,12 +218,43 @@ public final class CraftPlanner {
         if (best != null) {
             return best;
         }
+        // 1b. most of anywhere in stock (backpacks)
         for (Item alt : alts) {
-            if (!path.contains(alt) && index.isCraftable(alt)) {
+            int have = choiceStock.get(alt);
+            if (have > bestCount && !blocked.contains(alt)) {
+                best = alt;
+                bestCount = have;
+            }
+        }
+        if (best != null) {
+            return best;
+        }
+        // 2. preferred by config
+        for (Item alt : alts) {
+            if (preferred.contains(alt)) {
                 return alt;
             }
         }
-        return alts[0];
+        // 3/4. not blocked, craftable, vanilla first
+        Item fallback = null;
+        for (Item alt : alts) {
+            if (blocked.contains(alt)) {
+                continue;
+            }
+            boolean vanilla = isVanilla(alt);
+            if (vanilla && !path.contains(alt) && index.isCraftable(alt)) {
+                return alt;
+            }
+            if (fallback == null || (vanilla && !isVanilla(fallback))) {
+                fallback = alt;
+            }
+        }
+        return fallback != null ? fallback : alts[0];
+    }
+
+    private static boolean isVanilla(Item item) {
+        ResourceLocation id = ForgeRegistries.ITEMS.getKey(item);
+        return id != null && "minecraft".equals(id.getNamespace());
     }
 
     private List<CraftingRecipe> candidates(Item item, int need, Deque<Item> path, ItemCounts inv) {
@@ -190,10 +277,6 @@ public final class CraftPlanner {
         return out;
     }
 
-    /**
-     * True for compression pairs: the recipe's only input Y itself has a recipe whose only input is
-     * {@code item} (ingot -> block -> ingot, ingot -> nugget -> ingot).
-     */
     private boolean isReversible(CraftingRecipe recipe, Item item) {
         Item only = singleInput(recipe);
         if (only == null) {
@@ -207,7 +290,6 @@ public final class CraftPlanner {
         return false;
     }
 
-    /** The single distinct ingredient item of a recipe, or null when it has more than one (or alternatives). */
     private Item singleInput(CraftingRecipe recipe) {
         Item[][] alts = index.ingredientItems(recipe);
         Item only = null;

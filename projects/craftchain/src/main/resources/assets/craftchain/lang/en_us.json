@@ -26,6 +26,12 @@
   "craftchain.msg.auto_pinned": "Not enough materials; pinned %s x %s to the list",
   "craftchain.msg.in_backpack": "Some of that is in a backpack: %s. Move it to your inventory first.",
   "craftchain.msg.hud_moved": "Pinned list moved to %s, %s",
+  "craftchain.msg.fetching": "Taking %s from %s",
+  "craftchain.msg.backpack_open_failed": "Could not open %s; stopped",
+  "craftchain.msg.backpack_missing_item": "%s was not in %s any more; stopped",
+  "craftchain.msg.reopening": "Items fetched; reopening crafting via %s",
+  "craftchain.msg.reopen_failed": "Items fetched into your inventory. Open a crafting table and press G again to finish.",
+  "craftchain.msg.reopen_timeout": "The crafting screen did not come back; press G again when it is open",
   "craftchain.msg.unpinned": "Unpinned %s",
   "craftchain.msg.cleared": "Pinned list cleared"
 }

@@ -9,9 +9,13 @@ import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.item.crafting.RecipeManager;
 import net.minecraft.world.item.crafting.RecipeType;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -26,6 +30,8 @@ public final class RecipeIndex {
 
     private final Map<Item, List<CraftingRecipe>> byResult = new HashMap<>();
     private final Map<CraftingRecipe, Item[][]> ingredientItems = new HashMap<>();
+    /** Keyed by the identity of each alternatives array: "#minecraft:logs" style label, or null for a single item. */
+    private final Map<Item[], String> groupLabels = new IdentityHashMap<>();
     private final RegistryAccess registries;
 
     private RecipeIndex(RecipeManager manager, RegistryAccess registries) {
@@ -60,6 +66,9 @@ public final class RecipeIndex {
                     alts[j] = stacks[j].getItem();
                 }
                 items[i] = alts;
+                if (alts.length > 1) {
+                    groupLabels.put(alts, labelFor(ing, alts.length));
+                }
             }
             if (!usable) {
                 continue;
@@ -67,6 +76,24 @@ public final class RecipeIndex {
             ingredientItems.put(recipe, items);
             byResult.computeIfAbsent(result.getItem(), k -> new ArrayList<>()).add(recipe);
         }
+    }
+
+    /** "#minecraft:logs" for a tag ingredient, otherwise "any of N". */
+    private static String labelFor(Ingredient ing, int count) {
+        try {
+            JsonElement json = ing.toJson();
+            if (json instanceof JsonObject o && o.has("tag")) {
+                return "#" + o.get("tag").getAsString();
+            }
+        } catch (RuntimeException ignored) {
+            // some modded ingredients cannot serialise; fall through
+        }
+        return "any of " + count;
+    }
+
+    /** The group label for an alternatives array handed out by {@link #ingredientItems}, or null for a single item. */
+    public String groupLabel(Item[] alternatives) {
+        return groupLabels.get(alternatives);
     }
 
     /** Rebuild from the client's recipe manager. Called on RecipesUpdatedEvent, so it is cheap to ask for. */

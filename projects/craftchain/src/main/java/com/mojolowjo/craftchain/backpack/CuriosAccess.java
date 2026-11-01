@@ -15,13 +15,13 @@ import java.util.function.Predicate;
  * The only class that touches the Curios API. It is loaded only when Curios is present
  * (see the ModList check before every call), so a pack without Curios never trips a missing class.
  */
-final class CuriosAccess {
-    record Found(ItemStack stack, String identifier, int slot) {}
+public final class CuriosAccess {
+    public record Found(ItemStack stack, String identifier, int slot) {}
 
     private CuriosAccess() {}
 
     /** Every equipped curio that matches, with its slot identifier ("back") and index. */
-    static List<Found> findBackpacks(Player player, Predicate<ItemStack> isBackpack) {
+    public static List<Found> findBackpacks(Player player, Predicate<ItemStack> isBackpack) {
         List<Found> out = new ArrayList<>();
         CuriosApi.getCuriosInventory(player).ifPresent(inv -> {
             for (Map.Entry<String, ICurioStacksHandler> e : inv.getCurios().entrySet()) {

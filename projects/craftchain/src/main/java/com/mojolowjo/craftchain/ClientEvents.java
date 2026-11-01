@@ -3,7 +3,9 @@ package com.mojolowjo.craftchain;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojolowjo.craftchain.backpack.BackpackInfo;
 import com.mojolowjo.craftchain.backpack.BackpackSupport;
+import com.mojolowjo.craftchain.backpack.CraftingReopener;
 import com.mojolowjo.craftchain.execution.CraftExecutor;
 import com.mojolowjo.craftchain.execution.GridLayout;
 import com.mojolowjo.craftchain.jei.JeiHover;
@@ -13,6 +15,7 @@ import com.mojolowjo.craftchain.planning.CraftPlan;
 import com.mojolowjo.craftchain.planning.CraftPlanner;
 import com.mojolowjo.craftchain.planning.ItemCounts;
 import com.mojolowjo.craftchain.planning.RecipeIndex;
+import com.mojolowjo.craftchain.planning.Stock;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
@@ -31,6 +34,8 @@ import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -167,7 +172,9 @@ public final class ClientEvents {
             }
         }
         CraftExecutor.get().tick();
-        BackpackSupport.tick(mc.player != null && (!PinnedList.get().entries().isEmpty() || CraftPrompt.get().isActive()));
+        if (mc.player != null) {
+            BackpackSupport.tick();
+        }
     }
 
     @SubscribeEvent
@@ -235,9 +242,10 @@ public final class ClientEvents {
             return;
         }
         Item item = target.getItem();
-        ItemCounts inventory = ItemCounts.ofPlayerInventory(mc.player.getInventory());
-        inventory.take(item, Integer.MAX_VALUE); // the player wants N new ones, whatever they already hold
-        CraftPlan plan = new CraftPlanner(index, layout.gridSize()).plan(item, count, inventory);
+        Stock stock = Stock.snapshot();
+        ItemCounts owned = stock.total().copy();
+        owned.take(item, Integer.MAX_VALUE); // the player wants N new ones, whatever they already hold
+        CraftPlan plan = new CraftPlanner(index, layout.gridSize(), stock.inventory()).plan(item, count, owned);
 
         if (plan.steps().isEmpty() && plan.missing().isEmpty()) {
             say(Component.translatable(plan.needsBigGrid() ? "craftchain.msg.needs_table" : "craftchain.msg.no_recipe",
@@ -245,27 +253,14 @@ public final class ClientEvents {
             return;
         }
         if (!plan.missing().isEmpty()) {
-            ItemCounts packs = BackpackSupport.cachedContents();
             StringBuilder missing = new StringBuilder();
-            StringBuilder inPacks = new StringBuilder();
             for (Map.Entry<Item, Integer> e : plan.missing().asMap().entrySet()) {
-                String name = new ItemStack(e.getKey()).getHoverName().getString();
                 if (missing.length() > 0) {
                     missing.append(", ");
                 }
-                missing.append(e.getValue()).append("x ").append(name);
-                int inPack = packs.get(e.getKey());
-                if (inPack > 0) {
-                    if (inPacks.length() > 0) {
-                        inPacks.append(", ");
-                    }
-                    inPacks.append(inPack).append("x ").append(name);
-                }
+                missing.append(e.getValue()).append("x ").append(new ItemStack(e.getKey()).getHoverName().getString());
             }
             say(Component.translatable("craftchain.msg.missing", missing.toString()));
-            if (inPacks.length() > 0) {
-                say(Component.translatable("craftchain.msg.in_backpack", inPacks.toString()));
-            }
             PinnedList.get().add(item, count);
             say(Component.translatable("craftchain.msg.auto_pinned", count, target.getHoverName()));
             return;
@@ -279,8 +274,33 @@ public final class ClientEvents {
             say(Component.translatable("craftchain.msg.too_many_crafts", plan.totalCrafts(), cap));
             return;
         }
+
+        // Whatever the plan uses beyond the inventory has to come out of a backpack first.
+        List<CraftExecutor.FetchTask> fetches = new ArrayList<>();
+        for (Map.Entry<Item, Integer> e : plan.used().asMap().entrySet()) {
+            int need = e.getValue() - stock.inventory().get(e.getKey());
+            for (BackpackInfo pack : stock.backpacks()) {
+                if (need <= 0) {
+                    break;
+                }
+                int inPack = pack.contents().get(e.getKey());
+                if (inPack > 0) {
+                    int take = Math.min(inPack, need);
+                    fetches.add(new CraftExecutor.FetchTask(pack, e.getKey(), take));
+                    need -= take;
+                }
+            }
+            if (need > 0) {
+                say(Component.translatable("craftchain.msg.ran_out", new ItemStack(e.getKey()).getHoverName()));
+                return;
+            }
+        }
+        if (!fetches.isEmpty() && !BackpackSupport.working()) {
+            say(Component.translatable("craftchain.msg.in_backpack", "backpack hooks unavailable"));
+            return;
+        }
         say(Component.translatable("craftchain.msg.starting", count, target.getHoverName(), plan.steps().size(), plan.totalCrafts()));
-        CraftExecutor.get().start(plan, menu);
+        CraftExecutor.get().start(plan, menu, fetches, CraftingReopener.lookedAtTable());
     }
 
     static void say(Component message) {

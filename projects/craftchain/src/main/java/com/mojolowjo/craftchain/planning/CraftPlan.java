@@ -4,17 +4,21 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.crafting.CraftingRecipe;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * The output of the planner.
  *
- * @param target     what the player asked for
- * @param requested  how many of it
- * @param steps      crafts to perform, in order (ingredients come before the things that need them)
- * @param missing    raw materials the inventory does not cover (item -> count). Empty means the plan is fully doable.
+ * @param target       what the player asked for
+ * @param requested    how many of it
+ * @param steps        crafts to perform, in order (ingredients come before the things that need them)
+ * @param missing      raw materials the stock does not cover (item -> count). Empty means the plan is fully doable.
+ * @param used         items taken from the stock snapshot (item -> count); tells the executor what to fetch from backpacks
+ * @param alternatives for each missing or used item, the other items that would have done instead (tag groups), or absent
  * @param needsBigGrid true if at least one recipe needs a 3x3 grid but the plan was made for a 2x2 one
  */
-public record CraftPlan(Item target, int requested, List<CraftStep> steps, ItemCounts missing, boolean needsBigGrid) {
+public record CraftPlan(Item target, int requested, List<CraftStep> steps, ItemCounts missing, ItemCounts used,
+                        Map<Item, Item[]> alternatives, boolean needsBigGrid) {
 
     public boolean complete() {
         return missing.isEmpty() && !needsBigGrid;

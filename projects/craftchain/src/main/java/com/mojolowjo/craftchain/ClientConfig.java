@@ -3,6 +3,8 @@ package com.mojolowjo.craftchain;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.common.ForgeConfigSpec;
 
+import java.util.List;
+
 /** Client config, written to config/craftchain-client.toml on first launch. */
 public final class ClientConfig {
     public static final ForgeConfigSpec SPEC;
@@ -16,6 +18,8 @@ public final class ClientConfig {
     public static final ForgeConfigSpec.IntValue MP_TICKS_BETWEEN_BATCHES;
     public static final ForgeConfigSpec.IntValue MAX_PLAN_DEPTH;
     public static final ForgeConfigSpec.IntValue MAX_RECIPES_PER_ITEM;
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> PREFERRED_ITEMS;
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> BLOCKED_ITEMS;
     public static final ForgeConfigSpec.BooleanValue SHOW_PINNED_HUD;
     public static final ForgeConfigSpec.BooleanValue SHOW_MATERIALS;
     public static final ForgeConfigSpec.IntValue HUD_X;
@@ -64,6 +68,12 @@ public final class ClientConfig {
                 .defineInRange("maxPlanDepth", 8, 1, 32);
         MAX_RECIPES_PER_ITEM = b.comment("How many alternative recipes for one item the planner tries before it picks the best one it saw.")
                 .defineInRange("maxRecipesPerItem", 3, 1, 10);
+        PREFERRED_ITEMS = b.comment(
+                "When a recipe accepts several items (any log, any plank) and you own none of them,",
+                "pick these first. Item ids, e.g. \"minecraft:oak_log\".")
+                .defineListAllowEmpty("preferredItems", List.of("minecraft:oak_log", "minecraft:oak_planks"), o -> o instanceof String);
+        BLOCKED_ITEMS = b.comment("Never pick these as an ingredient when anything else fits. Item ids.")
+                .defineListAllowEmpty("blockedItems", List.of(), o -> o instanceof String);
         b.pop();
 
         b.push("hud");
