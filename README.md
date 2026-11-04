@@ -10,7 +10,7 @@ its own folder under `projects/` and does not touch the others.
 | [`projects/minecraft-optimization`](projects/minecraft-optimization/) | Cloudly, a performance mod for Minecraft: Java Edition, with its benchmark harness | Phase 1 done |
 | [`projects/minecraft-bot`](projects/minecraft-bot/) | A chat-controlled bot that joins a friend's modded server to mine and build | Planned |
 | [`projects/craftchain`](projects/craftchain/) | CraftChain, a client-side Forge 1.20.1 mod: pick an item in JEI and it crafts the whole chain from your inventory | Researched, skeleton builds |
-| [`projects/data-export`](projects/data-export/) | Data Export, a client-side Forge 1.20.1 mod: one command writes a pack's recipes, tags, items, loot and ore data to a folder an AI can read | 0.1.0 builds, not yet run in a game |
+| [`projects/data-export`](projects/data-export/) | Data Export, a client-side Forge 1.20.1 mod: one command writes a pack's recipes, tags, items, loot and ore data to a folder an AI can read | 0.2.0 built; 0.1.0 ran in the owner's pack |
 
 ## Adding a new project
 

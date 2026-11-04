@@ -46,6 +46,10 @@ class IndexTest {
     void dataPathsBecomeIds() {
         assertEquals("minecraft:blocks/stone", Names.idFromDataPath("data/minecraft/loot_tables/blocks/stone.json", "loot_tables"));
         assertEquals("create:ore_zinc", Names.idFromDataPath("data\\create\\worldgen\\placed_feature\\ore_zinc.json", "worldgen/placed_feature"));
+        assertEquals("tconstruct:materials/stats/wood", Names.idFromDataPath("data/tconstruct/tinkering/materials/stats/wood.json", "tinkering"));
+        assertEquals("mce2:mithril_depths", Names.idFromDataPath("data/mce2/forge/biome_modifier/mithril_depths.json", "forge/biome_modifier"));
+        assertNull(Names.idFromDataPath("data/minecraft/tags/worldgen/biome/is_overworld.json", "worldgen/biome"));
+        assertNull(Names.idFromDataPath("data/minecraft/dimension_type/overworld.json", "dimension"));
         assertNull(Names.idFromDataPath("data/minecraft/recipes/stick.json", "loot_tables"));
         assertNull(Names.idFromDataPath("data/minecraft/loot_tables/blocks/stone.mcmeta", "loot_tables"));
     }
