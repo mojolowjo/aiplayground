@@ -6,36 +6,49 @@ and ask "how do I get X in this pack?". Nothing is installed on the server.
 
 Personal tool, unrelated to the bot projects in this repository.
 
+## Use
+
+1. Drop `dist/dataexport-<version>.jar` into the pack's `mods` folder (client only).
+2. Join the server, or open the singleplayer world.
+3. Type `/dataexport` in chat. Optional: `/dataexport <name>` to pick the folder name.
+4. The folder is `<game dir>/dataexport/<world or server name>/`. Zip it, give it to the AI.
+
+The game pauses a few seconds while it writes (large packs: longer). Chat then says what was
+written and how many entries could not be read.
+
 ## What it exports
 
 The client receives the finished game data from the server on join, with every KubeJS server
 script change (recipe edits, removals, tag changes) already applied. The mod reads that copy, plus
-the JSON inside the pack's jars, and writes `<game dir>/dataexport/<world or server>/`:
+the JSON inside the pack's jars, and writes:
 
 | File | Contents | Source |
 |---|---|---|
-| `recipes.json` | every recipe: type, station, inputs (items or tags), output and count | the synced `RecipeManager` |
+| `meta.json` | Minecraft and Forge versions, every loaded mod (id, name, version) | the mod list |
+| `INDEX.txt` | one line per item: how it is made, how often it is used, which loot tables drop it, block or not, tag count | built from the rest |
+| `recipes.json` | every recipe: type, station, inputs (items or tags), result and count, cooking xp and time | the synced `RecipeManager`; recipe types that hide fields are read by field name |
 | `tags.json` | every item, block and fluid tag with its members | the synced tag registries |
-| `items.json` | every item: stack size, tool tier and speed, food values, fuel burn time, armor, durability | item classes, Forge `getBurnTime` |
-| `loot.json` | block drops, mob drops, chest loot | loot-table JSON in the pack's jars |
-| `worldgen.json` | ore bands per ore and dimension | `placed_feature` / `configured_feature` JSON in the jars |
-| `INDEX.txt` | one line per item: how it is obtained (recipe, drop, mined, none known) | built from the above |
+| `items.json` | every item: name, max stack, durability, rarity, enchantability, fuel ticks, food, tool tier and kinds, armor, block hardness | item classes, Forge `getBurnTime` |
+| `loot.json` | block drops, mob drops, chest loot, raw JSON keyed by id | loot-table JSON in the vanilla data, the mod jars, `kubejs/data`, a singleplayer world's datapacks |
+| `worldgen.json` | `configured_feature` and `placed_feature` JSON (ore veins, counts, heights) | the same sources |
+| `kubejs/` | the pack's `server_scripts`, `startup_scripts`, `client_scripts` | the client's `kubejs` folder |
 | `README.txt` | what each file is, written for the AI that reads the zip | fixed text |
+| `errors.txt` | entries the exporter could not read, if any | |
 
-Out of reach from the client: KubeJS scripts that react to events at runtime, and mod logic in
-Java code. Everything the server sends is in.
+Out of reach from the client: loot or world-gen changed by a KubeJS script that runs only on the
+server (the scripts themselves are copied when the pack ships them client-side, as most do), and
+mod logic in Java code. Everything the server sends is in.
 
 ## Status
 
-Planned. Build setup to be copied from [`../craftchain`](../craftchain/) (same loader, same
-version, same client-only marking).
+0.1.0: builds, unit tests pass, not yet run inside a game. First in-game test is the owner's.
 
 ## Building
 
 Needs JDK 17. From this folder, in PowerShell:
 
 ```powershell
-$env:JAVA_HOME='C:\Program Files\Java\jdk-17.0.1'; .\gradlew.bat build
+$env:JAVA_HOME='C:\Program Files\Java\jdk-17.0.1'; .\gradlew.bat test build
 ```
 
-The jar lands in `build/libs/`; drop it into the pack's `mods` folder.
+The jar lands in `build/libs/`; the released copy is in `dist/`.
