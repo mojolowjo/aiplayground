@@ -46,9 +46,15 @@ Configs can hold personal settings. Look through the zip before handing it to an
 
 ## Status
 
-0.2.0: builds, unit tests pass. Adds what the first AI reader said was missing: biome modifiers,
-modded recipe details, Tinkers materials, the language table and tooltips, FTB Quests and configs.
-0.1.0 ran in the owner's pack; 0.2.0 is not yet run inside a game.
+0.3.0: builds, unit tests pass. After the 0.2.0 run in the owner's pack (MC Eternal 2) the AI reader
+found the recipe details stopping early: a shared Ingredient in two slots was written as a repeat,
+Mekanism recipes and Ender IO's counted ingredients were skipped as "machinery" because they
+implement Predicate, nested lists hit the depth cap, Holders printed as class names. 0.3.0 tracks
+cycles on the current path only, reads any data class whatever interfaces it implements, goes six
+levels deep, prints Holders as their key and block states as text, and parses loot JSON leniently
+(Integrated Villages ships six tables with text after the closing brace).
+0.2.0 added biome modifiers, modded recipe details, Tinkers materials, the language table and
+tooltips, FTB Quests and configs. 0.1.0 and 0.2.0 ran in the owner's pack; 0.3.0 is not yet run.
 
 ## Building
 

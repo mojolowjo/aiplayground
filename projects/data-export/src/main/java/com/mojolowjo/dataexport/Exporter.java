@@ -606,8 +606,11 @@ public final class Exporter {
         if (k != null) kinds.get(k).put(Names.idFromDataPath(rel, k), json);
     }
 
+    /** Lenient: a mod's loot table with stray text after the closing brace still yields its one object (Integrated Villages). */
     private static JsonElement read(InputStream in) throws IOException {
-        return JsonParser.parseString(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+        com.google.gson.stream.JsonReader r = new com.google.gson.stream.JsonReader(new java.io.StringReader(new String(in.readAllBytes(), StandardCharsets.UTF_8)));
+        r.setLenient(true);
+        return JsonParser.parseReader(r);
     }
 
     private static JsonObject toObject(Map<String, JsonElement> m) {
@@ -693,7 +696,7 @@ public final class Exporter {
 
     // ---- any object as JSON (modded recipe details) -----------------------------------------
 
-    private static final int DETAIL_DEPTH = 4;
+    private static final int DETAIL_DEPTH = 6;
     private static final int DETAIL_ITEMS = 64;
 
     /**
@@ -725,12 +728,34 @@ public final class Exporter {
         if (v instanceof net.minecraft.nbt.Tag t) return new com.google.gson.JsonPrimitive(t.toString());
         if (v instanceof JsonElement j) return j;
         if (v instanceof java.util.Optional<?> opt) return opt.isPresent() ? detailJson(opt.get(), depth, seen) : com.google.gson.JsonNull.INSTANCE;
-        if (depth >= DETAIL_DEPTH) return new com.google.gson.JsonPrimitive("<" + v.getClass().getSimpleName() + ">");
-        if (!seen.add(v)) return new com.google.gson.JsonPrimitive("<repeat>");
+        if (v instanceof net.minecraft.core.Holder<?> h) {
+            var key = h.unwrapKey();
+            if (key.isPresent()) return new com.google.gson.JsonPrimitive(key.get().location().toString());
+            return h.isBound() ? detailJson(h.value(), depth, seen) : new com.google.gson.JsonPrimitive("<unbound holder>");
+        }
+        if (v instanceof net.minecraft.world.level.block.state.BlockState bs) return new com.google.gson.JsonPrimitive(bs.toString());
+        if (v instanceof net.minecraft.world.phys.shapes.VoxelShape) return new com.google.gson.JsonPrimitive("<shape>");
+        if (depth >= DETAIL_DEPTH) return new com.google.gson.JsonPrimitive("<" + v.getClass().getSimpleName() + ", deeper than " + DETAIL_DEPTH + ">");
+        // Only the objects on the current path count as a cycle; the same Ingredient in two slots is written twice.
+        if (!seen.add(v)) return new com.google.gson.JsonPrimitive("<cycle>");
+        try {
+            return detailDeep(v, depth, seen);
+        } finally {
+            seen.remove(v);
+        }
+    }
+
+    private JsonElement detailDeep(Object v, int depth, Set<Object> seen) {
         if (v instanceof Collection<?> col) {
             JsonArray a = new JsonArray();
             int n = 0;
             for (Object x : col) { if (n++ == DETAIL_ITEMS) { a.add("... " + col.size() + " in all"); break; } a.add(detailJson(x, depth + 1, seen)); }
+            return a;
+        }
+        if (v instanceof Iterable<?> it && !(v instanceof Map<?, ?>)) {
+            JsonArray a = new JsonArray();
+            int n = 0;
+            for (Object x : it) { if (n++ == DETAIL_ITEMS) { a.add("... more"); break; } a.add(detailJson(x, depth + 1, seen)); }
             return a;
         }
         if (v.getClass().isArray()) {
@@ -765,13 +790,16 @@ public final class Exporter {
         return o;
     }
 
-    /** Machinery, not data: serializers, codecs, types, lambdas, loggers, suppliers. */
+    /**
+     * Machinery, not data: serializers, codecs, types, lambdas, loggers, suppliers. A data class that
+     * happens to implement Predicate (Mekanism recipes, Ender IO's CountedIngredient) is data and is read.
+     */
     private static boolean skipDetail(Object x) {
         if (x instanceof net.minecraft.world.item.crafting.RecipeSerializer<?> || x instanceof net.minecraft.world.item.crafting.RecipeType<?>) return true;
         if (x instanceof com.mojang.serialization.Codec<?> || x instanceof Class<?> || x instanceof Thread || x instanceof org.slf4j.Logger) return true;
-        if (x instanceof java.util.function.Supplier<?> || x instanceof java.util.function.Function<?, ?> || x instanceof java.util.function.Predicate<?>) return true;
+        if (x instanceof java.util.function.Supplier<?> && !(x instanceof net.minecraft.core.Holder<?>)) return true;
         String n = x.getClass().getName();
-        return n.contains("$$Lambda") || n.startsWith("java.lang.reflect") || n.startsWith("java.util.concurrent") || n.startsWith("com.mojang.serialization");
+        return n.contains("$$Lambda") || x.getClass().isAnonymousClass() || n.startsWith("java.lang.reflect") || n.startsWith("java.util.concurrent") || n.startsWith("com.mojang.serialization");
     }
 
     // ---- index, readme, errors --------------------------------------------------------------
