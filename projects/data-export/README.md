@@ -33,6 +33,8 @@ the JSON inside the pack's jars, and writes:
 | `loot.json` | block drops, mob drops, chest loot, raw JSON keyed by id | loot-table JSON in the vanilla data, the mod jars, `kubejs/data`, a singleplayer world's datapacks |
 | `worldgen.json` | `configured_feature`, `placed_feature` (ore veins, counts, heights), `biome_modifier` (which biomes get which features), `biome_tags`, `biome`, `dimension`, `dimension_type` | the same sources |
 | `tinkers.json` | Tinkers' Construct materials (definition, stats, traits), modifiers and tool definitions, when the mod is present | `data/*/tinkering/` in the jars |
+| `structures.json` | every `worldgen/structure_set` (raw JSON, the source that won, a summary: placement type, spacing, separation, salt, spread type, frequency, reduction method, exclusion zone, structure ids) and every `worldgen/structure` (raw: type, biomes, step) | the same sources as loot; not synced, so a server-only datapack is not seen |
+| `seed.json` | the hashed seed the server sent (`BiomeManager.obfuscateSeed`, sha256 of the world seed), per dimension entered this session, as a signed long and hex | the client level's `BiomeManager`, read when a level is entered |
 | `kubejs/` | the pack's `server_scripts`, `startup_scripts`, `client_scripts` | the client's `kubejs` folder |
 | `config/`, `defaultconfigs/` | mod configs and FTB Quests (`config/ftbquests`: quests, shop, loot crates) | the game folder; files whose name says token, secret, password, api key or credential are skipped and listed in `errors.txt` |
 | `README.txt` | what each file is, written for the AI that reads the zip | fixed text |
@@ -46,6 +48,12 @@ Configs can hold personal settings. Look through the zip before handing it to an
 
 ## Status
 
+0.4.0: builds, unit tests pass, not yet run in a game. Adds `structures.json` (structure sets with placement
+summaries and the winning source, structures), `seed.json` (the hashed seed per dimension, read from the
+client level's BiomeManager by field type, so no mixin), and in recipe `details`: block states as
+`{block, properties}`, shapes left out, and modded ingredient types (SizedIngredient, CountedIngredient,
+Fluid*Ingredient, Mekanism's) add `_json` from their own toJson/serialize and `_matches` with the item or
+fluid stacks they accept.
 0.3.0: builds, unit tests pass. After the 0.2.0 run in the owner's pack (MC Eternal 2) the AI reader
 found the recipe details stopping early: a shared Ingredient in two slots was written as a repeat,
 Mekanism recipes and Ender IO's counted ingredients were skipped as "machinery" because they

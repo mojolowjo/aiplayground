@@ -82,9 +82,11 @@ public final class Exporter {
 
     /** The data/ folders read from the jars and datapacks (recipes come synced, so not these). */
     static final String[] KINDS = {"loot_tables", "worldgen/configured_feature", "worldgen/placed_feature", "forge/biome_modifier",
-            "tags/worldgen/biome", "worldgen/biome", "dimension", "dimension_type", "tinkering"};
+            "tags/worldgen/biome", "worldgen/biome", "dimension", "dimension_type", "tinkering", "worldgen/structure_set", "worldgen/structure"};
     private final Map<String, Map<String, JsonElement>> kinds = new LinkedHashMap<>();
-    { for (String k : KINDS) kinds.put(k, new TreeMap<>()); }
+    /** Per kind and id: the data source whose file won (the last one read; datapacks come after the jars). */
+    private final Map<String, Map<String, String>> sources = new LinkedHashMap<>();
+    { for (String k : KINDS) { kinds.put(k, new TreeMap<>()); sources.put(k, new TreeMap<>()); } }
 
     /** Config files whose name says they hold a credential are not copied (listed in errors.txt). */
     static final java.util.regex.Pattern SECRET_NAME = java.util.regex.Pattern.compile("(?i)token|secret|password|api[-_]?key|credential");
@@ -148,6 +150,8 @@ public final class Exporter {
         worldgen.add("dimension_type", toObject(kinds.get("dimension_type")));
         writeJson("worldgen.json", worldgen);
         if (!kinds.get("tinkering").isEmpty()) writeJson("tinkers.json", kinds.get("tinkering"));
+        writeStructures();
+        writeSeed();
         report.counts.put("loot tables", String.valueOf(loot.size()));
         report.counts.put("features", kinds.get("worldgen/configured_feature").size() + "+" + kinds.get("worldgen/placed_feature").size());
         report.counts.put("biome modifiers", String.valueOf(kinds.get("forge/biome_modifier").size()));
@@ -524,7 +528,7 @@ public final class Exporter {
             for (String kind : KINDS) {
                 vanilla.listResources(PackType.SERVER_DATA, "minecraft", kind, (loc, supplier) -> {
                     try (InputStream in = supplier.get()) {
-                        take("data/" + loc.getNamespace() + "/" + loc.getPath(), read(in));
+                        take("data/" + loc.getNamespace() + "/" + loc.getPath(), read(in), "vanilla");
                     } catch (Throwable t) {
                         error("vanilla " + loc + ": " + t);
                     }
@@ -586,7 +590,7 @@ public final class Exporter {
                 String rel = "data/" + data.relativize(p).toString().replace('\\', '/');
                 if (kindOf(rel) == null) continue;
                 try (InputStream in = Files.newInputStream(p)) {
-                    take(rel, read(in));
+                    take(rel, read(in), where);
                 } catch (Throwable t) {
                     error(where + " " + rel + ": " + t);
                 }
@@ -601,9 +605,77 @@ public final class Exporter {
         return null;
     }
 
-    private void take(String rel, JsonElement json) {
+    /** Keeps the file under its id; a later source (kubejs/data, the world's datapacks) replaces an earlier one. */
+    private void take(String rel, JsonElement json, String where) {
         String k = kindOf(rel);
-        if (k != null) kinds.get(k).put(Names.idFromDataPath(rel, k), json);
+        if (k == null) return;
+        String id = Names.idFromDataPath(rel, k);
+        kinds.get(k).put(id, json);
+        sources.get(k).put(id, where);
+    }
+
+    // ---- structures and the hashed seed -----------------------------------------------------
+
+    /**
+     * structures.json: every worldgen/structure_set and worldgen/structure JSON, raw, with the source
+     * that won and (for sets) a small placement summary. Read from the jars and datapacks like loot:
+     * the server does not send these, so a server-only datapack change is not visible here.
+     */
+    private void writeStructures() throws IOException {
+        JsonObject o = new JsonObject();
+        o.addProperty("note", "structure_set and structure JSON from the client's jars and datapacks, not synced from the server: "
+                + "a datapack that exists only on the server is not in here. Later sources override earlier ones; 'source' says which file won.");
+        JsonObject sets = new JsonObject();
+        for (Map.Entry<String, JsonElement> e : kinds.get("worldgen/structure_set").entrySet()) {
+            JsonObject s = new JsonObject();
+            s.addProperty("source", sources.get("worldgen/structure_set").get(e.getKey()));
+            try {
+                s.add("summary", Structures.summary(e.getValue()));
+            } catch (Throwable t) {
+                s.addProperty("summary_note", "could not summarize: " + t);
+                error("structure_set " + e.getKey() + ": " + t);
+            }
+            s.add("json", e.getValue());
+            sets.add(e.getKey(), s);
+        }
+        o.add("structure_set", sets);
+        JsonObject structures = new JsonObject();
+        for (Map.Entry<String, JsonElement> e : kinds.get("worldgen/structure").entrySet()) {
+            JsonObject s = new JsonObject();
+            s.addProperty("source", sources.get("worldgen/structure").get(e.getKey()));
+            s.add("json", e.getValue());
+            structures.add(e.getKey(), s);
+        }
+        o.add("structure", structures);
+        writeJson("structures.json", o);
+        report.counts.put("structure sets", String.valueOf(sets.size()));
+        report.counts.put("structures", String.valueOf(structures.size()));
+    }
+
+    /** seed.json: the hashed seed the server sent, per dimension entered this session (signed long and hex). */
+    private void writeSeed() throws IOException {
+        JsonObject o = new JsonObject();
+        o.addProperty("note", "The hashed seed from ClientboundLoginPacket/ClientboundRespawnPacket (BiomeManager.obfuscateSeed(world seed), "
+                + "sha256 of the seed as a long), kept per dimension. It is not the world seed; it is what the client uses for biome noise.");
+        if (mc.level != null) {
+            String err = SeedTracker.record(mc.level);
+            if (err != null) error(err);
+            o.addProperty("current_dimension", mc.level.dimension().location().toString());
+        }
+        Map<String, Long> seeds = SeedTracker.seeds();
+        if (seeds.isEmpty()) {
+            o.addProperty("dimensions_note", mc.level == null ? "the player has not joined a world yet" : "no hashed seed could be read: " + SeedTracker.lastError());
+        }
+        JsonObject dims = new JsonObject();
+        for (Map.Entry<String, Long> e : seeds.entrySet()) {
+            JsonObject d = new JsonObject();
+            d.addProperty("hashed_seed", e.getValue());
+            d.addProperty("hex", Seeds.hex(e.getValue()));
+            dims.add(e.getKey(), d);
+        }
+        o.add("dimensions", dims);
+        writeJson("seed.json", o);
+        report.counts.put("seeds", String.valueOf(seeds.size()));
     }
 
     /** Lenient: a mod's loot table with stray text after the closing brace still yields its one object (Integrated Villages). */
@@ -733,16 +805,81 @@ public final class Exporter {
             if (key.isPresent()) return new com.google.gson.JsonPrimitive(key.get().location().toString());
             return h.isBound() ? detailJson(h.value(), depth, seen) : new com.google.gson.JsonPrimitive("<unbound holder>");
         }
-        if (v instanceof net.minecraft.world.level.block.state.BlockState bs) return new com.google.gson.JsonPrimitive(bs.toString());
+        if (v instanceof net.minecraft.world.level.block.state.BlockState bs) return blockStateJson(bs);
         if (v instanceof net.minecraft.world.phys.shapes.VoxelShape) return new com.google.gson.JsonPrimitive("<shape>");
         if (depth >= DETAIL_DEPTH) return new com.google.gson.JsonPrimitive("<" + v.getClass().getSimpleName() + ", deeper than " + DETAIL_DEPTH + ">");
         // Only the objects on the current path count as a cycle; the same Ingredient in two slots is written twice.
         if (!seen.add(v)) return new com.google.gson.JsonPrimitive("<cycle>");
         try {
-            return detailDeep(v, depth, seen);
+            JsonElement deep = detailDeep(v, depth, seen);
+            if (deep instanceof JsonObject o && isIngredientLike(v)) ingredientLikeInto(v, o, depth, seen);
+            return deep;
         } finally {
             seen.remove(v);
         }
+    }
+
+    /** {block, properties{name: value}} instead of BlockState's "Block{id}[a=b]" text. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static JsonObject blockStateJson(net.minecraft.world.level.block.state.BlockState bs) {
+        JsonObject o = new JsonObject();
+        o.addProperty("block", String.valueOf(ForgeRegistries.BLOCKS.getKey(bs.getBlock())));
+        if (!bs.getValues().isEmpty()) {
+            JsonObject props = new JsonObject();
+            for (Map.Entry<net.minecraft.world.level.block.state.properties.Property<?>, Comparable<?>> e : bs.getValues().entrySet()) {
+                net.minecraft.world.level.block.state.properties.Property p = e.getKey();
+                props.addProperty(p.getName(), p.getName(e.getValue()));
+            }
+            o.add("properties", props);
+        }
+        return o;
+    }
+
+    /**
+     * A modded ingredient type (SizedIngredient, CountedIngredient, FluidIngredient, FluidStackIngredient,
+     * FluidTagIngredient, Mekanism's *Ingredient, an OfStack/OfTag inner class of one): named by its class.
+     */
+    private static boolean isIngredientLike(Object v) {
+        return v.getClass().getName().contains("Ingredient");
+    }
+
+    /**
+     * Adds what the type can say about itself to its field walk: '_json' from a no-arg toJson/serialize
+     * method, '_matches' from a no-arg method that lists the item or fluid stacks it accepts
+     * (ids with counts or mB). Each is tried and a failure is written as a note, not dropped.
+     */
+    private void ingredientLikeInto(Object v, JsonObject o, int depth, Set<Object> seen) {
+        for (java.lang.reflect.Method m : noArgMethods(v)) {
+            String name = m.getName();
+            boolean jsonMethod = JsonElement.class.isAssignableFrom(m.getReturnType())
+                    && (name.equals("toJson") || name.equals("serialize") || name.equals("toJSON") || name.equals("write"));
+            boolean matchMethod = (Collection.class.isAssignableFrom(m.getReturnType()) || m.getReturnType().isArray())
+                    && MATCH_METHODS.contains(name);
+            if (!jsonMethod && !matchMethod) continue;
+            String key = jsonMethod ? "_json" : "_matches";
+            if (o.has(key)) continue;
+            try {
+                m.setAccessible(true);
+                Object r = m.invoke(v);
+                if (r == null) continue;
+                o.add(key, jsonMethod ? (JsonElement) r : detailJson(r, depth, seen));
+            } catch (Throwable t) {
+                Throwable cause = t instanceof java.lang.reflect.InvocationTargetException ite && ite.getCause() != null ? ite.getCause() : t;
+                o.addProperty(key + "_note", name + "() failed: " + cause.getClass().getSimpleName() + (cause.getMessage() != null ? ": " + cause.getMessage() : ""));
+            }
+        }
+    }
+
+    private static final Set<String> MATCH_METHODS = Set.of("getItems", "getRepresentations", "getStacks", "getMatchingStacks",
+            "getFluids", "getAllFluids", "getMatchingFluidStacks", "getAllFluidStacks", "getMatchingFluids", "items", "stacks", "fluids");
+
+    /** Public and private no-arg instance methods up the class chain, most derived first. */
+    private static List<java.lang.reflect.Method> noArgMethods(Object v) {
+        List<java.lang.reflect.Method> out = new ArrayList<>();
+        for (Class<?> c = v.getClass(); c != null && c != Object.class; c = c.getSuperclass())
+            for (java.lang.reflect.Method m : c.getDeclaredMethods())
+                if (m.getParameterCount() == 0 && !Modifier.isStatic(m.getModifiers()) && !m.isSynthetic()) out.add(m);
+        return out;
     }
 
     private JsonElement detailDeep(Object v, int depth, Set<Object> seen) {
@@ -797,6 +934,7 @@ public final class Exporter {
     private static boolean skipDetail(Object x) {
         if (x instanceof net.minecraft.world.item.crafting.RecipeSerializer<?> || x instanceof net.minecraft.world.item.crafting.RecipeType<?>) return true;
         if (x instanceof com.mojang.serialization.Codec<?> || x instanceof Class<?> || x instanceof Thread || x instanceof org.slf4j.Logger) return true;
+        if (x instanceof net.minecraft.world.phys.shapes.VoxelShape) return true;
         if (x instanceof java.util.function.Supplier<?> && !(x instanceof net.minecraft.core.Holder<?>)) return true;
         String n = x.getClass().getName();
         return n.contains("$$Lambda") || x.getClass().isAnonymousClass() || n.startsWith("java.lang.reflect") || n.startsWith("java.util.concurrent") || n.startsWith("com.mojang.serialization");
@@ -836,6 +974,12 @@ public final class Exporter {
                 "               (which biomes get which features: the 'where does it spawn' answer), biome_tags, biome,",
                 "               dimension and dimension_type JSON.",
                 "tinkers.json   Tinkers' Construct data when present: materials (definition, stats, traits), modifiers, tools.",
+                "structures.json worldgen/structure_set (raw JSON, 'source' = the jar or datapack whose file won, 'summary' =",
+                "               placement type random_spread/concentric_rings/other, spacing, separation, salt, spread_type,",
+                "               frequency, frequency_reduction_method, exclusion_zone, structure ids) and worldgen/structure",
+                "               (raw: type, biomes, step). From the client's jars and datapacks: server-only datapack changes are not visible.",
+                "seed.json      The hashed seed the server sent (sha256 of the world seed, as the client's BiomeManager holds it),",
+                "               per dimension entered this session, as a signed long and hex. Not the world seed itself.",
                 "kubejs/        The pack's KubeJS scripts as found in the client's kubejs folder (server_scripts change recipes).",
                 "config/        The pack's config folder: mod settings, and FTB Quests (config/ftbquests: quests, shop, crates).",
                 "defaultconfigs/ The pack's default server configs.",

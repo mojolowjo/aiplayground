@@ -22,6 +22,7 @@ public final class DataExport {
 
     public DataExport() {
         MinecraftForge.EVENT_BUS.addListener(this::registerCommands);
+        MinecraftForge.EVENT_BUS.addListener(SeedTracker::onClientTick);
         LOGGER.info("[dataexport] loaded; type /dataexport in a world to write the pack's data");
     }
 
