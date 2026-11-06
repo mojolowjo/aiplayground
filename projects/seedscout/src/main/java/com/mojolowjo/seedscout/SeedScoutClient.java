@@ -32,16 +32,26 @@ import java.util.TreeMap;
 public final class SeedScoutClient {
     private SeedScoutClient() {}
 
-    public static final KeyMapping TOGGLE_KEY = new KeyMapping("key.seedscout.toggle", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_X, "key.categories.seedscout");
+    /** Shift+X: the pack has many keys, a plain X clashes. */
+    public static final KeyMapping TOGGLE_KEY = new KeyMapping("key.seedscout.toggle", net.minecraftforge.client.settings.KeyConflictContext.IN_GAME,
+            net.minecraftforge.client.settings.KeyModifier.SHIFT, InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_X, "key.categories.seedscout");
+    /** The filter screen; unbound, the pause screen and inventory buttons open it. */
+    public static final KeyMapping MENU_KEY = new KeyMapping("key.seedscout.menu", net.minecraftforge.client.settings.KeyConflictContext.IN_GAME,
+            InputConstants.UNKNOWN, "key.categories.seedscout");
     private static int tickCounter;
     private static Thread connector;
 
     public static void init() {
         ModLoadingContext.get().registerConfig(ModConfig.Type.CLIENT, ClientConfig.SPEC, ClientConfig.FILE);
-        FMLJavaModLoadingContext.get().getModEventBus().addListener((RegisterKeyMappingsEvent e) -> e.register(TOGGLE_KEY));
+        FMLJavaModLoadingContext.get().getModEventBus().addListener((RegisterKeyMappingsEvent e) -> {
+            e.register(TOGGLE_KEY);
+            e.register(MENU_KEY);
+        });
         MinecraftForge.EVENT_BUS.addListener(SeedScoutClient::registerCommands);
         MinecraftForge.EVENT_BUS.addListener(SeedScoutClient::onClientTick);
         MinecraftForge.EVENT_BUS.addListener(OreRenderer::onRenderLevel);
+        MinecraftForge.EVENT_BUS.addListener(SeedScoutClient::onScreenInit);
+        MinecraftForge.EVENT_BUS.addListener(SeedScoutClient::onRenderGui);
         MinecraftForge.EVENT_BUS.addListener(SeedScoutClient::onLogin);
         MinecraftForge.EVENT_BUS.addListener(SeedScoutClient::onLogout);
         MinecraftForge.EVENT_BUS.addListener((GameShuttingDownEvent e) -> {
@@ -76,6 +86,7 @@ public final class SeedScoutClient {
         if (event.phase != TickEvent.Phase.END) return;
         Minecraft mc = Minecraft.getInstance();
         while (TOGGLE_KEY.consumeClick()) toggle();
+        while (MENU_KEY.consumeClick()) if (mc.screen == null) mc.setScreen(new FilterScreen(null));
         if (++tickCounter % 10 == 0) {
             ScoutLink.setCacheDir(scoutDir().resolve("cache"));
             ScoutLink.tick(mc);
@@ -91,6 +102,66 @@ public final class SeedScoutClient {
 
     private static void onLogout(ClientPlayerNetworkEvent.LoggingOut event) {
         ScoutLink.saveAll();
+    }
+
+    /** A "Seedscout" button on the pause screen and a small one beside the inventory open the filter screen. */
+    private static void onScreenInit(net.minecraftforge.client.event.ScreenEvent.Init.Post event) {
+        net.minecraft.client.gui.screens.Screen screen = event.getScreen();
+        Minecraft mc = Minecraft.getInstance();
+        if (screen instanceof net.minecraft.client.gui.screens.PauseScreen) {
+            event.addListener(net.minecraft.client.gui.components.Button.builder(Component.literal("Seedscout"), b -> mc.setScreen(new FilterScreen(screen)))
+                    .bounds(screen.width - 90, 6, 84, 20).build());
+        } else if (screen instanceof net.minecraft.client.gui.screens.inventory.InventoryScreen inv) {
+            event.addListener(net.minecraft.client.gui.components.Button.builder(Component.literal("Ore"), b -> mc.setScreen(new FilterScreen(screen)))
+                    .bounds(inv.getGuiLeft() + inv.getXSize() + 4, inv.getGuiTop(), 30, 20).build());
+        }
+    }
+
+    private static java.util.Map<String, Integer> legend = java.util.Map.of();
+    private static int legendTick;
+
+    /** The legend: shown families with their counts within range, top right. */
+    private static void onRenderGui(net.minecraftforge.client.event.RenderGuiEvent.Post event) {
+        if (!ClientConfig.LEGEND.get() || !ClientConfig.OVERLAY_ON.get()) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null || mc.options.hideGui || mc.screen != null) return;
+        if (++legendTick % 20 == 0 || legend.isEmpty()) legend = OreCatalog.legendCounts(OreFilter.expand(ClientConfig.shown()));
+        if (legend.isEmpty()) return;
+        net.minecraft.client.gui.GuiGraphics g = event.getGuiGraphics();
+        java.util.Map<String, Integer> colors = ClientConfig.colors();
+        int x = mc.getWindow().getGuiScaledWidth() - 8, y = 8;
+        for (java.util.Map.Entry<String, Integer> e : legend.entrySet()) {
+            String text = e.getKey() + " " + e.getValue();
+            int w = mc.font.width(text);
+            int rgb = OreRenderer.colorOf(e.getKey(), colors);
+            g.fill(x - w - 14, y, x - w - 4, y + 8, 0xFF000000 | rgb);
+            g.drawString(mc.font, text, x - w, y, 0xFFFFFF);
+            y += 10;
+        }
+    }
+
+    private static final com.mojang.brigadier.suggestion.SuggestionProvider<CommandSourceStack> ORE_LIST = (ctx, builder) -> {
+        String typed = builder.getRemaining();
+        int start = OreFilter.tokenStart(typed);
+        String partial = typed.substring(start);
+        java.util.Set<String> ids = OreCatalog.ids();
+        java.util.List<String> fams = new java.util.ArrayList<>(OreFilter.families(ids).keySet());
+        com.mojang.brigadier.suggestion.SuggestionsBuilder b = builder.createOffset(builder.getStart() + start);
+        for (String s : OreFilter.suggest(partial, fams, ids)) b.suggest(s);
+        return b.buildFuture();
+    };
+
+    private static int show(String list, String mode) {
+        List<String> tokens = OreFilter.parseList(list);
+        List<String> shown = OreFilter.expand(ClientConfig.shown());
+        List<String> result = switch (mode) {
+            case "add" -> OreFilter.add(shown, tokens);
+            case "remove" -> OreFilter.remove(shown, tokens, OreCatalog.familyNames());
+            default -> OreFilter.expand(tokens);
+        };
+        ClientConfig.setShown(result);
+        say("showing " + (result.contains(OreFilter.ALL) ? "all ores" : result.isEmpty() ? "nothing" : String.join(", ", result)));
+        return 1;
     }
 
     private static void toggle() {
@@ -112,6 +183,17 @@ public final class SeedScoutClient {
                 .then(Commands.literal("status").executes(ctx -> status()))
                 .then(Commands.literal("hash").executes(ctx -> hash()))
                 .then(Commands.literal("toggle").executes(ctx -> { toggle(); return 1; }))
+                .then(Commands.literal("menu").executes(ctx -> {
+                    Minecraft mc = Minecraft.getInstance();
+                    mc.tell(() -> mc.setScreen(new FilterScreen(null)));
+                    return 1;
+                }))
+                .then(Commands.literal("show").then(Commands.argument("ores", StringArgumentType.greedyString()).suggests(ORE_LIST)
+                        .executes(ctx -> show(StringArgumentType.getString(ctx, "ores"), "show"))))
+                .then(Commands.literal("add").then(Commands.argument("ores", StringArgumentType.greedyString()).suggests(ORE_LIST)
+                        .executes(ctx -> show(StringArgumentType.getString(ctx, "ores"), "add"))))
+                .then(Commands.literal("remove").then(Commands.argument("ores", StringArgumentType.greedyString()).suggests(ORE_LIST)
+                        .executes(ctx -> show(StringArgumentType.getString(ctx, "ores"), "remove"))))
                 .then(Commands.literal("range").then(Commands.argument("n", IntegerArgumentType.integer(1, 16)).executes(ctx -> {
                     ClientConfig.RANGE.set(IntegerArgumentType.getInteger(ctx, "n"));
                     ClientConfig.SPEC.save();

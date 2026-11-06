@@ -57,6 +57,12 @@ public final class OreRenderer extends RenderType {
         int range = ClientConfig.RANGE.get();
         int pcx = mc.player.chunkPosition().x, pcz = mc.player.chunkPosition().z;
         Map<String, Integer> colors = ClientConfig.colors();
+        java.util.List<String> shown = OreFilter.expand(ClientConfig.shown());
+        if (shown.isEmpty()) {
+            lastDrawn = 0;
+            return;
+        }
+        float alpha = ClientConfig.OPACITY.get() / 100f;
 
         PoseStack pose = event.getPoseStack();
         pose.pushPose();
@@ -69,14 +75,15 @@ public final class OreRenderer extends RenderType {
             if (Math.abs(chunk.x - pcx) > range || Math.abs(chunk.z - pcz) > range) continue;
             if (level.getChunkSource().getChunkNow(chunk.x, chunk.z) == null) continue;
             for (OreStore.Ore ore : chunk.ores) {
+                if (!OreFilter.isShown(ore.id(), shown)) continue;
                 pos.set(ore.x(), ore.y(), ore.z());
                 BlockState here = level.getBlockState(pos);
                 if (here.isAir() || !here.getFluidState().isEmpty()) continue;
-                int rgb = colors.getOrDefault(ore.id(), PALETTE[Math.floorMod(ore.id().hashCode(), PALETTE.length)]);
+                int rgb = colorOf(ore.id(), colors);
                 float r = ((rgb >> 16) & 255) / 255f, g = ((rgb >> 8) & 255) / 255f, b = (rgb & 255) / 255f;
                 LevelRenderer.renderLineBox(pose, lines,
                         ore.x() + 0.02, ore.y() + 0.02, ore.z() + 0.02, ore.x() + 0.98, ore.y() + 0.98, ore.z() + 0.98,
-                        r, g, b, 0.9f);
+                        r, g, b, alpha);
                 drawn++;
             }
         }
@@ -86,4 +93,11 @@ public final class OreRenderer extends RenderType {
     }
 
     public static volatile int lastDrawn;
+
+    /** The id's color, else its family's, else a palette color by family (so deepslate twins match). */
+    public static int colorOf(String id, Map<String, Integer> colors) {
+        Integer c = ClientConfig.color(id, colors);
+        if (c != null) return c;
+        return PALETTE[Math.floorMod(OreFilter.family(id).hashCode(), PALETTE.length)];
+    }
 }

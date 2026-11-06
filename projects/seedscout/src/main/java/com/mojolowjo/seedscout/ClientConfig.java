@@ -22,6 +22,9 @@ public final class ClientConfig {
     public static final ForgeConfigSpec.BooleanValue AUTO_START;
     public static final ForgeConfigSpec.BooleanValue OVERLAY_ON;
     public static final ForgeConfigSpec.BooleanValue USE_SERVER_PACK;
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> SHOWN;
+    public static final ForgeConfigSpec.IntValue OPACITY;
+    public static final ForgeConfigSpec.BooleanValue LEGEND;
 
     static {
         ForgeConfigSpec.Builder b = new ForgeConfigSpec.Builder();
@@ -56,7 +59,28 @@ public final class ClientConfig {
         OVERLAY_ON = b.define("overlayOn", true);
         b.comment("Setup fetches the pack's official server files from CurseForge (ids from Prism's instance.cfg, else MC Eternal 2 1.3) instead of guessing which client mods to leave out.");
         USE_SERVER_PACK = b.define("useServerPack", true);
+        b.comment("What is drawn: families (diamond, mithril), ids, presets (valuables, pack, vanilla) or all. Empty = nothing. /seedscout show, add, remove, or the screen.");
+        SHOWN = b.defineList("shown", List.of("all"), o -> o instanceof String);
+        b.comment("Box opacity in percent.");
+        OPACITY = b.defineInRange("opacity", 90, 10, 100);
+        b.comment("Legend in the top right corner: shown ores with their counts within range.");
+        LEGEND = b.define("legend", false);
         SPEC = b.build();
+    }
+
+    public static List<String> shown() {
+        return new ArrayList<>(SHOWN.get());
+    }
+
+    public static void setShown(List<String> shown) {
+        SHOWN.set(new ArrayList<>(shown));
+        SPEC.save();
+    }
+
+    /** The color of an ore: its id's entry, else its family's entry, else null. */
+    public static Integer color(String id, Map<String, Integer> colors) {
+        Integer c = colors.get(id);
+        return c != null ? c : colors.get(OreFilter.family(id));
     }
 
     public static long seed() {

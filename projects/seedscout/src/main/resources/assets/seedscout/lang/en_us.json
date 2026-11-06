@@ -1,4 +1,5 @@
 {
   "key.categories.seedscout": "Seedscout",
-  "key.seedscout.toggle": "Toggle ore overlay"
+  "key.seedscout.toggle": "Toggle ore overlay",
+  "key.seedscout.menu": "Open ore filter"
 }

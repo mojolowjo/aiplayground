@@ -44,7 +44,9 @@ Without any zip (`useServerPack=false` or no network) setup filters the client's
 | `/seedscout ram <size>` | Scout server heap, like `5G` or `6144M`, for the next start. |
 | `/seedscout seed <seed>` | Change the seed (then delete `seedscout/server/world` and run setup again). |
 | `/seedscout autostart true|false` | Start the scout server when joining a multiplayer server. |
-| `/seedscout toggle` or the **X** key | Overlay on or off. |
+| `/seedscout show <list>` / `add <list>` / `remove <list>` | What is drawn (the scout still scans everything). Comma lists of family names (`diamond`, `mithril`: the id without `deepslate_` and `_ore`), full ids, or presets `all`, `none`, `valuables`, `pack`, `vanilla`. Tab completes the name you are typing. |
+| `/seedscout menu` | The filter screen: search, a checkbox and color per ore family, nearby counts, presets, range and opacity sliders, legend. Also a **Seedscout** button on the pause screen and an **Ore** button beside the inventory. |
+| `/seedscout toggle` or **Shift+X** | Overlay on or off. |
 
 Defaults: `#forge:ores`, `irons_spellbooks:mithril_ore`, `irons_spellbooks:deepslate_mithril_ore`,
 `tinkers_advanced:bismuthinite_ore`, `minecraft:ancient_debris`. Dimensions map by id, so the Dwarven Depths
