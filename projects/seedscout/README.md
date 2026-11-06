@@ -20,12 +20,13 @@ Worldgen only matches when the scout server has the same worldgen mods and confi
 Setup copies `mods/` (minus client-only mods), `config/`, `defaultconfigs/`, `kubejs/`, `global_packs/`,
 `openloader/` and `scripts/` from the instance, and `defaultconfigs/*` into `world/serverconfig/`.
 
-### Best: use the pack's server files
+### The mods come from the pack's own server files
 
-MC Eternal 2 ships official server files on CurseForge (Files tab, `MCE2-Server-Files-<version>.zip`; pick the
-version the server runs). Put that zip into `<instance>/seedscout/` before `/seedscout setup`. Setup then takes
-the mods, config, defaultconfigs and kubejs from the zip and skips the client-only guessing entirely. Without a zip
-it filters the client's mods as described below.
+Setup reads the pack's CurseForge ids from Prism Launcher's `instance.cfg` (built-in fallback: MC Eternal 2 1.3),
+asks CurseForge for the server pack attached to that version and downloads it once into `<instance>/seedscout/`
+(1.5 GB for 1.3; a broken download resumes on the next setup). The scout server's mods, config, defaultconfigs and
+kubejs come from that zip, so no guessing which client mods to leave out. A zip put there by hand is used as is.
+Without any zip (`useServerPack=false` or no network) setup filters the client's mods as described below.
 
 ## Commands
 

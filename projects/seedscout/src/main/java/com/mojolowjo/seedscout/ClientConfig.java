@@ -21,6 +21,7 @@ public final class ClientConfig {
     public static final ForgeConfigSpec.ConfigValue<String> RAM;
     public static final ForgeConfigSpec.BooleanValue AUTO_START;
     public static final ForgeConfigSpec.BooleanValue OVERLAY_ON;
+    public static final ForgeConfigSpec.BooleanValue USE_SERVER_PACK;
 
     static {
         ForgeConfigSpec.Builder b = new ForgeConfigSpec.Builder();
@@ -53,6 +54,8 @@ public final class ClientConfig {
         AUTO_START = b.define("autoStart", false);
         b.comment("Overlay state, kept across restarts (the X key toggles it).");
         OVERLAY_ON = b.define("overlayOn", true);
+        b.comment("Setup fetches the pack's official server files from CurseForge (ids from Prism's instance.cfg, else MC Eternal 2 1.3) instead of guessing which client mods to leave out.");
+        USE_SERVER_PACK = b.define("useServerPack", true);
         SPEC = b.build();
     }
 

@@ -189,7 +189,33 @@ public final class ScoutSetup implements Runnable {
 
     // ---- mods and configs --------------------------------------------------------------------------------
 
-    /** The pack's official server files, when the owner put the zip into the seedscout folder. */
+    /**
+     * Gets the pack's official server files without the owner's help: the pack ids from Prism's instance.cfg
+     * (or the built-in MC Eternal 2 1.3), the attached server pack from CurseForge, downloaded with resume.
+     * A zip already in the seedscout folder is kept. Any failure falls back to filtering the client's mods.
+     */
+    private void fetchServerPack() {
+        if (!ClientConfig.USE_SERVER_PACK.get()) return;
+        try {
+            if (serverPackZip() != null) return;
+            PackSource.Pack pack = PackSource.detect(gameDir);
+            say.accept("pack: project " + pack.projectId() + ", version " + pack.versionName() + " (file " + pack.fileId() + ", from " + pack.source() + ")");
+            PackSource.ServerPack sp = PackSource.pickServerPack(PackSource.get(PackSource.additionalFilesUrl(pack)));
+            if (sp == null) {
+                say.accept("this pack version has no server pack on CurseForge; the client's mods are filtered instead");
+                return;
+            }
+            Path target = scoutDir.resolve(sp.fileName());
+            say.accept("server pack " + sp.fileName() + " (" + sp.length() / 1_000_000 + " MB) from CurseForge; this is a one-time download");
+            PackSource.download(PackSource.downloadUrl(pack.projectId(), sp.id()), target, sp.length(), say);
+            say.accept("server pack downloaded");
+        } catch (Exception e) {
+            SeedScout.LOGGER.warn("[seedscout] server pack fetch failed", e);
+            say.accept("could not get the server pack (" + e.getMessage() + "); the client's mods are filtered instead. Run setup again to retry or resume.");
+        }
+    }
+
+    /** The pack's official server files, when the zip is in the seedscout folder. */
     private Path serverPackZip() throws IOException {
         try (Stream<Path> files = Files.list(scoutDir)) {
             return files.filter(f -> f.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".zip"))
@@ -279,6 +305,7 @@ public final class ScoutSetup implements Runnable {
 
     /** Copies the client's mods minus the client-only ones; removes server jars that should not be there. */
     private void syncMods() throws IOException {
+        fetchServerPack();
         if (syncFromServerPack()) return;
         Files.createDirectories(serverMods);
         Set<String> excluded = loadExcluded();
