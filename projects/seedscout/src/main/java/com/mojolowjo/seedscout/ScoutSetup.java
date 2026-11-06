@@ -43,6 +43,8 @@ public final class ScoutSetup implements Runnable {
     private final Consumer<String> say;
     private static volatile boolean busy;
     private Map<String, Path> clientIndex;
+    /** True when a server pack zip supplied config files; the client's then only fill gaps. */
+    private boolean packConfigs;
 
     public ScoutSetup(Path gameDir, boolean acceptEula, String ram, Consumer<String> say) {
         this.gameDir = gameDir;
@@ -187,8 +189,97 @@ public final class ScoutSetup implements Runnable {
 
     // ---- mods and configs --------------------------------------------------------------------------------
 
+    /** The pack's official server files, when the owner put the zip into the seedscout folder. */
+    private Path serverPackZip() throws IOException {
+        try (Stream<Path> files = Files.list(scoutDir)) {
+            return files.filter(f -> f.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".zip"))
+                    .filter(f -> !f.getFileName().toString().equals(ServerFiles.INSTALLER_NAME))
+                    .max(Comparator.comparingLong(f -> f.toFile().lastModified())).orElse(null);
+        }
+    }
+
+    /**
+     * Mods from the server pack zip: its mods/*.jar replace the server's mods wholesale (plus this mod's jar), and
+     * its config, defaultconfigs and kubejs folders are copied too when it has them. Returns false without a zip.
+     */
+    private boolean syncFromServerPack() throws IOException {
+        Path zip = serverPackZip();
+        if (zip == null) return false;
+        say.accept("server pack found: " + zip.getFileName() + "; taking the mods from it instead of filtering the client's");
+        Files.createDirectories(serverMods);
+        Path self = ModList.get().getModFileById(SeedScout.MOD_ID).getFile().getFilePath();
+        Map<String, Path> wanted = new LinkedHashMap<>();
+        int configs = 0;
+        try (java.util.zip.ZipFile z = new java.util.zip.ZipFile(zip.toFile())) {
+            // the pack may sit in a top folder inside the zip: find the entry prefix that holds mods/
+            String prefix = null;
+            for (java.util.Enumeration<? extends java.util.zip.ZipEntry> en = z.entries(); en.hasMoreElements(); ) {
+                String n = en.nextElement().getName();
+                int i = n.indexOf("mods/");
+                if (i >= 0 && n.endsWith(".jar") && n.indexOf('/', i + 5) < 0 && (prefix == null || i < prefix.length())) prefix = n.substring(0, i);
+            }
+            if (prefix == null) {
+                say.accept("the zip has no mods/ folder with jars; ignoring it");
+                return false;
+            }
+            Path tmp = scoutDir.resolve("serverpack-extract");
+            for (java.util.Enumeration<? extends java.util.zip.ZipEntry> en = z.entries(); en.hasMoreElements(); ) {
+                java.util.zip.ZipEntry e = en.nextElement();
+                if (e.isDirectory() || !e.getName().startsWith(prefix)) continue;
+                String rel = e.getName().substring(prefix.length());
+                if (rel.startsWith("mods/") && rel.endsWith(".jar") && rel.indexOf('/', 5) < 0) {
+                    String name = rel.substring(5);
+                    Path dst = serverMods.resolve(name);
+                    if (!Files.isRegularFile(dst) || Files.size(dst) != e.getSize()) {
+                        try (java.io.InputStream in = z.getInputStream(e)) {
+                            Files.copy(in, dst, StandardCopyOption.REPLACE_EXISTING);
+                        }
+                    }
+                    wanted.put(name, dst);
+                } else if (rel.startsWith("config/") || rel.startsWith("defaultconfigs/") || rel.startsWith("kubejs/")
+                        || rel.startsWith("global_packs/") || rel.startsWith("openloader/")) {
+                    if (rel.contains("..")) continue;
+                    Path dst = serverDir.resolve(rel);
+                    Files.createDirectories(dst.getParent());
+                    try (java.io.InputStream in = z.getInputStream(e)) {
+                        Files.copy(in, dst, StandardCopyOption.REPLACE_EXISTING);
+                    }
+                    configs++;
+                    if (rel.startsWith("defaultconfigs/")) {
+                        Path sc = serverDir.resolve("world").resolve("serverconfig").resolve(rel.substring("defaultconfigs/".length()));
+                        if (!Files.exists(sc)) {
+                            Files.createDirectories(sc.getParent());
+                            Files.copy(dst, sc);
+                        }
+                    }
+                }
+            }
+            Files.deleteIfExists(tmp);
+        }
+        if (Files.isRegularFile(self) && self.toString().endsWith(".jar")) {
+            Path dst = serverMods.resolve(self.getFileName().toString());
+            if (!Files.isRegularFile(dst) || Files.size(dst) != Files.size(self)) Files.copy(self, dst, StandardCopyOption.REPLACE_EXISTING);
+            wanted.put(dst.getFileName().toString(), dst);
+        }
+        int removed = 0;
+        try (Stream<Path> present = Files.list(serverMods)) {
+            for (Path jar : (Iterable<Path>) present::iterator) {
+                String name = jar.getFileName().toString();
+                if (name.endsWith(".jar") && !wanted.containsKey(name)) {
+                    Files.delete(jar);
+                    removed++;
+                }
+            }
+        }
+        packConfigs = configs > 0;
+        say.accept("mods: " + wanted.size() + " from the server pack (" + removed + " others removed); " + configs
+                + " config files from the pack" + (configs == 0 ? " (none in the zip, the client's are used)" : ""));
+        return true;
+    }
+
     /** Copies the client's mods minus the client-only ones; removes server jars that should not be there. */
     private void syncMods() throws IOException {
+        if (syncFromServerPack()) return;
         Files.createDirectories(serverMods);
         Set<String> excluded = loadExcluded();
         Map<String, Path> wanted = new LinkedHashMap<>();
@@ -233,7 +324,7 @@ public final class ScoutSetup implements Runnable {
         for (String folder : COPIED_FOLDERS) {
             Path src = gameDir.resolve(folder);
             if (!Files.isDirectory(src)) continue;
-            files += copyTree(src, serverDir.resolve(folder), true);
+            files += copyTree(src, serverDir.resolve(folder), !packConfigs);
         }
         Path defaults = gameDir.resolve("defaultconfigs");
         if (Files.isDirectory(defaults)) files += copyTree(defaults, serverDir.resolve("world").resolve("serverconfig"), false);

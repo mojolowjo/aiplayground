@@ -1,4 +1,4 @@
-﻿# Seedscout
+# Seedscout
 
 A Forge 1.20.1 (47.4.2) mod that shows a multiplayer server's real ore positions through walls. The server
 has anti-xray, so the ore data never comes from the server: the mod builds a local **scout server** from the
@@ -19,6 +19,13 @@ Personal tool for the MC Eternal 2 pack. Unrelated to the bot projects in this r
 Worldgen only matches when the scout server has the same worldgen mods and configs as the real server.
 Setup copies `mods/` (minus client-only mods), `config/`, `defaultconfigs/`, `kubejs/`, `global_packs/`,
 `openloader/` and `scripts/` from the instance, and `defaultconfigs/*` into `world/serverconfig/`.
+
+### Best: use the pack's server files
+
+MC Eternal 2 ships official server files on CurseForge (Files tab, `MCE2-Server-Files-<version>.zip`; pick the
+version the server runs). Put that zip into `<instance>/seedscout/` before `/seedscout setup`. Setup then takes
+the mods, config, defaultconfigs and kubejs from the zip and skips the client-only guessing entirely. Without a zip
+it filters the client's mods as described below.
 
 ## Commands
 
