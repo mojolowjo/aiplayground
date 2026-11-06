@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -33,17 +34,22 @@ public final class ScoutSetup implements Runnable {
     private static final int MAX_START_TRIES = 15;
     private static final Duration START_TIMEOUT = Duration.ofMinutes(25);
     private static final List<String> COPIED_FOLDERS = List.of("config", "defaultconfigs", "kubejs", "global_packs", "openloader", "scripts");
+    /** First line of the exclusion list. A list without it came from 0.1.0, whose retries removed good mods; it is set aside. */
+    private static final String EXCLUDED_HEADER = "# seedscout exclusions v2 (one jar per line; text after # is ignored)";
 
-    private final Path gameDir, scoutDir, serverDir;
+    private final Path gameDir, scoutDir, serverDir, clientMods, serverMods;
     private final boolean acceptEula;
     private final String ram;
     private final Consumer<String> say;
     private static volatile boolean busy;
+    private Map<String, Path> clientIndex;
 
     public ScoutSetup(Path gameDir, boolean acceptEula, String ram, Consumer<String> say) {
         this.gameDir = gameDir;
         this.scoutDir = gameDir.resolve("seedscout");
         this.serverDir = scoutDir.resolve("server");
+        this.clientMods = gameDir.resolve("mods");
+        this.serverMods = serverDir.resolve("mods");
         this.acceptEula = acceptEula;
         this.ram = ram;
         this.say = say;
@@ -134,23 +140,55 @@ public final class ScoutSetup implements Runnable {
         say.accept("Forge server installed");
     }
 
+    // ---- the exclusion list ----------------------------------------------------------------------------
+
     private Path excludedFile() {
         return scoutDir.resolve(ServerFiles.EXCLUDED_FILE);
     }
 
+    /** The saved list; a list from 0.1.0 (no header) is renamed to excluded-mods.old.txt and forgotten. */
     private Set<String> loadExcluded() throws IOException {
         Path f = excludedFile();
-        return Files.isRegularFile(f) ? ClientOnlyMods.parseExclusionList(Files.readString(f, StandardCharsets.UTF_8)) : new LinkedHashSet<>();
+        if (!Files.isRegularFile(f)) return new LinkedHashSet<>();
+        String text = Files.readString(f, StandardCharsets.UTF_8);
+        if (!text.startsWith(EXCLUDED_HEADER)) {
+            Path old = f.resolveSibling("excluded-mods.old.txt");
+            Files.move(f, old, StandardCopyOption.REPLACE_EXISTING);
+            say.accept("the old " + ServerFiles.EXCLUDED_FILE + " (from 0.1.0, it blamed the wrong jars) was set aside as excluded-mods.old.txt; starting fresh");
+            return new LinkedHashSet<>();
+        }
+        return ClientOnlyMods.parseExclusionList(text);
     }
 
     private void addExcluded(String jar, String reason) throws IOException {
-        Files.writeString(excludedFile(), jar + " # " + reason + "\n", StandardCharsets.UTF_8,
-                java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        Path f = excludedFile();
+        if (!Files.isRegularFile(f)) Files.writeString(f, EXCLUDED_HEADER + "\n", StandardCharsets.UTF_8);
+        Files.writeString(f, jar + " # " + reason + "\n", StandardCharsets.UTF_8, StandardOpenOption.APPEND);
     }
+
+    private void removeExcluded(String jar) throws IOException {
+        Path f = excludedFile();
+        if (!Files.isRegularFile(f)) return;
+        List<String> kept = new ArrayList<>();
+        for (String line : Files.readAllLines(f, StandardCharsets.UTF_8)) {
+            int hash = line.indexOf('#');
+            String name = (hash > 0 ? line.substring(0, hash) : line.startsWith("#") ? "" : line).trim();
+            if (!name.equals(jar)) kept.add(line);
+        }
+        Files.write(f, kept, StandardCharsets.UTF_8);
+    }
+
+    /** True when the jar is a client-only mod by name or by its mods.toml (not by the saved list). */
+    private static boolean knownClientOnly(Path jar) {
+        if (ClientOnlyMods.matchesBuiltin(jar.getFileName().toString())) return true;
+        String t = ClientOnlyMods.readModsToml(jar);
+        return t != null && ClientOnlyMods.tomlSaysClientOnly(t);
+    }
+
+    // ---- mods and configs --------------------------------------------------------------------------------
 
     /** Copies the client's mods minus the client-only ones; removes server jars that should not be there. */
     private void syncMods() throws IOException {
-        Path clientMods = gameDir.resolve("mods"), serverMods = serverDir.resolve("mods");
         Files.createDirectories(serverMods);
         Set<String> excluded = loadExcluded();
         Map<String, Path> wanted = new LinkedHashMap<>();
@@ -244,7 +282,9 @@ public final class ScoutSetup implements Runnable {
         say.accept("server.properties written: seed " + seed + ", port " + port + ", view-distance 3, offline, 1 player");
     }
 
-    /** Starts the server until it reaches "Done", excluding the jar each crash is traced to. */
+    // ---- test starts ------------------------------------------------------------------------------------
+
+    /** Starts the server until it reaches "Done", fixing the mod set after each failed start. */
     private void testStarts() throws IOException, InterruptedException {
         for (int attempt = 1; attempt <= MAX_START_TRIES; attempt++) {
             say.accept("test start " + attempt + "/" + MAX_START_TRIES + " (the first world generation can take many minutes) ...");
@@ -253,12 +293,12 @@ public final class ScoutSetup implements Runnable {
             Process p = ScoutProcess.launch(serverDir, ram, log, false);
             boolean done = false;
             try {
-                long lastLine = 0;
+                int seen = 0;
                 while (p.isAlive()) {
                     Thread.sleep(2000);
                     List<String> lines = tail(log);
-                    for (int i = (int) lastLine; i < lines.size(); i++) if (ServerFiles.isDoneLine(lines.get(i))) done = true;
-                    lastLine = lines.size();
+                    for (int i = seen; i < lines.size(); i++) if (ServerFiles.isDoneLine(lines.get(i))) done = true;
+                    seen = lines.size();
                     if (done) break;
                     if (System.currentTimeMillis() - t0 > START_TIMEOUT.toMillis()) {
                         say.accept("no 'Done' after " + START_TIMEOUT.toMinutes() + " minutes; stopping the test start (see " + scoutDir.relativize(log) + ")");
@@ -275,15 +315,13 @@ public final class ScoutSetup implements Runnable {
                 say.accept("the scout server started and stopped cleanly. Setup done: /seedscout start");
                 return;
             }
-            String culprit = culprit(log);
-            if (culprit == null) {
-                say.accept("the server did not start and no client-only mod could be blamed. Read seedscout/" + scoutDir.relativize(log)
+            List<String> changes = repair(log, attempt);
+            if (changes.isEmpty()) {
+                say.accept("the server did not start and nothing could be blamed. Read seedscout/" + scoutDir.relativize(log)
                         + " and the newest file in seedscout/server/crash-reports; add a jar name to seedscout/" + ServerFiles.EXCLUDED_FILE + " and run setup again.");
                 return;
             }
-            say.accept("start " + attempt + " failed because of " + culprit + "; excluded, retrying");
-            addExcluded(culprit, "failed start " + attempt);
-            Files.deleteIfExists(serverDir.resolve("mods").resolve(culprit));
+            say.accept("start " + attempt + " failed; " + String.join("; ", changes) + "; retrying");
         }
         say.accept("gave up after " + MAX_START_TRIES + " starts; see seedscout/" + ServerFiles.EXCLUDED_FILE + " and the logs");
     }
@@ -296,44 +334,101 @@ public final class ScoutSetup implements Runnable {
         }
     }
 
-    /** The jar a failed start points at: from the log and the newest crash report, in that order. */
-    private String culprit(Path log) throws IOException {
-        List<String> texts = new ArrayList<>();
-        texts.add(String.join("\n", tail(log)));
-        Path crashes = serverDir.resolve("crash-reports");
-        if (Files.isDirectory(crashes)) {
-            try (Stream<Path> files = Files.list(crashes)) {
-                files.filter(f -> f.toString().endsWith(".txt"))
-                        .max(Comparator.comparingLong(f -> f.toFile().lastModified()))
-                        .ifPresent(f -> texts.add(String.join("\n", tail(f))));
-            }
-        }
-        Path mods = serverDir.resolve("mods");
-        Map<String, String> idToJar = modIdIndex(mods);
-        for (String text : texts) {
-            ClientOnlyMods.Diagnosis d = ClientOnlyMods.diagnose(text);
-            for (String jar : d.jars) if (Files.isRegularFile(mods.resolve(jar)) && !jar.startsWith("seedscout-")) return jar;
-            for (String id : d.modIds) {
-                String jar = idToJar.get(id);
-                if (jar != null && !jar.startsWith("seedscout-")) return jar;
-            }
-            for (String cls : d.classes) {
-                Path jar = ClientOnlyMods.findJarForClass(mods, cls);
-                if (jar != null && !jar.getFileName().toString().startsWith("seedscout-")) return jar.getFileName().toString();
-            }
-        }
-        return null;
+    private static String readAll(Path f) {
+        return String.join("\n", tail(f));
     }
 
-    private static Map<String, String> modIdIndex(Path mods) throws IOException {
-        Map<String, String> m = new LinkedHashMap<>();
+    private Path newestCrashReport() throws IOException {
+        Path crashes = serverDir.resolve("crash-reports");
+        if (!Files.isDirectory(crashes)) return null;
+        try (Stream<Path> files = Files.list(crashes)) {
+            return files.filter(f -> f.toString().endsWith(".txt")).max(Comparator.comparingLong(f -> f.toFile().lastModified())).orElse(null);
+        }
+    }
+
+    /** mod id -> jar, from the mods.toml of every jar in a folder. */
+    private static Map<String, Path> index(Path mods) throws IOException {
+        Map<String, Path> m = new LinkedHashMap<>();
+        if (!Files.isDirectory(mods)) return m;
         try (Stream<Path> jars = Files.list(mods)) {
             for (Path jar : (Iterable<Path>) jars::iterator) {
+                if (!jar.getFileName().toString().endsWith(".jar")) continue;
                 String t = ClientOnlyMods.readModsToml(jar);
                 if (t == null) continue;
-                for (String id : ClientOnlyMods.tomlModIds(t)) m.putIfAbsent(id, jar.getFileName().toString());
+                for (String id : ClientOnlyMods.tomlModIds(t)) m.putIfAbsent(id, jar);
             }
         }
         return m;
+    }
+
+    /**
+     * Changes the mod set after a failed start and says what changed.
+     * <p>Dependency failures first ("Mod ID: 'x', Requested by: 'y'"): a dependency the client has but the server
+     * lacks is copied back (an earlier run removed it wrongly), unless it is a client-only mod, in which case the
+     * mod that needs it is client-only too and goes out. A dependency the client does not have either: the
+     * requester goes out. Only without dependency failures is a jar blamed by the crash report, and only for
+     * client-class errors ("invalid dist DEDICATED_SERVER", client classes not found).
+     */
+    private List<String> repair(Path log, int attempt) throws IOException {
+        List<String> changes = new ArrayList<>();
+        String logText = readAll(log);
+        Path crash = newestCrashReport();
+        String crashText = crash != null && crash.toFile().lastModified() >= log.toFile().lastModified() - 120_000 ? readAll(crash) : "";
+
+        if (clientIndex == null) clientIndex = index(clientMods);
+        Map<String, Path> serverIndex = index(serverMods);
+        Set<String> listed = loadExcluded();
+
+        List<ClientOnlyMods.DependencyFailure> deps = ClientOnlyMods.dependencyFailures(logText);
+        if (deps.isEmpty()) deps = ClientOnlyMods.dependencyFailures(crashText);
+        Set<String> restored = new LinkedHashSet<>(), excluded = new LinkedHashSet<>();
+        for (ClientOnlyMods.DependencyFailure f : deps) {
+            Path clientJar = clientIndex.get(f.modId());
+            Path requester = serverIndex.getOrDefault(f.requestedBy(), clientIndex.get(f.requestedBy()));
+            if (clientJar != null && !serverIndex.containsKey(f.modId())) {
+                String name = clientJar.getFileName().toString();
+                if (knownClientOnly(clientJar)) {
+                    exclude(requester, f.requestedBy() + " needs the client-only mod " + f.modId(), attempt, excluded);
+                } else if (!restored.contains(name)) {
+                    Files.copy(clientJar, serverMods.resolve(name), StandardCopyOption.REPLACE_EXISTING);
+                    if (listed.contains(name)) removeExcluded(name);
+                    restored.add(name);
+                }
+            } else {
+                exclude(requester, f.modId() + " " + (f.missing() ? "is not installed" : "is " + f.actual() + ", needs " + f.expected()), attempt, excluded);
+            }
+        }
+        if (!restored.isEmpty()) changes.add("copied back " + String.join(", ", restored));
+        if (!excluded.isEmpty()) changes.add("excluded " + String.join(", ", excluded));
+        if (!changes.isEmpty()) return changes;
+
+        for (String text : new String[]{crashText, logText}) {
+            ClientOnlyMods.Diagnosis d = ClientOnlyMods.diagnose(text);
+            if (!d.clientClassError) continue;
+            for (String jar : d.jars) if (Files.isRegularFile(serverMods.resolve(jar))) return List.of(excludeNamed(jar, "client class error", attempt));
+            for (String id : d.modIds) {
+                Path jar = serverIndex.get(id);
+                if (jar != null) return List.of(excludeNamed(jar.getFileName().toString(), "client class error in " + id, attempt));
+            }
+            for (String cls : d.classes) {
+                Path jar = ClientOnlyMods.findJarForClass(serverMods, cls);
+                if (jar != null) return List.of(excludeNamed(jar.getFileName().toString(), "client class " + cls, attempt));
+            }
+        }
+        return changes;
+    }
+
+    private void exclude(Path jar, String reason, int attempt, Set<String> out) throws IOException {
+        if (jar == null) return;
+        String name = jar.getFileName().toString();
+        if (name.startsWith("seedscout-") || out.contains(name)) return;
+        excludeNamed(name, reason, attempt);
+        out.add(name);
+    }
+
+    private String excludeNamed(String name, String reason, int attempt) throws IOException {
+        addExcluded(name, reason + " (start " + attempt + ")");
+        Files.deleteIfExists(serverMods.resolve(name));
+        return "excluded " + name + " (" + reason + ")";
     }
 }

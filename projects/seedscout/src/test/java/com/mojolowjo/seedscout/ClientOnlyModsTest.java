@@ -24,6 +24,27 @@ class ClientOnlyModsTest {
         assertFalse(ClientOnlyMods.matchesBuiltin("irons_spellbooks-1.20.1-3.4.0.jar"));
         assertFalse(ClientOnlyMods.matchesBuiltin("Terralith_1.20.x_v2.5.4.jar"));
         assertFalse(ClientOnlyMods.matchesBuiltin("flywheel-forge-1.20.1-0.6.11.jar"), "Create needs Flywheel on the server");
+        assertFalse(ClientOnlyMods.matchesBuiltin("Vampirism-1.20.1-1.10.7.jar"), "'iris' inside a word is not Iris (lost in the first run)");
+        assertFalse(ClientOnlyMods.matchesBuiltin("Meteorites-1.0.jar"));
+        assertTrue(ClientOnlyMods.matchesBuiltin("iris-mc1.20.1-1.6.jar"));
+        assertTrue(ClientOnlyMods.matchesBuiltin("Xaeros_Minimap_23.9.7_Forge_1.20.jar"), "a word start followed by more letters still counts");
+    }
+
+    @Test
+    void dependencyFailuresFromTheServerLog() {
+        String log = String.join("\n",
+                "[main/ERROR] [net.minecraftforge.fml.loading.ModSorter/LOADING]: Missing or unsupported mandatory dependencies:",
+                "\tMod ID: 'architectury', Requested by: 'powergrid', Expected range: '[9.2.14,)', Actual version: '9.1.12'",
+                "\tMod ID: 'octolib', Requested by: 'nerb', Expected range: '[0.4.2,)', Actual version: '[MISSING]'",
+                "[main/ERROR] [net.minecraftforge.fml.loading.ModSorter/LOADING]: Unsupported installed optional dependencies:",
+                "\tMod ID: 'geckolib', Requested by: 'alltheleaks', Expected range: '[4.4.8,)', Actual version: '4.4.4'");
+        List<ClientOnlyMods.DependencyFailure> d = ClientOnlyMods.dependencyFailures(log);
+        assertEquals(3, d.size());
+        assertEquals(new ClientOnlyMods.DependencyFailure("architectury", "powergrid", "[9.2.14,)", "9.1.12"), d.get(0));
+        assertFalse(d.get(0).missing());
+        assertTrue(d.get(1).missing());
+        assertEquals("alltheleaks", d.get(2).requestedBy());
+        assertTrue(ClientOnlyMods.dependencyFailures("Done (3.2s)!").isEmpty());
     }
 
     @Test

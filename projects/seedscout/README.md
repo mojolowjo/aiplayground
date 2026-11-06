@@ -91,4 +91,12 @@ The jar lands in `build/libs/`; the released copy is in `dist/`.
 
 ## Status
 
+0.1.1: the first run on the owner's PC (2026-11-05) got through download, install and the mod copy, then
+failed all 15 test starts. Two causes, both fixed: the name filter matched "iris" inside Vampirism, and the
+retry blamed the first jar in the crash report, which for "mod X requires Y" errors is the innocent
+requester, so each round removed a good mod (geckolib, resourcefullib, architectury among them). Now names
+match at word starts only, and a failed start is repaired from Forge's dependency lines: a dependency the
+client has but the server lacks is copied back, a mod that needs a client-only mod (colorwheel needs
+Oculus) goes out, and crash-report blame is used only for client-class errors. An exclusion list from 0.1.0
+is set aside as `excluded-mods.old.txt` on the next setup.
 0.1.0: builds, unit tests pass, not yet run in a game.

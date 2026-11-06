@@ -50,16 +50,44 @@ public final class ClientOnlyMods {
             "extremesoundmuffler", "sound-muffler", "soundmuffler", "auudio", "dynamic-surroundings",
             "dynamicsurroundings", "musictriggers", "music-triggers",
             // xray and cheat clients
-            "xray", "x-ray", "wurst", "meteor", "freecam"
+            "xray", "x-ray", "freecam"
     );
 
     private static final Pattern TOML_CLIENT_ONLY = Pattern.compile("(?m)^\\s*clientSideOnly\\s*=\\s*true\\b");
     private static final Pattern TOML_MOD_ID = Pattern.compile("(?m)^\\s*modId\\s*=\\s*\"([^\"]+)\"");
 
+    /**
+     * A pattern matches at the start of a word only: "oculus-mc1.20.1" yes, "Vampirism" no ("iris" sits inside
+     * a word; the first run on the owner's pack lost Vampirism to that).
+     */
     public static boolean matchesBuiltin(String jarName) {
         String n = jarName.toLowerCase(Locale.ROOT);
-        for (String p : BUILTIN_PATTERNS) if (n.contains(p)) return true;
+        for (String p : BUILTIN_PATTERNS) {
+            int i = n.indexOf(p);
+            while (i >= 0) {
+                if (i == 0 || !Character.isLetter(n.charAt(i - 1))) return true;
+                i = n.indexOf(p, i + 1);
+            }
+        }
         return false;
+    }
+
+    /** One line of Forge's "Missing or unsupported mandatory dependencies" (or the optional variant). */
+    public record DependencyFailure(String modId, String requestedBy, String expected, String actual) {
+        public boolean missing() {
+            return actual.contains("MISSING");
+        }
+    }
+
+    private static final Pattern DEPENDENCY = Pattern.compile(
+            "Mod ID: '([^']+)', Requested by: '([^']+)', Expected range: '([^']*)', Actual version: '([^']*)'");
+
+    /** The dependency failures a server log lists, in order; empty when it has none. */
+    public static List<DependencyFailure> dependencyFailures(String logText) {
+        List<DependencyFailure> out = new ArrayList<>();
+        Matcher m = DEPENDENCY.matcher(logText);
+        while (m.find()) out.add(new DependencyFailure(m.group(1), m.group(2), m.group(3), m.group(4)));
+        return out;
     }
 
     public static boolean tomlSaysClientOnly(String modsToml) {
