@@ -68,7 +68,7 @@ Defaults: `#forge:ores`, `irons_spellbooks:mithril_ore`, `irons_spellbooks:deeps
   client is air or a fluid is not drawn (it was mined). On connect the scout's hash is compared with the
   configured seed's hash and with the hash the real server sent; a mismatch is a chat warning.
 
-Known limits: with a shader pack (Oculus) the line overlay may not show; the scout server needs the pack's
+Known limits: with a shader pack (Oculus) the line overlay depends on the pack's handling of line rendering; the scout server needs the pack's
 dimension mods to answer for modded dimensions; the first world generation on `setup` and the first chunks
 after `start` take a while on 600 mods.
 

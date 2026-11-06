@@ -46,6 +46,7 @@ public final class OreRenderer extends RenderType {
     public static void onRenderLevel(RenderLevelStageEvent event) {
         if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) return;
         if (!ClientConfig.OVERLAY_ON.get()) return;
+        if (ShaderPass.isShadowPass()) return;
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
         if (level == null || mc.player == null) return;
