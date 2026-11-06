@@ -66,15 +66,30 @@ public final class ScoutLink {
     /** Connects (on the calling thread) and starts the reader. */
     public static synchronized void connect(int port, String token) throws IOException {
         disconnect();
-        Socket s = new Socket(InetAddress.getLoopbackAddress(), port);
-        PrintWriter w = new PrintWriter(new OutputStreamWriter(s.getOutputStream(), StandardCharsets.UTF_8), true);
-        socket = s;
+        Socket s = null;
+        IOException last = null;
+        for (int attempt = 0; attempt < 10 && s == null; attempt++) {
+            try {
+                s = new Socket(InetAddress.getByAddress(new byte[]{127, 0, 0, 1}), port);
+            } catch (IOException e) {
+                last = e;
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ie) {
+                    throw e;
+                }
+            }
+        }
+        if (s == null) throw last;
+        final Socket sock = s;
+        PrintWriter w = new PrintWriter(new OutputStreamWriter(sock.getOutputStream(), StandardCharsets.UTF_8), true);
+        socket = sock;
         out = w;
         connected = true;
         scoutHash = null;
         send(Protocol.auth(token));
         send(Protocol.hash());
-        Thread reader = new Thread(() -> readLoop(s), "seedscout-reader");
+        Thread reader = new Thread(() -> readLoop(sock), "seedscout-reader");
         reader.setDaemon(true);
         reader.start();
     }

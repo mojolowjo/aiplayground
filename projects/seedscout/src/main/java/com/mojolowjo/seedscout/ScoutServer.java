@@ -85,13 +85,16 @@ public final class ScoutServer {
         server = event.getServer();
         freeze(server);
         try {
-            socket = new ServerSocket(0, 4, InetAddress.getLoopbackAddress());
+            // 127.0.0.1 by the numbers: with -Djava.net.preferIPv6Addresses=system (Forge's server args) the loopback
+            // address can be ::1 on one side and 127.0.0.1 on the other, and the client is refused.
+            socket = new ServerSocket(0, 4, InetAddress.getByAddress(new byte[]{127, 0, 0, 1}));
             token = new BigInteger(128, new SecureRandom()).toString(16);
             running.set(true);
             Thread accept = new Thread(ScoutServer::acceptLoop, "seedscout-accept");
             accept.setDaemon(true);
             accept.start();
             JsonObject ep = new JsonObject();
+            ep.addProperty("host", "127.0.0.1");
             ep.addProperty("port", socket.getLocalPort());
             ep.addProperty("token", token);
             ep.addProperty("pid", ProcessHandle.current().pid());
