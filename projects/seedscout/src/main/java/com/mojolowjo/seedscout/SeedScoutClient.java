@@ -181,6 +181,7 @@ public final class SeedScoutClient {
             return 0;
         }
         try {
+            syncOwnJar();
             Path log = ScoutProcess.newLog(scoutDir(), "scout");
             ScoutProcess.launch(serverDir(), ClientConfig.RAM.get(), log, true);
             say("scout server starting with " + ServerFiles.xmx(ClientConfig.RAM.get(), "5G") + "; log seedscout/" + scoutDir().relativize(log));
@@ -192,6 +193,29 @@ public final class SeedScoutClient {
         connector.setDaemon(true);
         connector.start();
         return 1;
+    }
+
+    /**
+     * The scout server runs this same mod; its copy must be the one in the client's mods folder. Setup copied
+     * 0.2.0 once and 0.2.1's socket fix never reached the server side, so every start replaces a stale copy.
+     */
+    static void syncOwnJar() throws IOException {
+        Path self = net.minecraftforge.fml.ModList.get().getModFileById(SeedScout.MOD_ID).getFile().getFilePath();
+        if (!java.nio.file.Files.isRegularFile(self) || !self.toString().endsWith(".jar")) return;
+        Path mods = serverDir().resolve("mods");
+        if (!java.nio.file.Files.isDirectory(mods)) return;
+        Path dst = mods.resolve(self.getFileName().toString());
+        try (var files = java.nio.file.Files.list(mods)) {
+            for (Path p : (Iterable<Path>) files::iterator) {
+                String n = p.getFileName().toString();
+                if (n.startsWith("seedscout-") && n.endsWith(".jar") && !p.equals(dst)) {
+                    java.nio.file.Files.delete(p);
+                    say("replaced the scout server's " + n + " with " + dst.getFileName());
+                }
+            }
+        }
+        if (!java.nio.file.Files.isRegularFile(dst) || java.nio.file.Files.size(dst) != java.nio.file.Files.size(self))
+            java.nio.file.Files.copy(self, dst, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
     }
 
     /** Waits for the scout mod's endpoint file, then connects; reports when the process dies first. */
