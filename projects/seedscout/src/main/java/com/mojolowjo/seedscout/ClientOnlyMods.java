@@ -150,7 +150,8 @@ public final class ClientOnlyMods {
         }
     }
 
-    private static final Pattern MOD_FILE = Pattern.compile("Mod File:\\s*(?:.*[/\\\\])?([^/\\\\\\s]+\\.jar)");
+    // jar names may hold spaces ("Not Enough Recipe Book-FORGE-0.4.1+1.20.1.jar")
+    private static final Pattern MOD_FILE = Pattern.compile("(?m)Mod File:\\s*(?:.*[/\\\\])?([^/\\\\]+?\\.jar)\\s*$");
     private static final Pattern MOD_ID = Pattern.compile("Mod ID:\\s*'([A-Za-z0-9_\\-]+)'");
     // Forge: "Failure message: Xaero's Minimap (xaerominimap) has failed to load correctly"
     private static final Pattern FAILURE_MOD = Pattern.compile("Failure message:[^\\n]*?\\(([a-z][a-z0-9_.\\-]*)\\) has failed");
@@ -191,6 +192,69 @@ public final class ClientOnlyMods {
         if (s.startsWith("net/minecraft/") || s.startsWith("com/mojang/") || s.startsWith("org/lwjgl/")
                 || s.startsWith("java/") || s.startsWith("javax/") || s.startsWith("net/minecraftforge/")) return;
         out.add(s);
+    }
+
+    /** One "-- MOD x --" section of a Forge mod-loading crash report. */
+    public record CrashSection(String modId, String modFile, String text) {
+        /** True when the section is about client code on the server. */
+        public boolean clientClassError() {
+            return text.contains("invalid dist DEDICATED_SERVER") || text.contains("net/minecraft/client/")
+                    || text.contains("net.minecraft.client.") || text.contains("com/mojang/blaze3d")
+                    || text.contains("com.mojang.blaze3d") || text.contains("org/lwjgl") || text.contains("org.lwjgl");
+        }
+
+        /**
+         * Mod jars named in the section's stack frames other than the section's own, Forge's and the JVM's.
+         * When one is named, that mod caused the failure (Controllable's class loaded by Framework's config scan).
+         */
+        public List<String> otherJars() {
+            List<String> out = new ArrayList<>();
+            Matcher m = FRAME_JAR.matcher(text);
+            while (m.find()) {
+                String jar = m.group(1);
+                if (jar.equals(modFile) || out.contains(jar) || isPlatformJar(jar)) continue;
+                out.add(jar);
+            }
+            return out;
+        }
+    }
+
+    private static final Pattern SECTION_HEAD = Pattern.compile("(?m)^-- MOD ([^ ]+) --\\s*$");
+    private static final Pattern FRAME_JAR = Pattern.compile("~\\[([^\\[\\]%:]+\\.jar)");
+
+    static boolean isPlatformJar(String jar) {
+        return jar.startsWith("forge-") || jar.startsWith("fmlcore-") || jar.startsWith("fmlloader-") || jar.startsWith("javafmllanguage-")
+                || jar.startsWith("lowcodelanguage-") || jar.startsWith("mclanguage-") || jar.startsWith("modlauncher-")
+                || jar.startsWith("securejarhandler-") || jar.startsWith("eventbus-") || jar.startsWith("bootstraplauncher-")
+                || jar.startsWith("server-") || jar.startsWith("mixin-") || jar.startsWith("mixinextras-") || jar.startsWith("mixinsquared-")
+                || jar.startsWith("asm") || jar.startsWith("coremods-") || jar.startsWith("accesstransformers-")
+                || jar.startsWith("fastutil-") || jar.startsWith("gson-") || jar.startsWith("guava-") || jar.startsWith("netty-")
+                || jar.startsWith("log4j-") || jar.startsWith("slf4j-") || jar.startsWith("night-config") || jar.startsWith("core-")
+                || jar.startsWith("toml-") || jar.startsWith("brigadier-") || jar.startsWith("datafixerupper-") || jar.startsWith("authlib-")
+                || jar.startsWith("JarJarFileSystems-") || jar.startsWith("JarJarMetadata-") || jar.startsWith("JarJarSelector-")
+                || jar.startsWith("unsafe-") || jar.startsWith("typetools-") || jar.startsWith("jopt-") || jar.startsWith("commons-");
+    }
+
+    /** The "-- MOD x --" sections of a crash report, each with its Mod File's jar name (or "" when none). */
+    public static List<CrashSection> crashSections(String crashText) {
+        List<CrashSection> out = new ArrayList<>();
+        Matcher m = SECTION_HEAD.matcher(crashText);
+        List<int[]> heads = new ArrayList<>();
+        List<String> ids = new ArrayList<>();
+        while (m.find()) {
+            heads.add(new int[]{m.start(), m.end()});
+            ids.add(m.group(1));
+        }
+        for (int i = 0; i < heads.size(); i++) {
+            int from = heads.get(i)[1];
+            int to = i + 1 < heads.size() ? heads.get(i + 1)[0] : crashText.length();
+            String body = crashText.substring(from, to);
+            int sys = body.indexOf("\n-- ");
+            if (sys >= 0) body = body.substring(0, sys);
+            Matcher f = MOD_FILE.matcher(body);
+            out.add(new CrashSection(ids.get(i), f.find() ? f.group(1) : "", body));
+        }
+        return out;
     }
 
     /** The saved exclusion list: one jar name per line, text after # ignored. */

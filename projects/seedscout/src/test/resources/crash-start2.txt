@@ -1,0 +1,443 @@
+﻿---- Minecraft Crash Report ----
+// I feel sad now :(
+
+Time: 2026-11-05 16:28:06
+Description: Mod loading error has occurred
+
+java.lang.Exception: Mod Loading has failed
+	at net.minecraftforge.logging.CrashReportExtender.dumpModLoadingCrashReport(CrashReportExtender.java:60) ~[forge-1.20.1-47.4.2-universal.jar%231262!/:?] {re:classloading}
+	at net.minecraftforge.server.loading.ServerModLoader.load(ServerModLoader.java:37) ~[forge-1.20.1-47.4.2-universal.jar%231262!/:?] {re:classloading}
+	at net.minecraft.server.Main.main(Main.java:125) ~[server-1.20.1-20230612.114412-srg.jar%231257!/:?] {re:mixin,re:classloading,pl:mixin:A}
+	at jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method) ~[?:?] {}
+	at jdk.internal.reflect.NativeMethodAccessorImpl.invoke(Unknown Source) ~[?:?] {}
+	at jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(Unknown Source) ~[?:?] {}
+	at java.lang.reflect.Method.invoke(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.fml.loading.targets.CommonLaunchHandler.runTarget(CommonLaunchHandler.java:111) ~[fmlloader-1.20.1-47.4.2.jar%2369!/:?] {}
+	at net.minecraftforge.fml.loading.targets.CommonLaunchHandler.serverService(CommonLaunchHandler.java:103) ~[fmlloader-1.20.1-47.4.2.jar%2369!/:?] {}
+	at net.minecraftforge.fml.loading.targets.CommonServerLaunchHandler.lambda$makeService$0(CommonServerLaunchHandler.java:27) ~[fmlloader-1.20.1-47.4.2.jar%2369!/:?] {}
+	at cpw.mods.modlauncher.LaunchServiceHandlerDecorator.launch(LaunchServiceHandlerDecorator.java:30) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.LaunchServiceHandler.launch(LaunchServiceHandler.java:53) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.LaunchServiceHandler.launch(LaunchServiceHandler.java:71) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.Launcher.run(Launcher.java:108) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.Launcher.main(Launcher.java:78) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.BootstrapLaunchConsumer.accept(BootstrapLaunchConsumer.java:26) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.BootstrapLaunchConsumer.accept(BootstrapLaunchConsumer.java:23) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.bootstraplauncher.BootstrapLauncher.main(BootstrapLauncher.java:141) ~[bootstraplauncher-1.1.2.jar:?] {}
+
+
+A detailed walkthrough of the error, its code path and all known details is as follows:
+---------------------------------------------------------------------------------------
+
+-- Head --
+Thread: main
+Suspected Mods: NONE
+Stacktrace:
+	at net.minecraftforge.fml.loading.RuntimeDistCleaner.processClassWithFlags(RuntimeDistCleaner.java:57) ~[fmlloader-1.20.1-47.4.2.jar%2369!/:1.0] {}
+-- MOD gtbcs_geomancy_plus --
+Details:
+	Mod File: /instance/seedscout/server/mods/gtbcs_geomancy_plus-2.0.0-1.20.1.jar
+	Failure message: GTBC's Geomancy Plus (gtbcs_geomancy_plus) has failed to load correctly
+		java.lang.RuntimeException: Attempted to load class com/mojang/blaze3d/vertex/PoseStack for invalid dist DEDICATED_SERVER
+	Mod Version: 2.0.0-1.20.1
+	Mod Issue URL: NOT PROVIDED
+	Exception message: java.lang.RuntimeException: Attempted to load class com/mojang/blaze3d/vertex/PoseStack for invalid dist DEDICATED_SERVER
+Stacktrace:
+	at net.minecraftforge.fml.loading.RuntimeDistCleaner.processClassWithFlags(RuntimeDistCleaner.java:57) ~[fmlloader-1.20.1-47.4.2.jar%2369!/:1.0] {}
+	at cpw.mods.modlauncher.LaunchPluginHandler.offerClassNodeToPlugins(LaunchPluginHandler.java:88) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.ClassTransformer.transform(ClassTransformer.java:120) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.TransformingClassLoader.maybeTransformClassBytes(TransformingClassLoader.java:50) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.cl.ModuleClassLoader.readerToClass(ModuleClassLoader.java:113) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.lambda$findClass$15(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadFromModule(ModuleClassLoader.java:229) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.findClass(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadClass(ModuleClassLoader.java:135) ~[securejarhandler-2.1.10.jar:?] {}
+	at java.lang.ClassLoader.loadClass(Unknown Source) ~[?:?] {}
+	at java.lang.Class.getDeclaredMethods0(Native Method) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetDeclaredMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.getMethods(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.eventbus.EventBus.registerClass(EventBus.java:83) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at net.minecraftforge.eventbus.EventBus.register(EventBus.java:126) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber.lambda$inject$6(AutomaticEventSubscriber.java:61) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at java.util.ArrayList.forEach(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber.inject(AutomaticEventSubscriber.java:48) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:92) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.ModContainer.lambda$buildTransitionHandler$5(ModContainer.java:126) ~[fmlcore-1.20.1-47.4.2.jar%231258!/:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.run(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.exec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinTask.doExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool.scan(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinPool.runWorker(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinWorkerThread.run(Unknown Source) ~[?:?] {re:mixin}
+
+
+-- MOD mafglib --
+Details:
+	Mod File: /instance/seedscout/server/mods/MaFgLib-0.1.13-mc1.20.1.jar
+	Failure message: MaFgLib (mafglib) has failed to load correctly
+		java.lang.RuntimeException: Attempted to load class net/minecraft/client/gui/screens/Screen for invalid dist DEDICATED_SERVER
+	Mod Version: 0.1.13-mc1.20.1
+	Mod Issue URL: NOT PROVIDED
+	Exception message: java.lang.RuntimeException: Attempted to load class net/minecraft/client/gui/screens/Screen for invalid dist DEDICATED_SERVER
+Stacktrace:
+	at net.minecraftforge.fml.loading.RuntimeDistCleaner.processClassWithFlags(RuntimeDistCleaner.java:57) ~[fmlloader-1.20.1-47.4.2.jar%2369!/:1.0] {}
+	at cpw.mods.modlauncher.LaunchPluginHandler.offerClassNodeToPlugins(LaunchPluginHandler.java:88) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.ClassTransformer.transform(ClassTransformer.java:120) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.TransformingClassLoader.maybeTransformClassBytes(TransformingClassLoader.java:50) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.cl.ModuleClassLoader.readerToClass(ModuleClassLoader.java:113) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.lambda$findClass$15(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadFromModule(ModuleClassLoader.java:229) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.findClass(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadClass(ModuleClassLoader.java:135) ~[securejarhandler-2.1.10.jar:?] {}
+	at java.lang.ClassLoader.loadClass(Unknown Source) ~[?:?] {}
+	at java.lang.Class.getDeclaredConstructors0(Native Method) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetDeclaredConstructors(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.getConstructor0(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.getDeclaredConstructor(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:73) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.ModContainer.lambda$buildTransitionHandler$5(ModContainer.java:126) ~[fmlcore-1.20.1-47.4.2.jar%231258!/:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.run(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.exec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinTask.doExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool.scan(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinPool.runWorker(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinWorkerThread.run(Unknown Source) ~[?:?] {re:mixin}
+
+
+-- MOD fastquit --
+Details:
+	Mod File: /instance/seedscout/server/mods/Fastquit-3.0.1+1.20.1forge.jar
+	Failure message: FastQuit (fastquit) has failed to load correctly
+		java.lang.RuntimeException: Attempted to load class net/minecraft/client/gui/screens/Screen for invalid dist DEDICATED_SERVER
+	Mod Version: 3.0.1+1.20.1forge
+	Mod Issue URL: NOT PROVIDED
+	Exception message: java.lang.RuntimeException: Attempted to load class net/minecraft/client/gui/screens/Screen for invalid dist DEDICATED_SERVER
+Stacktrace:
+	at net.minecraftforge.fml.loading.RuntimeDistCleaner.processClassWithFlags(RuntimeDistCleaner.java:57) ~[fmlloader-1.20.1-47.4.2.jar%2369!/:1.0] {}
+	at cpw.mods.modlauncher.LaunchPluginHandler.offerClassNodeToPlugins(LaunchPluginHandler.java:88) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.ClassTransformer.transform(ClassTransformer.java:120) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.TransformingClassLoader.maybeTransformClassBytes(TransformingClassLoader.java:50) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.cl.ModuleClassLoader.readerToClass(ModuleClassLoader.java:113) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.lambda$findClass$15(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadFromModule(ModuleClassLoader.java:229) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.findClass(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadClass(ModuleClassLoader.java:135) ~[securejarhandler-2.1.10.jar:?] {}
+	at java.lang.ClassLoader.loadClass(Unknown Source) ~[?:?] {}
+	at java.lang.Class.getDeclaredConstructors0(Native Method) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetDeclaredConstructors(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.getConstructor0(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.getDeclaredConstructor(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:73) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.ModContainer.lambda$buildTransitionHandler$5(ModContainer.java:126) ~[fmlcore-1.20.1-47.4.2.jar%231258!/:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.run(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.exec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinTask.doExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool.scan(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinPool.runWorker(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinWorkerThread.run(Unknown Source) ~[?:?] {re:mixin}
+
+
+-- MOD framework --
+Details:
+	Caused by 0: java.lang.NoClassDefFoundError: net/minecraft/client/gui/components/toasts/Toast
+		at com.mrcrayfish.controllable.client.settings.InputLibrary.<clinit>(InputLibrary.java:14) ~[controllable-forge-1.20.1-0.21.7.jar%23799!/:1.20.1-0.21.7] {re:classloading}
+		at com.mrcrayfish.controllable.Config$ClientWrapper.<init>(Config.java:31) ~[controllable-forge-1.20.1-0.21.7.jar%23799!/:1.20.1-0.21.7] {re:classloading}
+		at com.mrcrayfish.controllable.Config.<clinit>(Config.java:24) ~[controllable-forge-1.20.1-0.21.7.jar%23799!/:1.20.1-0.21.7] {re:classloading}
+		at java.lang.Class.forName0(Native Method) ~[?:?] {re:mixin}
+		at java.lang.Class.forName(Unknown Source) ~[?:?] {re:mixin}
+		at com.mrcrayfish.framework.platform.ForgeConfigHelper.lambda$getAllFrameworkConfigs$2(ForgeConfigHelper.java:35) ~[framework-forge-1.20.1-0.7.12.jar%23896!/:1.20.1-0.7.12] {re:classloading}
+		at java.lang.Iterable.forEach(Unknown Source) ~[?:?] {re:mixin}
+		at com.mrcrayfish.framework.platform.ForgeConfigHelper.getAllFrameworkConfigs(ForgeConfigHelper.java:31) ~[framework-forge-1.20.1-0.7.12.jar%23896!/:1.20.1-0.7.12] {re:classloading}
+		at com.mrcrayfish.framework.config.FrameworkConfigManager.<init>(FrameworkConfigManager.java:90) ~[framework-forge-1.20.1-0.7.12.jar%23896!/:1.20.1-0.7.12] {re:classloading}
+		at com.mrcrayfish.framework.config.FrameworkConfigManager.getInstance(FrameworkConfigManager.java:80) ~[framework-forge-1.20.1-0.7.12.jar%23896!/:1.20.1-0.7.12] {re:classloading}
+		at com.mrcrayfish.framework.FrameworkSetup.run(FrameworkSetup.java:31) ~[framework-forge-1.20.1-0.7.12.jar%23896!/:1.20.1-0.7.12] {re:classloading}
+		at com.mrcrayfish.framework.FrameworkForge.<init>(FrameworkForge.java:50) ~[framework-forge-1.20.1-0.7.12.jar%23896!/:1.20.1-0.7.12] {re:classloading}
+		at jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance0(Native Method) ~[?:?] {}
+		at jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance(Unknown Source) ~[?:?] {}
+		at jdk.internal.reflect.DelegatingConstructorAccessorImpl.newInstance(Unknown Source) ~[?:?] {}
+		at java.lang.reflect.Constructor.newInstanceWithCaller(Unknown Source) ~[?:?] {}
+		at java.lang.reflect.Constructor.newInstance(Unknown Source) ~[?:?] {}
+		at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:77) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+		at net.minecraftforge.fml.ModContainer.lambda$buildTransitionHandler$5(ModContainer.java:126) ~[fmlcore-1.20.1-47.4.2.jar%231258!/:?] {}
+		at java.util.concurrent.CompletableFuture$AsyncRun.run(Unknown Source) ~[?:?] {}
+		at java.util.concurrent.CompletableFuture$AsyncRun.exec(Unknown Source) ~[?:?] {}
+		at java.util.concurrent.ForkJoinTask.doExec(Unknown Source) ~[?:?] {}
+		at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(Unknown Source) ~[?:?] {}
+		at java.util.concurrent.ForkJoinPool.scan(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+		at java.util.concurrent.ForkJoinPool.runWorker(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+		at java.util.concurrent.ForkJoinWorkerThread.run(Unknown Source) ~[?:?] {re:mixin}
+
+	Mod File: /instance/seedscout/server/mods/framework-forge-1.20.1-0.7.12.jar
+	Failure message: Framework (framework) has failed to load correctly
+		java.lang.NoClassDefFoundError: net/minecraft/client/gui/components/toasts/Toast
+	Mod Version: 0.7.12
+	Mod Issue URL: NOT PROVIDED
+	Exception message: java.lang.ClassNotFoundException: net.minecraft.client.gui.components.toasts.Toast
+Stacktrace:
+	at cpw.mods.cl.ModuleClassLoader.loadClass(ModuleClassLoader.java:141) ~[securejarhandler-2.1.10.jar:?] {}
+	at java.lang.ClassLoader.loadClass(Unknown Source) ~[?:?] {}
+	at com.mrcrayfish.controllable.client.settings.InputLibrary.<clinit>(InputLibrary.java:14) ~[controllable-forge-1.20.1-0.21.7.jar%23799!/:1.20.1-0.21.7] {re:classloading}
+	at com.mrcrayfish.controllable.Config$ClientWrapper.<init>(Config.java:31) ~[controllable-forge-1.20.1-0.21.7.jar%23799!/:1.20.1-0.21.7] {re:classloading}
+	at com.mrcrayfish.controllable.Config.<clinit>(Config.java:24) ~[controllable-forge-1.20.1-0.21.7.jar%23799!/:1.20.1-0.21.7] {re:classloading}
+	at java.lang.Class.forName0(Native Method) ~[?:?] {re:mixin}
+	at java.lang.Class.forName(Unknown Source) ~[?:?] {re:mixin}
+	at com.mrcrayfish.framework.platform.ForgeConfigHelper.lambda$getAllFrameworkConfigs$2(ForgeConfigHelper.java:35) ~[framework-forge-1.20.1-0.7.12.jar%23896!/:1.20.1-0.7.12] {re:classloading}
+	at java.lang.Iterable.forEach(Unknown Source) ~[?:?] {re:mixin}
+	at com.mrcrayfish.framework.platform.ForgeConfigHelper.getAllFrameworkConfigs(ForgeConfigHelper.java:31) ~[framework-forge-1.20.1-0.7.12.jar%23896!/:1.20.1-0.7.12] {re:classloading}
+	at com.mrcrayfish.framework.config.FrameworkConfigManager.<init>(FrameworkConfigManager.java:90) ~[framework-forge-1.20.1-0.7.12.jar%23896!/:1.20.1-0.7.12] {re:classloading}
+	at com.mrcrayfish.framework.config.FrameworkConfigManager.getInstance(FrameworkConfigManager.java:80) ~[framework-forge-1.20.1-0.7.12.jar%23896!/:1.20.1-0.7.12] {re:classloading}
+	at com.mrcrayfish.framework.FrameworkSetup.run(FrameworkSetup.java:31) ~[framework-forge-1.20.1-0.7.12.jar%23896!/:1.20.1-0.7.12] {re:classloading}
+	at com.mrcrayfish.framework.FrameworkForge.<init>(FrameworkForge.java:50) ~[framework-forge-1.20.1-0.7.12.jar%23896!/:1.20.1-0.7.12] {re:classloading}
+	at jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance0(Native Method) ~[?:?] {}
+	at jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance(Unknown Source) ~[?:?] {}
+	at jdk.internal.reflect.DelegatingConstructorAccessorImpl.newInstance(Unknown Source) ~[?:?] {}
+	at java.lang.reflect.Constructor.newInstanceWithCaller(Unknown Source) ~[?:?] {}
+	at java.lang.reflect.Constructor.newInstance(Unknown Source) ~[?:?] {}
+	at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:77) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.ModContainer.lambda$buildTransitionHandler$5(ModContainer.java:126) ~[fmlcore-1.20.1-47.4.2.jar%231258!/:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.run(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.exec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinTask.doExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool.scan(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinPool.runWorker(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinWorkerThread.run(Unknown Source) ~[?:?] {re:mixin}
+
+
+-- MOD enhanced_boss_bars --
+Details:
+	Mod File: /instance/seedscout/server/mods/enhanced_boss_bars-1.20.1-1.0.0.jar
+	Failure message: Enhanced Boss Bars (enhanced_boss_bars) has failed to load correctly
+		java.lang.RuntimeException: Attempted to load class net/minecraft/client/Minecraft for invalid dist DEDICATED_SERVER
+	Mod Version: 1.20.1-1.0.0
+	Mod Issue URL: NOT PROVIDED
+	Exception message: java.lang.RuntimeException: Attempted to load class net/minecraft/client/Minecraft for invalid dist DEDICATED_SERVER
+Stacktrace:
+	at net.minecraftforge.fml.loading.RuntimeDistCleaner.processClassWithFlags(RuntimeDistCleaner.java:57) ~[fmlloader-1.20.1-47.4.2.jar%2369!/:1.0] {}
+	at cpw.mods.modlauncher.LaunchPluginHandler.offerClassNodeToPlugins(LaunchPluginHandler.java:88) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.ClassTransformer.transform(ClassTransformer.java:120) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.TransformingClassLoader.maybeTransformClassBytes(TransformingClassLoader.java:50) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.cl.ModuleClassLoader.readerToClass(ModuleClassLoader.java:113) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.lambda$findClass$15(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadFromModule(ModuleClassLoader.java:229) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.findClass(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadClass(ModuleClassLoader.java:135) ~[securejarhandler-2.1.10.jar:?] {}
+	at java.lang.ClassLoader.loadClass(Unknown Source) ~[?:?] {}
+	at java.lang.Class.getDeclaredMethods0(Native Method) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetDeclaredMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.getDeclaredMethod(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.eventbus.EventBus.getDeclMethod(EventBus.java:91) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at net.minecraftforge.eventbus.EventBus.lambda$registerObject$4(EventBus.java:103) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at java.util.stream.ReferencePipeline$3$1.accept(Unknown Source) ~[?:?] {}
+	at java.util.HashMap$KeySpliterator.tryAdvance(Unknown Source) ~[?:?] {}
+	at java.util.stream.ReferencePipeline.forEachWithCancel(Unknown Source) ~[?:?] {}
+	at java.util.stream.AbstractPipeline.copyIntoWithCancel(Unknown Source) ~[?:?] {}
+	at java.util.stream.AbstractPipeline.copyInto(Unknown Source) ~[?:?] {}
+	at java.util.stream.AbstractPipeline.wrapAndCopyInto(Unknown Source) ~[?:?] {}
+	at java.util.stream.FindOps$FindOp.evaluateSequential(Unknown Source) ~[?:?] {}
+	at java.util.stream.AbstractPipeline.evaluate(Unknown Source) ~[?:?] {}
+	at java.util.stream.ReferencePipeline.findFirst(Unknown Source) ~[?:?] {}
+	at net.minecraftforge.eventbus.EventBus.lambda$registerObject$7(EventBus.java:105) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at java.util.stream.ForEachOps$ForEachOp$OfRef.accept(Unknown Source) ~[?:?] {}
+	at java.util.stream.ReferencePipeline$2$1.accept(Unknown Source) ~[?:?] {}
+	at java.util.Spliterators$ArraySpliterator.forEachRemaining(Unknown Source) ~[?:?] {}
+	at java.util.stream.AbstractPipeline.copyInto(Unknown Source) ~[?:?] {}
+	at java.util.stream.AbstractPipeline.wrapAndCopyInto(Unknown Source) ~[?:?] {}
+	at java.util.stream.ForEachOps$ForEachOp.evaluateSequential(Unknown Source) ~[?:?] {}
+	at java.util.stream.ForEachOps$ForEachOp$OfRef.evaluateSequential(Unknown Source) ~[?:?] {}
+	at java.util.stream.AbstractPipeline.evaluate(Unknown Source) ~[?:?] {}
+	at java.util.stream.ReferencePipeline.forEach(Unknown Source) ~[?:?] {}
+	at net.minecraftforge.eventbus.EventBus.registerObject(EventBus.java:102) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at net.minecraftforge.eventbus.EventBus.register(EventBus.java:128) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at com.nakuring.enhanced_boss_bars.EnhancedBossBars.<init>(EnhancedBossBars.java:40) ~[enhanced_boss_bars-1.20.1-1.0.0.jar%23867!/:1.20.1-1.0.0] {re:classloading}
+	at jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance0(Native Method) ~[?:?] {}
+	at jdk.internal.reflect.NativeConstructorAccessorImpl.newInstance(Unknown Source) ~[?:?] {}
+	at jdk.internal.reflect.DelegatingConstructorAccessorImpl.newInstance(Unknown Source) ~[?:?] {}
+	at java.lang.reflect.Constructor.newInstanceWithCaller(Unknown Source) ~[?:?] {}
+	at java.lang.reflect.Constructor.newInstance(Unknown Source) ~[?:?] {}
+	at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:77) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.ModContainer.lambda$buildTransitionHandler$5(ModContainer.java:126) ~[fmlcore-1.20.1-47.4.2.jar%231258!/:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.run(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.exec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinTask.doExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool.scan(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinPool.runWorker(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinWorkerThread.run(Unknown Source) ~[?:?] {re:mixin}
+
+
+-- MOD chatnotify --
+Details:
+	Mod File: /instance/seedscout/server/mods/ChatNotify-Forge-1.20.1-1.1.0-beta.02.jar
+	Failure message: ChatNotify (chatnotify) has failed to load correctly
+		java.lang.RuntimeException: Attempted to load class net/minecraft/client/gui/screens/Screen for invalid dist DEDICATED_SERVER
+	Mod Version: 1.1.0-beta.02
+	Mod Issue URL: https://github.com/NotRyken/ChatNotify/issues
+	Exception message: java.lang.RuntimeException: Attempted to load class net/minecraft/client/gui/screens/Screen for invalid dist DEDICATED_SERVER
+Stacktrace:
+	at net.minecraftforge.fml.loading.RuntimeDistCleaner.processClassWithFlags(RuntimeDistCleaner.java:57) ~[fmlloader-1.20.1-47.4.2.jar%2369!/:1.0] {}
+	at cpw.mods.modlauncher.LaunchPluginHandler.offerClassNodeToPlugins(LaunchPluginHandler.java:88) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.ClassTransformer.transform(ClassTransformer.java:120) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.TransformingClassLoader.maybeTransformClassBytes(TransformingClassLoader.java:50) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.cl.ModuleClassLoader.readerToClass(ModuleClassLoader.java:113) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.lambda$findClass$15(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadFromModule(ModuleClassLoader.java:229) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.findClass(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadClass(ModuleClassLoader.java:135) ~[securejarhandler-2.1.10.jar:?] {}
+	at java.lang.ClassLoader.loadClass(Unknown Source) ~[?:?] {}
+	at java.lang.Class.getDeclaredConstructors0(Native Method) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetDeclaredConstructors(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.getConstructor0(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.getDeclaredConstructor(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:73) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.ModContainer.lambda$buildTransitionHandler$5(ModContainer.java:126) ~[fmlcore-1.20.1-47.4.2.jar%231258!/:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.run(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.exec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinTask.doExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool.scan(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinPool.runWorker(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinWorkerThread.run(Unknown Source) ~[?:?] {re:mixin}
+
+
+-- MOD tinkers_advanced_materials --
+Details:
+	Mod File: /instance/seedscout/server/mods/tinkers_advanced_materials-3.0.0-beta.3.jar
+	Failure message: Tinkers' Advanced-Materials (tinkers_advanced_materials) has failed to load correctly
+		java.lang.RuntimeException: Attempted to load class com/mojang/blaze3d/vertex/PoseStack for invalid dist DEDICATED_SERVER
+	Mod Version: 3.0.0-beta.3
+	Mod Issue URL: NOT PROVIDED
+	Exception message: java.lang.RuntimeException: Attempted to load class com/mojang/blaze3d/vertex/PoseStack for invalid dist DEDICATED_SERVER
+Stacktrace:
+	at net.minecraftforge.fml.loading.RuntimeDistCleaner.processClassWithFlags(RuntimeDistCleaner.java:57) ~[fmlloader-1.20.1-47.4.2.jar%2369!/:1.0] {}
+	at cpw.mods.modlauncher.LaunchPluginHandler.offerClassNodeToPlugins(LaunchPluginHandler.java:88) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.ClassTransformer.transform(ClassTransformer.java:120) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.TransformingClassLoader.maybeTransformClassBytes(TransformingClassLoader.java:50) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.cl.ModuleClassLoader.readerToClass(ModuleClassLoader.java:113) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.lambda$findClass$15(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadFromModule(ModuleClassLoader.java:229) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.findClass(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadClass(ModuleClassLoader.java:135) ~[securejarhandler-2.1.10.jar:?] {}
+	at java.lang.ClassLoader.loadClass(Unknown Source) ~[?:?] {}
+	at java.lang.Class.getDeclaredMethods0(Native Method) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetDeclaredMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.getMethods(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.eventbus.EventBus.registerClass(EventBus.java:83) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at net.minecraftforge.eventbus.EventBus.register(EventBus.java:126) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber.lambda$inject$6(AutomaticEventSubscriber.java:61) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at java.util.ArrayList.forEach(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber.inject(AutomaticEventSubscriber.java:48) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:92) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.ModContainer.lambda$buildTransitionHandler$5(ModContainer.java:126) ~[fmlcore-1.20.1-47.4.2.jar%231258!/:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.run(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.exec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinTask.doExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool.scan(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinPool.runWorker(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinWorkerThread.run(Unknown Source) ~[?:?] {re:mixin}
+
+
+-- MOD ntgl --
+Details:
+	Mod File: /instance/seedscout/server/mods/ntgl-1.20.1-3.1.1.jar
+	Failure message: NukaTeam's Gun Lib (ntgl) has failed to load correctly
+		java.lang.RuntimeException: Attempted to load class com/mojang/blaze3d/vertex/PoseStack for invalid dist DEDICATED_SERVER
+	Mod Version: 3.1.1
+	Mod Issue URL: NOT PROVIDED
+	Exception message: java.lang.RuntimeException: Attempted to load class com/mojang/blaze3d/vertex/PoseStack for invalid dist DEDICATED_SERVER
+Stacktrace:
+	at net.minecraftforge.fml.loading.RuntimeDistCleaner.processClassWithFlags(RuntimeDistCleaner.java:57) ~[fmlloader-1.20.1-47.4.2.jar%2369!/:1.0] {}
+	at cpw.mods.modlauncher.LaunchPluginHandler.offerClassNodeToPlugins(LaunchPluginHandler.java:88) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.ClassTransformer.transform(ClassTransformer.java:120) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.TransformingClassLoader.maybeTransformClassBytes(TransformingClassLoader.java:50) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.cl.ModuleClassLoader.readerToClass(ModuleClassLoader.java:113) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.lambda$findClass$15(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadFromModule(ModuleClassLoader.java:229) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.findClass(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadClass(ModuleClassLoader.java:135) ~[securejarhandler-2.1.10.jar:?] {}
+	at java.lang.ClassLoader.loadClass(Unknown Source) ~[?:?] {}
+	at java.lang.Class.getDeclaredMethods0(Native Method) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetDeclaredMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.getMethods(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.eventbus.EventBus.registerClass(EventBus.java:83) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at net.minecraftforge.eventbus.EventBus.register(EventBus.java:126) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber.lambda$inject$6(AutomaticEventSubscriber.java:61) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at java.util.ArrayList.forEach(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber.inject(AutomaticEventSubscriber.java:48) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:92) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.ModContainer.lambda$buildTransitionHandler$5(ModContainer.java:126) ~[fmlcore-1.20.1-47.4.2.jar%231258!/:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.run(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.exec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinTask.doExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool.scan(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinPool.runWorker(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinWorkerThread.run(Unknown Source) ~[?:?] {re:mixin}
+
+
+-- MOD create --
+Details:
+	Mod File: /instance/seedscout/server/mods/create-1.20.1-6.0.8.jar
+	Failure message: Create (create) has failed to load correctly
+		java.lang.RuntimeException: Attempted to load class com/mojang/blaze3d/vertex/PoseStack for invalid dist DEDICATED_SERVER
+	Mod Version: 6.0.8
+	Mod Issue URL: https://github.com/Creators-of-Create/Create/issues
+	Exception message: java.lang.RuntimeException: Attempted to load class com/mojang/blaze3d/vertex/PoseStack for invalid dist DEDICATED_SERVER
+Stacktrace:
+	at net.minecraftforge.fml.loading.RuntimeDistCleaner.processClassWithFlags(RuntimeDistCleaner.java:57) ~[fmlloader-1.20.1-47.4.2.jar%2369!/:1.0] {}
+	at cpw.mods.modlauncher.LaunchPluginHandler.offerClassNodeToPlugins(LaunchPluginHandler.java:88) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.ClassTransformer.transform(ClassTransformer.java:120) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.modlauncher.TransformingClassLoader.maybeTransformClassBytes(TransformingClassLoader.java:50) ~[modlauncher-10.0.9.jar%2355!/:?] {}
+	at cpw.mods.cl.ModuleClassLoader.readerToClass(ModuleClassLoader.java:113) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.lambda$findClass$15(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadFromModule(ModuleClassLoader.java:229) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.findClass(ModuleClassLoader.java:219) ~[securejarhandler-2.1.10.jar:?] {}
+	at cpw.mods.cl.ModuleClassLoader.loadClass(ModuleClassLoader.java:135) ~[securejarhandler-2.1.10.jar:?] {}
+	at java.lang.ClassLoader.loadClass(Unknown Source) ~[?:?] {}
+	at java.lang.Class.getDeclaredMethods0(Native Method) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetDeclaredMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.privateGetPublicMethods(Unknown Source) ~[?:?] {re:mixin}
+	at java.lang.Class.getMethods(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.eventbus.EventBus.registerClass(EventBus.java:83) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at net.minecraftforge.eventbus.EventBus.register(EventBus.java:126) ~[eventbus-6.0.5.jar%2352!/:?] {}
+	at net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber.lambda$inject$6(AutomaticEventSubscriber.java:61) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at java.util.ArrayList.forEach(Unknown Source) ~[?:?] {re:mixin}
+	at net.minecraftforge.fml.javafmlmod.AutomaticEventSubscriber.inject(AutomaticEventSubscriber.java:48) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:92) ~[javafmllanguage-1.20.1-47.4.2.jar%231259!/:?] {}
+	at net.minecraftforge.fml.ModContainer.lambda$buildTransitionHandler$5(ModContainer.java:126) ~[fmlcore-1.20.1-47.4.2.jar%231258!/:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.run(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.CompletableFuture$AsyncRun.exec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinTask.doExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool$WorkQueue.topLevelExec(Unknown Source) ~[?:?] {}
+	at java.util.concurrent.ForkJoinPool.scan(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinPool.runWorker(Unknown Source) ~[?:?] {re:mixin,re:computing_frames}
+	at java.util.concurrent.ForkJoinWorkerThread.run(Unknown Source) ~[?:?] {re:mixin}
+
+

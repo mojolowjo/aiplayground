@@ -101,6 +101,32 @@ class ClientOnlyModsTest {
         assertEquals(List.of("somemod"), ClientOnlyMods.tomlModIds(ClientOnlyMods.readModsToml(jar)));
     }
 
+    /** The crash of the owner's second test start (2026-11-05): nine mods, one of them failing through another. */
+    @Test
+    void crashSectionsOfTheOwnersSecondStart() throws Exception {
+        String crash;
+        try (var in = getClass().getResourceAsStream("/crash-start2.txt")) {
+            crash = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        List<ClientOnlyMods.CrashSection> sections = ClientOnlyMods.crashSections(crash);
+        assertEquals(List.of("gtbcs_geomancy_plus", "mafglib", "fastquit", "framework", "enhanced_boss_bars", "chatnotify",
+                "tinkers_advanced_materials", "ntgl", "create"), sections.stream().map(ClientOnlyMods.CrashSection::modId).toList());
+        for (ClientOnlyMods.CrashSection s : sections) assertTrue(s.clientClassError(), s.modId());
+        assertEquals("gtbcs_geomancy_plus-2.0.0-1.20.1.jar", sections.get(0).modFile());
+        assertEquals(List.of(), sections.get(0).otherJars());
+        ClientOnlyMods.CrashSection framework = sections.get(3);
+        assertEquals("framework-forge-1.20.1-0.7.12.jar", framework.modFile());
+        assertEquals(List.of("controllable-forge-1.20.1-0.21.7.jar"), framework.otherJars(), "Controllable, not Framework, is the culprit");
+        assertEquals("create-1.20.1-6.0.8.jar", sections.get(8).modFile());
+        assertEquals(List.of(), sections.get(8).otherJars());
+    }
+
+    @Test
+    void modFileNamesMayHoldSpaces() {
+        ClientOnlyMods.Diagnosis d = ClientOnlyMods.diagnose("\tMod File: /x/mods/Not Enough Recipe Book-FORGE-0.4.1+1.20.1.jar\n");
+        assertEquals(List.of("Not Enough Recipe Book-FORGE-0.4.1+1.20.1.jar"), d.jars);
+    }
+
     @Test
     void exclusionListParsing() {
         Set<String> s = ClientOnlyMods.parseExclusionList("a.jar # failed start 1\n\n  b.jar\n# only a comment\n");

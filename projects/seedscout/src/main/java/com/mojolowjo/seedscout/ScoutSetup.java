@@ -402,14 +402,33 @@ public final class ScoutSetup implements Runnable {
         if (!excluded.isEmpty()) changes.add("excluded " + String.join(", ", excluded));
         if (!changes.isEmpty()) return changes;
 
+        // Every "-- MOD x --" section about client code, in one round. A section whose stack frames name another mod's
+        // jar is that mod's fault (Framework's config scan loading Controllable's client class): that jar goes, not x.
+        for (ClientOnlyMods.CrashSection s : ClientOnlyMods.crashSections(crashText.isEmpty() ? logText : crashText)) {
+            if (!s.clientClassError()) continue;
+            List<String> others = new ArrayList<>();
+            for (String jar : s.otherJars()) if (Files.isRegularFile(serverMods.resolve(jar))) others.add(jar);
+            if (!others.isEmpty()) {
+                for (String jar : others) if (!excluded.contains(jar)) { excludeNamed(jar, "client class error, through " + s.modId(), attempt); excluded.add(jar); }
+            } else if (!s.modFile().isEmpty() && Files.isRegularFile(serverMods.resolve(s.modFile())) && !s.modFile().startsWith("seedscout-")) {
+                if (!excluded.contains(s.modFile())) { excludeNamed(s.modFile(), "client class error in " + s.modId(), attempt); excluded.add(s.modFile()); }
+            } else {
+                Path jar = serverIndex.get(s.modId());
+                if (jar != null && !excluded.contains(jar.getFileName().toString())) {
+                    excludeNamed(jar.getFileName().toString(), "client class error in " + s.modId(), attempt);
+                    excluded.add(jar.getFileName().toString());
+                }
+            }
+        }
+        if (!excluded.isEmpty()) {
+            changes.add("excluded " + String.join(", ", excluded));
+            return changes;
+        }
+
+        // No sections (a crash before mod construction): the classes the log could not load, looked up in the jars.
         for (String text : new String[]{crashText, logText}) {
             ClientOnlyMods.Diagnosis d = ClientOnlyMods.diagnose(text);
             if (!d.clientClassError) continue;
-            for (String jar : d.jars) if (Files.isRegularFile(serverMods.resolve(jar))) return List.of(excludeNamed(jar, "client class error", attempt));
-            for (String id : d.modIds) {
-                Path jar = serverIndex.get(id);
-                if (jar != null) return List.of(excludeNamed(jar.getFileName().toString(), "client class error in " + id, attempt));
-            }
             for (String cls : d.classes) {
                 Path jar = ClientOnlyMods.findJarForClass(serverMods, cls);
                 if (jar != null) return List.of(excludeNamed(jar.getFileName().toString(), "client class " + cls, attempt));

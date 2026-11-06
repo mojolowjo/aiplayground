@@ -1,4 +1,4 @@
-# Seedscout
+﻿# Seedscout
 
 A Forge 1.20.1 (47.4.2) mod that shows a multiplayer server's real ore positions through walls. The server
 has anti-xray, so the ore data never comes from the server: the mod builds a local **scout server** from the
@@ -90,6 +90,8 @@ $env:JAVA_HOME='C:\Program Files\Java\jdk-17.0.1'; .\gradlew.bat test build
 The jar lands in `build/libs/`; the released copy is in `dist/`.
 
 ## Status
+
+0.1.2: the second run (2026-11-05) got past the dependencies and crashed on nine mods loading client classes. One failed start now excludes every such mod at once, and when a section's stack trace names another mod's jar (Framework failing through Controllable) that jar goes instead. Still open: Create fails on PoseStack with no other jar named; the server's debug.log should show which mixin does it.
 
 0.1.1: the first run on the owner's PC (2026-11-05) got through download, install and the mod copy, then
 failed all 15 test starts. Two causes, both fixed: the name filter matched "iris" inside Vampirism, and the
