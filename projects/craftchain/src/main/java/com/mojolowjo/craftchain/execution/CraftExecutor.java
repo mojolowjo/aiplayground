@@ -18,9 +18,11 @@ import net.minecraft.world.phys.BlockHitResult;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -33,7 +35,9 @@ import java.util.function.Consumer;
  *       own packet), shift-click the needed stacks into the inventory, close it</li>
  *   <li>REOPEN_*: get a crafting screen back (inventory 2x2, Crafting on a Stick, or the table)</li>
  *   <li>PREPARE / FILL / CRAFT / VERIFY: per recipe step, in batches of at most one stack per grid
- *       slot: fill the grid, shift-click the result, require an empty grid afterwards</li>
+ *       slot: fill the grid, shift-click the result, then count how many crafts happened from what
+ *       is left in the grid. Tools (slots the plan marks reusable) hold one item and are expected to
+ *       stay; leftovers such as empty buckets are shift-clicked out before the next batch</li>
  * </ol>
  * The client menu is updated locally by {@code handleInventoryMouseClick}, so the state machine can
  * read the grid and carried stack straight from the menu between clicks.
@@ -57,6 +61,10 @@ public final class CraftExecutor {
     private int gridNeeded;
     private int[] stepSlots;
     private final Map<Integer, Item> targetItems = new LinkedHashMap<>();
+    /** Grid slots of the current step that hold a tool: one item, kept across crafts. */
+    private final Set<Integer> toolSlots = new HashSet<>();
+    /** Set once every step is done; the "done" message waits until the grid has been emptied. */
+    private boolean completed;
     private int wait;
     private int timeout;
     private int resultRetries;
@@ -172,6 +180,8 @@ public final class CraftExecutor {
         phase = Phase.IDLE;
         plan = null;
         targetItems.clear();
+        toolSlots.clear();
+        completed = false;
         stepSlots = null;
         fetches.clear();
         fetchLeft.clear();
@@ -318,9 +328,8 @@ public final class CraftExecutor {
 
     private void prepare(AbstractContainerMenu menu) {
         if (stepIndex >= plan.steps().size()) {
-            feedback.accept(Component.translatable("craftchain.msg.done",
-                    plan.requested(), new ItemStack(plan.target()).getHoverName()));
-            reset();
+            completed = true; // a tool may still sit in the grid; unload() reports when it is out
+            phase = Phase.UNLOAD;
             return;
         }
         CraftPlan.CraftStep step = plan.steps().get(stepIndex);
@@ -332,34 +341,54 @@ public final class CraftExecutor {
         stepSlots = layout.slotsFor(step.recipe());
         if (stepSlots == null) {
             feedback.accept(Component.translatable("craftchain.msg.needs_table"));
-            reset();
+            phase = Phase.UNLOAD;
             return;
         }
         int remaining = step.times() - timesDone;
         int b = remaining;
         Map<Item, Integer> perItem = new LinkedHashMap<>();
+        Map<Item, Integer> tools = new LinkedHashMap<>();
         targetItems.clear();
+        toolSlots.clear();
         for (int i = 0; i < stepSlots.length; i++) {
             Item item = step.slotItems()[i];
             if (item == null) {
                 continue;
             }
             targetItems.put(stepSlots[i], item);
-            perItem.merge(item, 1, Integer::sum);
-            b = Math.min(b, new ItemStack(item).getMaxStackSize());
+            if (step.isReusable(i)) {
+                toolSlots.add(stepSlots[i]);
+                tools.merge(item, 1, Integer::sum);
+            } else {
+                perItem.merge(item, 1, Integer::sum);
+                b = Math.min(b, new ItemStack(item).getMaxStackSize());
+            }
+        }
+        for (Map.Entry<Item, Integer> e : tools.entrySet()) {
+            if (countInInventory(menu, e.getKey()) < e.getValue()) {
+                feedback.accept(Component.translatable("craftchain.msg.ran_out", new ItemStack(e.getKey()).getHoverName()));
+                phase = Phase.UNLOAD;
+                return;
+            }
         }
         for (Map.Entry<Item, Integer> e : perItem.entrySet()) {
-            int have = countInInventory(menu, e.getKey());
+            int have = countInInventory(menu, e.getKey()) - tools.getOrDefault(e.getKey(), 0);
             b = Math.min(b, have / e.getValue());
         }
         if (b <= 0) {
+            // perItem cannot be empty here: with only tool slots, b is still the remaining count.
             feedback.accept(Component.translatable("craftchain.msg.ran_out",
                     new ItemStack(perItem.keySet().iterator().next()).getHoverName()));
-            reset();
+            phase = Phase.UNLOAD;
             return;
         }
         batch = b;
         phase = Phase.FILL;
+    }
+
+    /** How many of its item a grid slot should hold for this batch: one for a tool, the batch size otherwise. */
+    private int wanted(int slot) {
+        return toolSlots.contains(slot) ? 1 : batch;
     }
 
     private void fill(Minecraft mc, AbstractContainerMenu menu) {
@@ -388,7 +417,7 @@ public final class CraftExecutor {
             }
             Item want = targetItems.get(target);
             int inGrid = menu.getSlot(target).getItem().getCount();
-            int remaining = batch - inGrid;
+            int remaining = wanted(target) - inGrid;
             if (carried.isEmpty()) {
                 int source = findInventorySlot(menu, want);
                 if (source < 0) {
@@ -429,15 +458,31 @@ public final class CraftExecutor {
         phase = Phase.VERIFY;
     }
 
+    /**
+     * Works out how many crafts the shift-click produced from what the consumable slots still hold:
+     * every craft takes one item out of each of them. Tool slots are expected to keep their item
+     * (damaged, maybe gone if it broke), and anything else left behind (an empty bucket) is cleared
+     * by the next FILL. No progress at all means the server refused or the inventory is full.
+     */
     private void verify(AbstractContainerMenu menu) {
+        int crafted = batch;
         for (int i = 0; i < layout.gridSlotCount(); i++) {
-            if (!menu.getSlot(layout.gridStart() + i).getItem().isEmpty()) {
-                feedback.accept(Component.translatable("craftchain.msg.grid_not_empty"));
-                phase = Phase.UNLOAD;
-                return;
+            int slot = layout.gridStart() + i;
+            ItemStack in = menu.getSlot(slot).getItem();
+            if (in.isEmpty() || toolSlots.contains(slot)) {
+                continue;
+            }
+            Item want = targetItems.get(slot);
+            if (want != null && in.getItem() == want) {
+                crafted = Math.min(crafted, batch - in.getCount());
             }
         }
-        timesDone += batch;
+        if (crafted <= 0) {
+            feedback.accept(Component.translatable("craftchain.msg.grid_not_empty"));
+            phase = Phase.UNLOAD;
+            return;
+        }
+        timesDone += crafted;
         wait = ClientConfig.ticksBetweenBatches();
         phase = Phase.PREPARE;
     }
@@ -462,6 +507,10 @@ public final class CraftExecutor {
                 }
             }
             if (occupied < 0) {
+                if (completed) {
+                    feedback.accept(Component.translatable("craftchain.msg.done",
+                            plan.requested(), new ItemStack(plan.target()).getHoverName()));
+                }
                 reset();
                 return;
             }
@@ -483,7 +532,7 @@ public final class CraftExecutor {
                 continue;
             }
             Item want = targetItems.get(slot);
-            if (want == null || in.getItem() != want || in.getCount() > batch) {
+            if (want == null || in.getItem() != want || in.getCount() > wanted(slot)) {
                 return slot;
             }
         }
@@ -492,7 +541,7 @@ public final class CraftExecutor {
 
     private int findUnfilledGridSlot(AbstractContainerMenu menu) {
         for (Map.Entry<Integer, Item> e : targetItems.entrySet()) {
-            if (menu.getSlot(e.getKey()).getItem().getCount() < batch) {
+            if (menu.getSlot(e.getKey()).getItem().getCount() < wanted(e.getKey())) {
                 return e.getKey();
             }
         }

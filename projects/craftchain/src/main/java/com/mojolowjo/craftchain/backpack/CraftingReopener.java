@@ -4,11 +4,13 @@ import com.mojolowjo.craftchain.CraftChain;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.CraftingTableBlock;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraftforge.fml.ModList;
@@ -35,10 +37,15 @@ public final class CraftingReopener {
     public static BlockHitResult lookedAtTable() {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level != null && mc.hitResult instanceof BlockHitResult hit && mc.hitResult.getType() == HitResult.Type.BLOCK
-                && mc.level.getBlockState(hit.getBlockPos()).is(Blocks.CRAFTING_TABLE)) {
+                && isCraftingTable(mc.level, hit.getBlockPos())) {
             return hit;
         }
         return null;
+    }
+
+    /** Vanilla's table or any block built on it (TerraFirmaCraft's wooden workbenches, for one). */
+    private static boolean isCraftingTable(Level level, BlockPos pos) {
+        return level.getBlockState(pos).getBlock() instanceof CraftingTableBlock;
     }
 
     /**
@@ -75,7 +82,7 @@ public final class CraftingReopener {
                 }
             }
         }
-        if (table != null && mc.level != null && mc.level.getBlockState(table.getBlockPos()).is(Blocks.CRAFTING_TABLE)
+        if (table != null && mc.level != null && isCraftingTable(mc.level, table.getBlockPos())
                 && player.position().distanceToSqr(table.getLocation()) < 36) {
             mc.gameMode.useItemOn(player, InteractionHand.MAIN_HAND, table);
             return "crafting table";

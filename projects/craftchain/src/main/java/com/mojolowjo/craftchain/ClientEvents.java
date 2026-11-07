@@ -8,7 +8,6 @@ import com.mojolowjo.craftchain.backpack.BackpackSupport;
 import com.mojolowjo.craftchain.backpack.CraftingReopener;
 import com.mojolowjo.craftchain.execution.CraftExecutor;
 import com.mojolowjo.craftchain.execution.GridLayout;
-import com.mojolowjo.craftchain.jei.JeiHover;
 import com.mojolowjo.craftchain.pins.PinnedList;
 import com.mojolowjo.craftchain.pins.PinnedOverlay;
 import com.mojolowjo.craftchain.planning.CraftPlan;
@@ -43,7 +42,7 @@ import java.util.Optional;
 public final class ClientEvents {
     private static final String PREFIX = "[CraftChain] ";
 
-    /** A craft confirmed from JEI's recipe screen; it runs once a container screen is back in front. */
+    /** A craft confirmed from a viewer's recipe screen; it runs once a container screen is back in front. */
     private ItemStack pendingTarget;
     private int pendingCount;
 
@@ -53,7 +52,7 @@ public final class ClientEvents {
 
     // ---- input -----------------------------------------------------------------------------
 
-    // HIGH priority so we see the key before JEI's own handler (which runs at NORMAL).
+    // HIGH priority so we see the key before the recipe viewer's own handler (which runs at NORMAL).
     @SubscribeEvent(priority = EventPriority.HIGH)
     public void onKey(ScreenEvent.KeyPressed.Pre event) {
         Screen screen = event.getScreen();
@@ -77,7 +76,7 @@ public final class ClientEvents {
             event.setCanceled(true);
             return;
         }
-        if (JeiHover.typingInTextField(screen)) {
+        if (ItemHover.typingInTextField(screen)) {
             return;
         }
         boolean craft = Keybinds.CRAFT.isActiveAndMatches(key);
@@ -102,7 +101,7 @@ public final class ClientEvents {
             return;
         }
 
-        Optional<ItemStack> hovered = JeiHover.itemUnderMouse(screen);
+        Optional<ItemStack> hovered = ItemHover.itemUnderMouse(screen);
         if (hovered.isEmpty()) {
             return;
         }
@@ -206,6 +205,7 @@ public final class ClientEvents {
                 .then(Commands.literal("status").executes(ctx -> {
                     BackpackSupport.requestNow(); // scan now; the server's answer shows up on the next status
                     say(Component.literal("backpacks " + BackpackSupport.describe()
+                            + ", viewers: " + ItemHover.describe()
                             + ", running: " + CraftExecutor.get().isRunning()
                             + ", pinned: " + PinnedList.get().entries().size()));
                     return 1;

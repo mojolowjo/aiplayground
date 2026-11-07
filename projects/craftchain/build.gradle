@@ -45,6 +45,11 @@ repositories {
         name = 'BlameJared'
         url = 'https://maven.blamejared.com'
     }
+    // EMI (TerraFirmaGreg-Modern ships EMI instead of JEI)
+    maven {
+        name = 'TerraformersMC'
+        url = 'https://maven.terraformersmc.com/releases/'
+    }
     // Curios API (the "backpack slot" in MC Eternal 2 is a Curios slot)
     maven {
         name = 'Curios'
@@ -67,6 +72,13 @@ dependencies {
     compileOnly fg.deobf("mezz.jei:jei-${minecraft_version}-common-api:${jei_version}")
     compileOnly fg.deobf("mezz.jei:jei-${minecraft_version}-forge-api:${jei_version}")
     runtimeOnly fg.deobf("mezz.jei:jei-${minecraft_version}-forge:${jei_version}")
+
+    // EMI: API at compile time. Soft dependency, same as JEI. Pass -PemiRuntime to put the full
+    // mod on the `runClient` classpath as well (EMI runs next to JEI and takes over its plugins).
+    compileOnly fg.deobf("dev.emi:emi-forge:${emi_version}:api")
+    if (project.hasProperty('emiRuntime')) {
+        runtimeOnly fg.deobf("dev.emi:emi-forge:${emi_version}")
+    }
 
     // Curios: API only. Soft dependency; the mod runs without it.
     // Not on the runtime classpath: its mixins use obfuscated (SRG) names that do not exist in the

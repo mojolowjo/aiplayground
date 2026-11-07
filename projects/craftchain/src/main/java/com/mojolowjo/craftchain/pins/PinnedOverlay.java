@@ -21,10 +21,12 @@ import java.util.Map;
  * [icon] Ladder x64                        [READY]
  *        [##########----------]  12/20
  *          Oak Log (any #minecraft:logs)  3/20
+ *          Stick  8/8
  * </pre>
  *
- * The bar is how much of the raw-material total is already covered by what you own, inventory and
- * backpacks included, with intermediate items (sticks you already have) counting toward it.
+ * Each line is an item the real plan would take: green when the stock covers it, red when the plan
+ * is short of it. The bar is the covered share. Intermediates you already hold (sticks) show up as
+ * covered lines instead of being broken down further, because the plan would use them as they are.
  */
 public final class PinnedOverlay implements IGuiOverlay {
     private static final int LINE = 10;
@@ -76,10 +78,14 @@ public final class PinnedOverlay implements IGuiOverlay {
         for (PinnedList.Entry e : pins.entries()) {
             height += LINE + BAR_H + 4;
             width = Math.max(width, ICON + 2 + font.width(headerText(e)) + 50);
-            if (materials && e.raw != null) {
-                for (Map.Entry<Item, Integer> r : e.raw.entrySet()) {
+            if (materials) {
+                if (!e.computed) {
                     height += LINE;
-                    width = Math.max(width, ICON + 6 + font.width(rawText(index, e, stock, r.getKey(), r.getValue())));
+                } else if (e.hasRecipe) {
+                    for (Map.Entry<Item, Integer> r : e.needs().entrySet()) {
+                        height += LINE;
+                        width = Math.max(width, ICON + 6 + font.width(lineText(index, e, stock, r.getKey(), r.getValue())));
+                    }
                 }
             }
             height += 4;
@@ -93,13 +99,11 @@ public final class PinnedOverlay implements IGuiOverlay {
             graphics.renderItem(new ItemStack(e.item), x, cy - 3);
             graphics.drawString(font, headerText(e), x + ICON + 2, cy, WHITE, true);
 
-            int need = e.rawTotal();
-            int missing = e.missingNow.total();
-            int got = Math.max(0, need - missing);
-            boolean noRecipe = e.raw != null && need == 0 && !e.craftable;
+            int need = e.needTotal();
+            int got = e.used.total();
             if (e.craftable) {
                 graphics.drawString(font, "[READY]", x + width - font.width("[READY]"), cy, GREEN, true);
-            } else if (noRecipe) {
+            } else if (e.computed && !e.hasRecipe) {
                 graphics.drawString(font, "no recipe", x + width - font.width("no recipe"), cy, GREY, true);
             }
             cy += LINE;
@@ -110,19 +114,17 @@ public final class PinnedOverlay implements IGuiOverlay {
                 int fill = e.craftable ? BAR_W : (int) Math.round((double) BAR_W * got / need);
                 graphics.fill(bx, cy, bx + Math.max(0, Math.min(BAR_W, fill)), cy + BAR_H, e.craftable ? BAR_DONE : BAR_FILL);
             }
-            graphics.drawString(font, (e.craftable ? need : got) + "/" + need, bx + BAR_W + 4, cy - 2, e.craftable ? GREEN : WHITE, true);
+            graphics.drawString(font, got + "/" + need, bx + BAR_W + 4, cy - 2, e.craftable ? GREEN : WHITE, true);
             cy += BAR_H + 4;
 
             if (materials) {
-                if (e.raw == null) {
+                if (!e.computed) {
                     graphics.drawString(font, "...", x + ICON + 6, cy, GREY, true);
                     cy += LINE;
-                } else {
-                    for (Map.Entry<Item, Integer> r : e.raw.entrySet()) {
-                        int have = stock.totalOfAny(r.getKey(), e.alternatives.get(r.getKey()));
-                        int n = r.getValue();
-                        boolean ok = e.craftable || have >= n;
-                        graphics.drawString(font, rawText(index, e, stock, r.getKey(), n), x + ICON + 6, cy, ok ? GREEN : RED, true);
+                } else if (e.hasRecipe) {
+                    for (Map.Entry<Item, Integer> r : e.needs().entrySet()) {
+                        boolean ok = e.missing.get(r.getKey()) == 0;
+                        graphics.drawString(font, lineText(index, e, stock, r.getKey(), r.getValue()), x + ICON + 6, cy, ok ? GREEN : RED, true);
                         cy += LINE;
                     }
                 }
@@ -136,13 +138,15 @@ public final class PinnedOverlay implements IGuiOverlay {
         return new ItemStack(e.item).getHoverName().getString() + " x" + e.count;
     }
 
-    private static String rawText(RecipeIndex index, PinnedList.Entry e, Stock stock, Item item, int need) {
+    /** "Oak Log (any #minecraft:logs)  3/20": what the plan takes of this item, and how much of that you have. */
+    private static String lineText(RecipeIndex index, PinnedList.Entry e, Stock stock, Item item, int need) {
         Item[] alts = e.alternatives.get(item);
         String label = index == null || alts == null ? null : index.groupLabel(alts);
         String name = new ItemStack(item).getHoverName().getString();
         if (label != null) {
             name += " (any " + label + ")";
         }
-        return name + "  " + stock.totalOfAny(item, alts) + "/" + need;
+        int have = Math.min(need, Math.max(e.used.get(item), stock.totalOfAny(item, alts)));
+        return name + "  " + have + "/" + need;
     }
 }

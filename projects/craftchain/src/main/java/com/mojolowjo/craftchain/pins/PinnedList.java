@@ -28,9 +28,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Items the player wants to craft, with a count each, plus the raw-material breakdown for each one.
- * Breakdowns are planned against an empty stock but with the real stock used to choose between
- * alternatives, so "any log" becomes the log you actually own. Saved to config/craftchain-pins.json.
+ * Items the player wants to craft, with a count each, plus what crafting each one would take right
+ * now. Every entry is planned against the real stock (inventory plus backpacks), the same plan the
+ * G key would run, so the list shows the items that plan takes and the ones it is short of. The
+ * two agree by construction: if the list says everything is there, the craft goes ahead.
+ * Saved to config/craftchain-pins.json.
  */
 public final class PinnedList {
     private static final PinnedList INSTANCE = new PinnedList();
@@ -39,23 +41,33 @@ public final class PinnedList {
     public static final class Entry {
         public final Item item;
         public int count;
-        /** Raw material -> count needed for {@code count}. Null before the first compute. */
-        public Map<Item, Integer> raw;
-        /** Raw material -> the other items that would do instead (tag groups). */
+        /** Items the plan takes from the stock (intermediates you already hold and tools included). */
+        public ItemCounts used = new ItemCounts();
+        /** Items the plan is short of. */
+        public ItemCounts missing = new ItemCounts();
+        /** Used or missing item -> the other items that would do instead (tag groups). */
         public Map<Item, Item[]> alternatives = Collections.emptyMap();
-        /** Raw materials still missing once the current stock (inventory + backpacks) is counted. */
-        public ItemCounts missingNow = new ItemCounts();
         /** True when the full chain can be crafted from the current stock. */
         public boolean craftable;
+        /** False when no crafting-table recipe makes the item. */
+        public boolean hasRecipe = true;
+        /** False before the first plan. */
+        public boolean computed;
 
-        public int rawTotal() {
-            int n = 0;
-            if (raw != null) {
-                for (int v : raw.values()) {
-                    n += v;
-                }
+        /** Everything the plan needs, used and missing together, in plan order. */
+        public Map<Item, Integer> needs() {
+            Map<Item, Integer> all = new LinkedHashMap<>();
+            for (Map.Entry<Item, Integer> e : used.asMap().entrySet()) {
+                all.merge(e.getKey(), e.getValue(), Integer::sum);
             }
-            return n;
+            for (Map.Entry<Item, Integer> e : missing.asMap().entrySet()) {
+                all.merge(e.getKey(), e.getValue(), Integer::sum);
+            }
+            return all;
+        }
+
+        public int needTotal() {
+            return used.total() + missing.total();
         }
 
         Entry(Item item, int count) {
@@ -107,7 +119,7 @@ public final class PinnedList {
         dirty = true;
     }
 
-    /** Recomputes breakdowns when the stock changed. Cheap when nothing changed. */
+    /** Re-plans every entry when the stock changed. Cheap when nothing changed. */
     public void refresh(Stock stock) {
         int key = stock.key();
         if (!dirty && key == lastStockKey) {
@@ -122,20 +134,13 @@ public final class PinnedList {
         for (Entry e : entries) {
             ItemCounts owned = stock.total().copy();
             owned.take(e.item, Integer.MAX_VALUE); // the pin means "make N new ones"
-
-            // What is still missing once everything owned (inventory + backpacks) is counted.
-            CraftPlan withStock = new CraftPlanner(index, 3, stock.inventory()).plan(e.item, e.count, owned);
-            e.missingNow = withStock.missing();
-            e.craftable = withStock.missing().isEmpty() && !withStock.steps().isEmpty();
-
-            // The full raw list, choosing between alternatives by what we own.
-            CraftPlan full = new CraftPlanner(index, 3, stock.inventory()).planWithChoicesFrom(e.item, e.count, owned);
-            Map<Item, Integer> raw = new LinkedHashMap<>();
-            for (Map.Entry<Item, Integer> m : full.missing().asMap().entrySet()) {
-                raw.merge(m.getKey(), m.getValue(), Integer::sum);
-            }
-            e.raw = raw;
-            e.alternatives = full.alternatives();
+            CraftPlan plan = new CraftPlanner(index, 3, stock.inventory()).plan(e.item, e.count, owned);
+            e.used = plan.used();
+            e.missing = plan.missing();
+            e.alternatives = plan.alternatives();
+            e.hasRecipe = index.isCraftable(e.item);
+            e.craftable = e.hasRecipe && plan.missing().isEmpty() && !plan.steps().isEmpty();
+            e.computed = true;
         }
     }
 

@@ -38,6 +38,9 @@ import java.util.Set;
  *
  * Cycles: an item already being expanded higher up the chain is never expanded again. Reversible
  * pairs (ingot <-> block) are only used when the input is already in stock.
+ *
+ * Tools (ingredient slots the index marks reusable) are needed once per slot, not once per craft,
+ * and are handed back after the step.
  */
 public final class CraftPlanner {
     private final RecipeIndex index;
@@ -109,6 +112,26 @@ public final class CraftPlanner {
             int left = inv.get(e.getKey());
             if (left < e.getValue()) {
                 used.add(e.getKey(), e.getValue() - left);
+            }
+        }
+        // Tools go back into the virtual inventory after each step, so the difference above misses
+        // them. They still have to be in the player's hands (fetched from a backpack if need be).
+        Map<Item, Integer> tools = new LinkedHashMap<>();
+        for (CraftPlan.CraftStep step : steps) {
+            Map<Item, Integer> inStep = new LinkedHashMap<>();
+            for (int i = 0; i < step.slotItems().length; i++) {
+                if (step.isReusable(i) && step.slotItems()[i] != null) {
+                    inStep.merge(step.slotItems()[i], 1, Integer::sum);
+                }
+            }
+            for (Map.Entry<Item, Integer> e : inStep.entrySet()) {
+                tools.merge(e.getKey(), e.getValue(), Math::max);
+            }
+        }
+        for (Map.Entry<Item, Integer> e : tools.entrySet()) {
+            int fromStock = Math.min(e.getValue(), stock.get(e.getKey()));
+            if (fromStock > used.get(e.getKey())) {
+                used.asMap().put(e.getKey(), fromStock);
             }
         }
         return new CraftPlan(target, count, steps, missing, used, alternatives, needsBigGrid);
@@ -184,24 +207,36 @@ public final class CraftPlanner {
         int perCraft = index.resultCount(recipe);
         int times = (need + perCraft - 1) / perCraft;
         Item[][] alts = index.ingredientItems(recipe);
+        boolean[] reusable = index.reusableSlots(recipe);
         Item[] chosen = new Item[alts.length];
         Map<Item, Integer> perItem = new LinkedHashMap<>();
+        Map<Item, Integer> tools = new LinkedHashMap<>();
         for (int i = 0; i < alts.length; i++) {
             if (alts[i].length == 0) {
                 continue;
             }
             Item pick = pickAlternative(alts[i], inv, path);
             chosen[i] = pick;
-            perItem.merge(pick, times, Integer::sum);
+            if (reusable != null && i < reusable.length && reusable[i]) {
+                tools.merge(pick, 1, Integer::sum); // one per slot, however many crafts
+            } else {
+                perItem.merge(pick, times, Integer::sum);
+            }
             if (alts[i].length > 1) {
                 alternatives.putIfAbsent(pick, alts[i]);
             }
         }
+        for (Map.Entry<Item, Integer> e : tools.entrySet()) {
+            expand(e.getKey(), e.getValue(), path, inv, steps, missing, depth + 1);
+        }
         for (Map.Entry<Item, Integer> e : perItem.entrySet()) {
             expand(e.getKey(), e.getValue(), path, inv, steps, missing, depth + 1);
         }
-        steps.add(new CraftPlan.CraftStep(recipe, times, chosen));
+        steps.add(new CraftPlan.CraftStep(recipe, times, chosen, reusable));
         inv.add(item, times * perCraft - need);
+        for (Map.Entry<Item, Integer> e : tools.entrySet()) {
+            inv.add(e.getKey(), e.getValue()); // the tool is still there after the step
+        }
     }
 
     private Item pickAlternative(Item[] alts, ItemCounts inv, Deque<Item> path) {
