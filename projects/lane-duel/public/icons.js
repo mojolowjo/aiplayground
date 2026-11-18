@@ -34,6 +34,11 @@ const ICON = (() => {
     sliv1: C(15, 28, 9, '#ffffff22', 2, '#9fe8d2') + `<circle cx="15" cy="28" r="9" fill="none" stroke="#9fe8d2" stroke-width="2" stroke-dasharray="4 3"/>` + C(33, 18, 9, '#1d2a2a') + P('M30 16L38 18L30 21Z', '#58d6b0', 1) + L('M20 25L26 22', '#fff', 2.5),
     sliv2: L('M10 30A16 16 0 0 1 30 9', O, 7) + L('M10 30A16 16 0 0 1 30 9', '#e3f2ee', 4) + L('M38 18A16 16 0 0 1 18 39', O, 7) + L('M38 18A16 16 0 0 1 18 39', '#8affd9', 4) + C(24, 24, 3, '#fff', 1.5),
     sliv3: G(9, 39, -45, sword(40, 3.5, '#e3f2ee', '#58d6b0')) + G(39, 39, -135, sword(40, 3.5, '#e3f2ee', '#58d6b0')) + P('M24 30C27 34 28 36 28 38A4 4 0 0 1 20 38C20 36 21 34 24 30Z', '#ff5a5a', 1.5),
+    // --- Kessa
+    kessa0: L('M6 40Q22 -4 40 30', '#fff8', 2.5) + `<path d="M6 40Q22 -4 40 30" fill="none" stroke="#8fd0ff" stroke-width="2.5" stroke-dasharray="4 4"/>` + C(40, 31, 7, '#dff2ff') + C(38, 29, 2, '#fff', 0) + `<ellipse cx="40" cy="42" rx="8" ry="2.5" fill="#8fd0ff88"/>`,
+    kessa1: `<ellipse cx="24" cy="38" rx="18" ry="6" fill="none" stroke="#ffe9a0" stroke-width="2.5" stroke-dasharray="6 3"/>` + `<ellipse cx="24" cy="38" rx="9" ry="3" fill="#ffe9a066"/>` + P('M21 38L22.5 12H25.5L27 38Z', '#f4ecd8') + star(24, 10, 8, '#ffe9a0'),
+    kessa2: C(24, 24, 7, '#dff2ff') + [0, 60, 120, 180, 240, 300].map(d => G(24, 24, d, P('M11 -3.5H17V-7L24 0L17 7V3.5H11Z', '#8fd0ff', 1.5))).join(''),
+    kessa3: L('M24 26L10 42M24 26L38 42M24 26V42', O, 6) + L('M24 26L10 42M24 26L38 42M24 26V42', '#aab3bd', 3) + G(24, 24, -40, P('M-10 -6H18V6H-10Z', '#5d6570', 2) + P('M14 -8H22V8H14Z', '#8fd0ff', 2)) + C(24, 24, 5, '#dff2ff'),
     // --- Spells
     spell_d: P('M28 4L10 27H22L18 44L38 19H25Z', '#ffe27a') + L('M8 10L11 13M40 36L43 39M38 8L41 6', '#fff9', 2),
     spell_f: P('M24 42C10 32 5 24 5 16A9.5 9.5 0 0 1 24 12A9.5 9.5 0 0 1 43 16C43 24 38 32 24 42Z', '#6fe08a') + P('M21 15H27V21H33V27H27V33H21V27H15V21H21Z', '#fff', 1.5),
@@ -114,7 +119,7 @@ const ICON = (() => {
       S('M19.5 9.5H28.5', 'none', '#22303a', 2.2) + S('M20.2 14.2H27.8', 'none', '#c9a04a', 1.6) + `<rect x="20.6" y="4" width="6.8" height="6" rx="1.2" fill="url(#cork)" stroke="#3a240e"/>` +
       S('M14 24.5C12.4 27 12 30.5 13.2 34', 'none', '#fff', 2, 'opacity=".75"') + S('M22 11V16.5', 'none', '#fff', 1.1, 'opacity=".6"') + glint(31.5, 22.5, 2.8)],
   };
-  const BG = { vesk: '#8a6a14', oriel: '#5a3396', brakk: '#8a4418', sliv: '#1c6a56', spell_d: '#806a10', spell_f: '#1e6a34',
+  const BG = { kessa: '#1e4a6e', vesk: '#8a6a14', oriel: '#5a3396', brakk: '#8a4418', sliv: '#1c6a56', spell_d: '#806a10', spell_f: '#1e6a34',
     blade: '#5a2c2c', greatblade: '#6a2a1a', dagger: '#5a4a2a', tome: '#3a2a6a', staff: '#3a2a6a', gem: '#5a1a26', crystal: '#1a3a6a', plating: '#3a4450', cloak: '#2e2450', boots: '#4a3420', potion: '#3a2030' };
   let uid = 0;
   // Gradient ids are made unique per icon so a hidden copy can never break a visible one.

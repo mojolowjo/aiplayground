@@ -98,13 +98,20 @@ export class Game {
   }
   zone(h, o) {
     this.zones.push({ id: this.nextId++, x: o.x, y: o.y, r: o.r, team: h.team, born: this.time, at: this.time + o.delay,
-      ticks: o.ticks || 1, interval: o.interval || 0, color: o.color, onHit: o.onHit });
+      ticks: o.ticks || 1, interval: o.interval || 0, color: o.color, onHit: o.onHit, quiet: !!o.quiet });
   }
   burst(h, x, y, r, color, onHit) {
     this.fx({ e: 'burst', x, y, r, c: color });
     for (const t of this.enemiesIn(h.team, x, y, r)) onHit(t);
   }
   dash(h, o) { h.dashing = o; h.windup = null; }
+  // Shove a unit directly away from a point over a quarter of a second.
+  knock(t, fromX, fromY, dist) {
+    if (t.type === 'tower' || t.dead) return;
+    let dx = t.x - fromX, dy = t.y - fromY; const d = Math.hypot(dx, dy) || 1;
+    t.push = { vx: dx / d * dist / 0.25, vy: dy / d * dist / 0.25, until: this.time + 0.25 };
+    t.dashing = null; this.stun(t, 0.25);
+  }
   blink(h, x, y) {
     this.fx({ e: 'blink', x: h.x, y: h.y }); h.x = x; h.y = y; this.clampPos(h); this.fx({ e: 'blink', x: h.x, y: h.y });
     h.windup = null;
@@ -199,14 +206,16 @@ export class Game {
     let x = Number.isFinite(c.x) ? c.x : h.x, y = Number.isFinite(c.y) ? c.y : h.y;
     let dx = x - h.x, dy = y - h.y, d = Math.hypot(dx, dy);
     if (d < 1) { dx = Math.cos(h.face); dy = Math.sin(h.face); d = 1; } else { dx /= d; dy /= d; }
-    if (def.range && (def.kind === 'point' || def.kind === 'dash')) {
-      const r = Math.min(d, def.range); x = h.x + dx * r; y = h.y + dy * r;
+    const range = def.rangeOf ? def.rangeOf(this, h) : def.range;
+    if (range && (def.kind === 'point' || def.kind === 'dash')) {
+      const r = Math.min(d, range); x = h.x + dx * r; y = h.y + dy * r;
     }
     return { x, y, dx, dy, target: this.units.get(c.id) };
   }
   canAct(h) { return !h.dead && h.stunUntil <= this.time && !h.casting && !h.dashing; }
   cast(h, s, c) {
     const def = h.def.abilities[s], r = h.ranks[s] - 1;
+    if (def && def.toggle && r >= 0 && !h.dead && def.toggle(this, h)) return;
     if (!def || r < 0 || !this.canAct(h) || h.cds[s] > this.time) return;
     const cost = def.cost[Math.min(r, def.cost.length - 1)];
     if (h.mp < cost) return;
@@ -217,7 +226,7 @@ export class Game {
       if (!this.targetable(h, t) || t.type !== 'hero' || this.dist(h, t) > def.range + t.radius) return;
       if (h.rootUntil > this.time) return;
     }
-    h.mp -= cost; h.cds[s] = this.time + def.cd[Math.min(r, def.cd.length - 1)];
+    h.mp -= cost; h.cds[s] = this.time + def.cd[Math.min(r, def.cd.length - 1)] * (def.cdMult ? def.cdMult(this, h) : 1);
     h.recall = null; h.revealUntil = this.time + 1.5;
     if (h.windup) { h.windup = null; h.nextAttack = this.time; }
     if (def.kind !== 'self') h.face = Math.atan2(aim.dy, aim.dx);
@@ -239,6 +248,7 @@ export class Game {
     if (this.time >= this.nextWave) { this.spawnWave(); this.nextWave += RULES.waveEvery; }
     for (const u of [...this.units.values()]) {
       if (u.buffs.length) u.buffs = u.buffs.filter(b => b.until > this.time);
+      if (u.push) { if (this.time < u.push.until && !u.dead) { u.x += u.push.vx * DT; u.y += u.push.vy * DT; this.clampPos(u); } else u.push = null; }
       if (u.type === 'hero') this.stepHero(u);
       else if (u.dead) continue;
       else if (u.type === 'minion') this.stepMinion(u);
@@ -431,7 +441,7 @@ export class Game {
   stepZones() {
     this.zones = this.zones.filter(z => {
       if (this.time < z.at) return true;
-      this.fx({ e: 'burst', x: z.x, y: z.y, r: z.r, c: z.color });
+      if (!z.quiet) this.fx({ e: 'burst', x: z.x, y: z.y, r: z.r, c: z.color });
       for (const t of this.enemiesIn(z.team, z.x, z.y, z.r)) z.onHit(t);
       z.at += z.interval; return --z.ticks > 0;
     });
@@ -450,7 +460,7 @@ export class Game {
         d: u.dead ? Math.ceil(u.respawnAt - T) : 0, st: T < u.stunUntil ? 1 : 0, rt: T < u.rootUntil ? 1 : 0,
         sl: this.buffMax(u, 'slow') > 0 ? 1 : 0, sh: u.shieldUntil > T ? r(u.shieldAmt) : 0,
         rc: u.recall ? +(1 - (u.recall.at - T) / 8).toFixed(2) : 0, br: this.brushOf(u) >= 0 ? 1 : 0,
-        mk: u.mark && u.mark.until > T ? 1 : 0, kl: u.kills, cs: u.cs });
+        mk: u.mark && u.mark.until > T ? 1 : 0, sg: u.siegeUntil > T ? 1 : 0, kl: u.kills, cs: u.cs });
       units.push(o);
     }
     const snap = { t: 'snap', time: +T.toFixed(3), units,

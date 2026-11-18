@@ -7,7 +7,8 @@ let snaps = [], offset = null, me = null, meUnit = null, myDef = null;
 let cam = { x: 0, locked: true }, mouse = { x: 0, y: 0, wx: 0, wy: 0, rdown: false, lastMove: 0 };
 let pendingA = false, shopOpen = false, fx = [], ping = 0, W = 0, H = 0, scale = 1;
 
-function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; scale = H / 1250; }
+let zoom = 1;
+function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; scale = H / 1250 * zoom; }
 addEventListener('resize', resize); resize();
 
 // ---------- networking ----------
@@ -214,7 +215,8 @@ function frame() {
   if (!hello || !inGame) return;
   const st = interp(); if (!st) return;
   const M = hello.map, my = hello.team[0], mine = st.units.find(u => u.id === (me && me.id));
-  // camera
+  // camera (zooms out while planted in a long-range stance)
+  zoom += ((mine && mine.sg ? 0.72 : 1) - zoom) * Math.min(1, dt * 5); scale = H / 1250 * zoom;
   const halfW = W / 2 / scale;
   if (cam.locked && mine && !mine.d) cam.x = mine.x;
   else if (!cam.locked) { if (mouse.x < 24) cam.x -= 2200 * dt; if (mouse.x > W - 24) cam.x += 2200 * dt; }
@@ -254,6 +256,7 @@ function frame() {
     else if (u.k === 'm') smallBar(u, a, 46, 5, 44, mineTeam ? '#4aa3ff' : '#ff5a5a');
     else heroBar(u, a, mineTeam ? (u.id === me.id ? '#3fd06a' : '#4aa3ff') : '#ff5a5a', u.id === (me && me.id));
   }
+  if (mine && mine.sg) { ctx.strokeStyle = '#8fd0ff66'; ctx.lineWidth = 2; ctx.setLineDash([14, 10]); ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), 1500 * scale, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
   if (mine && pendingA && me) { ctx.strokeStyle = '#ffffffaa'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), (me.range + 55) * scale, 0, 7); ctx.stroke(); }
   ctx.restore();
   gfxCleanup(now);

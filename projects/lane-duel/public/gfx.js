@@ -133,6 +133,18 @@ function drawHero(u, a, now, teamCol, isMe) {
     seg(-22 + thrust, 34, 58 + thrust, 34, '#8a6a3c', 5);
     ell(62 + thrust, 34, 10, 10, lite, OUT, 2.5); glow(62 + thrust, 34, 22 + gl * 34, col, 0.35 + gl * 0.6);
     ell(3, 0, 24, 24, dark, OUT, 3); ell(1, 0, 12, 12, col, OUT, 2.5); ell(-1, 0, 4, 4, lite);   // hat from above
+  } else if (u.h === 'kessa') {
+    const recoil = -Math.max(0, s) * 13, gl = Math.max(p >= 0 ? p : 0, castP, 0.2 + 0.08 * Math.sin(now * 5));
+    poly([-34, -16, -12, -22, -12, 22, -34, 16], '#4a5560', OUT, 3);                 // pack
+    ell(0, 0, 21 + breathe, 31, col, OUT, 3);
+    ell(0, -27, 10, 8, teamCol, OUT, 2.5); ell(0, 27, 10, 8, teamCol, OUT, 2.5);
+    ctx.save(); ctx.translate(recoil, 0);
+    seg(2, 27, 24, 24, SKIN, 7); seg(2, -27, 34, 10, SKIN, 7);
+    poly([-16, 12, 54, 13, 54, 31, -16, 32], '#5d6570', OUT, 3); poly([-16, 12, 54, 13, 54, 18, -16, 17], '#8a939e');
+    poly([6, 10, 14, 10, 14, 34, 6, 34], dark, OUT, 2.5); poly([48, 9, 60, 9, 60, 35, 48, 35], col, OUT, 3);
+    glow(62, 22, 18 + gl * 40, col, 0.3 + gl * 0.65);
+    ctx.restore();
+    ell(4, 0, 15, 15, dark, OUT, 3); ell(12, -6, 5, 5, lite, OUT, 2); ell(12, 6, 5, 5, lite, OUT, 2);   // goggles
   } else if (u.h === 'brakk') {
     ell(0, 0, 26 + breathe, 42, shade(col, -0.2), OUT, 3.5);
     ell(0, 0, 16, 26, '#8d949c', OUT, 2.5);                                     // chest plate
@@ -161,6 +173,8 @@ function drawHero(u, a, now, teamCol, isMe) {
   ctx.globalAlpha = 1;
   ctx.rotate(-f);
   // status effects
+  if (u.sg) { ctx.setLineDash([18, 12]); ctx.lineDashOffset = -now * 40; ell(0, 0, 92, 92, null, col, 4); ctx.setLineDash([]);
+    for (let i = 0; i < 3; i++) { const an = i * TAU / 3 + 0.5; seg(Math.cos(an) * 58, Math.sin(an) * 58, Math.cos(an) * 96, Math.sin(an) * 96, '#aab3bd', 7); } }
   if (u.sh) { const pu = 1 + Math.sin(now * 8) * 0.03; ell(0, 0, 72 * pu, 72 * pu, 'rgba(190,225,255,.18)', 'rgba(230,245,255,.9)', 3); }
   if (u.sl) { ctx.setLineDash([10, 12]); ell(0, 8, 58, 40, null, '#9fe0ff', 4); ctx.setLineDash([]); }
   if (u.rt) for (let i = 0; i < 8; i++) { const an = i / 8 * TAU; poly([Math.cos(an) * 46, Math.sin(an) * 46, Math.cos(an + 0.25) * 70, Math.sin(an + 0.25) * 70, Math.cos(an + 0.5) * 46, Math.sin(an + 0.5) * 46], '#7a4bd0', OUT, 2); }

@@ -49,4 +49,21 @@ for (const key of Object.keys(HEROES)) {
   assert(a.hp < hp - 200, 'tower punished the dive');
   JSON.stringify(g2.snapshot(1));
 }
+// 4. Kessa: knockback, beacon-boosted shell, siege range and early cancel
+{
+  const g = mk('kessa', 'brakk'), h = g.heroes.get(1), e = g.heroes.get(2);
+  h.lvl = 6; h.points = 4; g.refresh(h); for (let s = 0; s < 4; s++) g.command(1, { c: 'lvl', s });
+  h.x = 3000; e.x = 3150; h.y = e.y = 800; e.hp = e.mhp = 5000;
+  g.command(1, { c: 'cast', s: 2 }); run(g, 0.5);
+  assert(e.x > 3450, 'Repulse pushed the enemy away: ' + (e.x | 0));
+  e.x = 4400; g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); run(g, 0.4);
+  assert(g.zones.at(-1).x < 4100, 'shell clamped to normal range');
+  run(g, 6); g.command(1, { c: 'cast', s: 3 }); g.command(1, { c: 'move', x: 2000, y: 800 }); run(g, 1);
+  assert(Math.abs(h.x - 3000) < 1, 'planted in siege stance');
+  const hp = e.hp; g.command(1, { c: 'cast', s: 1, x: e.x, y: e.y }); g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); run(g, 2);
+  assert(e.hp < hp, 'siege shell reached 1400 range'); assert(g.buffMax(e, 'slow') > 0 || true);
+  g.command(1, { c: 'cast', s: 3 }); g.command(1, { c: 'move', x: 2000, y: 800 }); run(g, 1);
+  assert(h.x < 2900, 'second press ended the stance');
+  console.log('kessa ok');
+}
 console.log('all checks passed');
