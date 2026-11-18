@@ -8,6 +8,7 @@ its own folder under `projects/` and does not touch the others.
 | Folder | What it is | Status |
 |---|---|---|
 | [`projects/minecraft-optimization`](projects/minecraft-optimization/) | Cloudly, a performance mod for Minecraft: Java Edition, with its benchmark harness | Phase 2 done |
+| [`projects/lane-duel`](projects/lane-duel/) | Lane Duel, a 1v1 browser lane game for two players over the internet | 1v1 playable |
 
 ## Adding a new project
 

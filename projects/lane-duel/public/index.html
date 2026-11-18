@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Lane Duel</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1410; color: #e8eee9; font: 14px system-ui, sans-serif; user-select: none; }
+  canvas { display: block; cursor: crosshair; }
+  .panel { position: fixed; background: rgba(12, 20, 26, .94); border: 1px solid #33485a; border-radius: 8px; padding: 16px; }
+  #lobby { top: 50%; left: 50%; transform: translate(-50%, -50%); width: 640px; }
+  #lobby h1 { margin: 0 0 4px; font-size: 26px; }
+  #lobby .sub { color: #9fb2bf; margin-bottom: 12px; }
+  .heroes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .hero { border: 2px solid #33485a; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+  .hero:hover { border-color: #6f8fa8; } .hero.sel { border-color: #ffd24a; background: #1c2a33; }
+  .hero b { font-size: 16px; } .hero small { color: #9fb2bf; display: block; margin-top: 2px; }
+  button { background: #2a6fb0; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; font-size: 15px; cursor: pointer; }
+  button:disabled { background: #3a4852; color: #8a979f; cursor: default; }
+  input { background: #0b1410; color: #e8eee9; border: 1px solid #33485a; border-radius: 4px; padding: 6px 8px; font-size: 14px; }
+  #players { margin: 12px 0; } .blue { color: #5fb0ff; } .red { color: #ff6b6b; }
+  #hud { bottom: 10px; left: 50%; transform: translateX(-50%); padding: 8px 10px; display: none; }
+  #bars { width: 420px; margin-bottom: 6px; }
+  .bar { height: 16px; background: #1a252c; border-radius: 3px; position: relative; margin-bottom: 3px; overflow: hidden; }
+  .bar i { position: absolute; left: 0; top: 0; bottom: 0; } .bar span { position: absolute; width: 100%; text-align: center; font-size: 11px; line-height: 16px; }
+  #hpb i { background: #2f9e4f; } #mpb i { background: #2f6fbe; } #xpb { height: 5px; } #xpb i { background: #a070e0; }
+  #slots { display: flex; gap: 6px; align-items: flex-end; }
+  .slot { width: 54px; height: 54px; border: 2px solid #4a6276; border-radius: 6px; background: #17232b; position: relative; text-align: center; }
+  .slot.small { width: 42px; height: 42px; } .slot .k { position: absolute; left: 3px; top: 1px; font-size: 11px; color: #9fb2bf; }
+  .slot .cd { font-size: 20px; font-weight: 700; line-height: 54px; } .slot.small .cd { line-height: 42px; font-size: 15px; }
+  .slot.off { opacity: .45; } .slot.nomana { border-color: #2f6fbe; } .slot.up { border-color: #ffd24a; box-shadow: 0 0 8px #ffd24a; }
+  .slot .pips { position: absolute; bottom: 1px; left: 0; right: 0; font-size: 8px; letter-spacing: 1px; color: #ffd24a; }
+  #stats { margin-left: 10px; font-size: 12px; color: #b8c7d1; line-height: 1.45; white-space: nowrap; }
+  #tip { display: none; max-width: 300px; pointer-events: none; padding: 8px 10px; font-size: 13px; z-index: 5; }
+  #top { top: 8px; left: 50%; transform: translateX(-50%); padding: 6px 14px; display: none; font-size: 15px; white-space: nowrap; }
+  #shop { top: 60px; right: 10px; width: 250px; display: none; padding: 10px; }
+  .item { display: flex; justify-content: space-between; padding: 5px 6px; border-radius: 4px; cursor: pointer; }
+  .item:hover { background: #22323d; } .item.no { opacity: .4; } .item small { color: #9fb2bf; display: block; }
+  #inv { margin-top: 8px; color: #b8c7d1; font-size: 12px; }
+  #over { top: 35%; left: 50%; transform: translate(-50%, -50%); text-align: center; display: none; padding: 24px 40px; }
+  #over h1 { margin: 0 0 8px; font-size: 40px; }
+  #feed { position: fixed; top: 60px; left: 12px; font-size: 14px; pointer-events: none; }
+  #help { position: fixed; left: 10px; top: 8px; max-width: 30vw; font-size: 11px; color: #8a9aa5; line-height: 1.5; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="lobby" class="panel">
+  <h1>Lane Duel</h1>
+  <div class="sub">1v1 lane. First to <b id="rk">2</b> kills, <b id="rc">100</b> minions, or the enemy tower.</div>
+  <div>Name <input id="name" maxlength="16" value="Player"> <span id="status" style="margin-left:10px;color:#9fb2bf"></span></div>
+  <div id="players"></div>
+  <div class="heroes" id="heroes"></div>
+  <p><button id="start" disabled>Start</button> <span id="hint" style="color:#9fb2bf;margin-left:8px"></span></p>
+</div>
+
+<div id="top" class="panel"></div>
+<div id="feed"></div>
+<div id="hud" class="panel">
+  <div id="bars">
+    <div class="bar" id="hpb"><i></i><span></span></div>
+    <div class="bar" id="mpb"><i></i><span></span></div>
+    <div class="bar" id="xpb"><i></i></div>
+  </div>
+  <div id="slots"></div>
+</div>
+<div id="tip" class="panel"></div>
+<div id="shop" class="panel"><b>Shop</b> <small style="color:#9fb2bf">(P) — buy at your base</small><div id="items"></div><div id="inv"></div></div>
+<div id="over" class="panel"><h1 id="ot"></h1><div id="or"></div><p><button id="rematch">Back to lobby</button></p></div>
+<div id="help">Right-click move/attack · A + click attack-move · S stop · Q W E R abilities (Shift+key or click the icon to level up) · D F spells · B recall · P shop · Y camera lock · Space centre</div>
+<script src="client.js"></script>
+</body>
+</html>
