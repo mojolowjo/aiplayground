@@ -64,6 +64,9 @@ for (const key of Object.keys(HEROES)) {
   assert(e.hp < hp, 'siege shell reached 1400 range'); assert(g.buffMax(e, 'slow') > 0 || true);
   g.command(1, { c: 'cast', s: 3 }); g.command(1, { c: 'move', x: 2000, y: 800 }); run(g, 1);
   assert(h.x < 2900, 'second press ended the stance');
+  run(g, 8); e.x = h.x + 600; g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); const tap = g.zones.at(-1).r; run(g, 6);
+  g.command(1, { c: 'charge', s: 0 }); run(g, 1.3); g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y });
+  assert(g.zones.at(-1).r > tap + 80, 'a full charge widens the blast'); assert(!h.charging, 'charge cleared on release');
   console.log('kessa ok');
 }
 console.log('all checks passed');

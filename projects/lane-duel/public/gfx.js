@@ -175,6 +175,7 @@ function drawHero(u, a, now, teamCol, isMe) {
   // status effects
   if (u.sg) { ctx.setLineDash([18, 12]); ctx.lineDashOffset = -now * 40; ell(0, 0, 92, 92, null, col, 4); ctx.setLineDash([]);
     for (let i = 0; i < 3; i++) { const an = i * TAU / 3 + 0.5; seg(Math.cos(an) * 58, Math.sin(an) * 58, Math.cos(an) * 96, Math.sin(an) * 96, '#aab3bd', 7); } }
+  if (u.ch) { ctx.strokeStyle = u.ch >= 1 ? '#ffffff' : col; ctx.lineWidth = 7; ctx.lineCap = 'butt'; ctx.beginPath(); ctx.arc(0, 0, 74, -1.57, -1.57 + TAU * u.ch); ctx.stroke(); glow(0, 0, 60 + 50 * u.ch, col, 0.25 + 0.4 * u.ch); }
   if (u.sh) { const pu = 1 + Math.sin(now * 8) * 0.03; ell(0, 0, 72 * pu, 72 * pu, 'rgba(190,225,255,.18)', 'rgba(230,245,255,.9)', 3); }
   if (u.sl) { ctx.setLineDash([10, 12]); ell(0, 8, 58, 40, null, '#9fe0ff', 4); ctx.setLineDash([]); }
   if (u.rt) for (let i = 0; i < 8; i++) { const an = i / 8 * TAU; poly([Math.cos(an) * 46, Math.sin(an) * 46, Math.cos(an + 0.25) * 70, Math.sin(an + 0.25) * 70, Math.cos(an + 0.5) * 46, Math.sin(an + 0.5) * 46], '#7a4bd0', OUT, 2); }

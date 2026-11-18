@@ -63,7 +63,7 @@ export class Game {
   speed(u) { return (u.baseMs || u.ms) * (1 - this.buffMax(u, 'slow')) * (1 + this.buffSum(u, 'haste')); }
   atkSpeed(u) { return Math.min(2.5, u.as * (1 + this.buffSum(u, 'as') / 100)); }
   addBuff(u, k, v, dur) { if (!u.dead) u.buffs.push({ k, v, until: this.time + dur }); }
-  stun(u, dur) { u.stunUntil = Math.max(u.stunUntil, this.time + dur); u.windup = null; u.casting = null; u.recall = null; }
+  stun(u, dur) { u.stunUntil = Math.max(u.stunUntil, this.time + dur); u.windup = null; u.casting = null; u.recall = null; u.charging = null; }
   root(u, dur) { u.rootUntil = Math.max(u.rootUntil, this.time + dur); }
   shield(u, amt, dur) { u.shieldAmt = amt; u.shieldUntil = this.time + dur; }
   heal(u, amt) { if (!u.dead) u.hp = Math.min(u.mhp, u.hp + amt); }
@@ -154,7 +154,7 @@ export class Game {
       const near = enemy.filter(h => !h.dead && this.dist(h, t) < 1400);
       for (const h of near) this.giveXp(h, t.xp / near.length);
     } else if (t.type === 'hero') {
-      t.deaths++; t.respawnAt = this.time + 5 + 1.5 * t.lvl; t.order = null; t.casting = null; t.dashing = null; t.recall = null;
+      t.deaths++; t.respawnAt = this.time + 5 + 1.5 * t.lvl; t.order = null; t.casting = null; t.dashing = null; t.recall = null; t.charging = null;
       let k = src && src.type === 'hero' ? src : null;
       if (!k && t.lastHeroDmg && this.time - t.lastHeroDmg.at < 10) k = this.units.get(t.lastHeroDmg.id);
       if (k) { k.kills++; k.gold += 300; this.giveXp(k, 100 + 40 * t.lvl); this.fx({ e: 'gold', x: t.x, y: t.y, n: 300, p: k.pid }); }
@@ -185,6 +185,8 @@ export class Game {
       case 'atk': { const t = this.units.get(c.id); if (this.targetable(h, t)) { h.recall = null; h.order = { type: 'atk', id: t.id }; } break; }
       case 'stop': interrupt(); h.order = { type: 'hold' }; break;
       case 'recall': if (!h.casting && !h.dashing) { interrupt(); h.order = { type: 'hold' }; h.recall = { at: this.time + 8 }; } break;
+      case 'charge': { const s = c.s | 0, d = h.def.abilities[s];
+        if (d && d.charge && h.ranks[s] > 0 && h.cds[s] <= this.time && this.canAct(h)) h.charging = { s, t0: this.time, max: d.charge.max }; break; }
       case 'cast': this.cast(h, c.s | 0, c); break;
       case 'spell': this.castSpell(h, c.s, c); break;
     }
@@ -220,7 +222,8 @@ export class Game {
     const cost = def.cost[Math.min(r, def.cost.length - 1)];
     if (h.mp < cost) return;
     if (def.kind === 'dash' && h.rootUntil > this.time) return;
-    const aim = this.aimFor(h, def, c);
+    const aim = this.aimFor(h, def, c), ch = h.charging;
+    aim.power = ch && ch.s === s ? Math.min(1, (this.time - ch.t0) / ch.max) : 0; h.charging = null;
     if (def.kind === 'unit') {
       const t = aim.target;
       if (!this.targetable(h, t) || t.type !== 'hero' || this.dist(h, t) > def.range + t.radius) return;
@@ -340,6 +343,7 @@ export class Game {
     const es = MAP.spawn[other(h.team)];
     if (this.dist(h, es) < MAP.fountainR) this.damage(null, h, 400 * DT, 'true');
     if (h.dead || T < h.stunUntil) return;
+    if (h.charging && T - h.charging.t0 > h.charging.max + 2.5) h.charging = null;   // held too long: fizzles, nothing spent
     if (h.dashing) return this.stepDash(h);
     if (h.casting) { if (T >= h.casting.at) { const f = h.casting.fire; h.casting = null; f(); } return; }
     if (h.recall) {
@@ -460,7 +464,7 @@ export class Game {
         d: u.dead ? Math.ceil(u.respawnAt - T) : 0, st: T < u.stunUntil ? 1 : 0, rt: T < u.rootUntil ? 1 : 0,
         sl: this.buffMax(u, 'slow') > 0 ? 1 : 0, sh: u.shieldUntil > T ? r(u.shieldAmt) : 0,
         rc: u.recall ? +(1 - (u.recall.at - T) / 8).toFixed(2) : 0, br: this.brushOf(u) >= 0 ? 1 : 0,
-        mk: u.mark && u.mark.until > T ? 1 : 0, sg: u.siegeUntil > T ? 1 : 0, kl: u.kills, cs: u.cs });
+        mk: u.mark && u.mark.until > T ? 1 : 0, sg: u.siegeUntil > T ? 1 : 0, ch: u.charging ? +Math.min(1, (T - u.charging.t0) / u.charging.max).toFixed(2) : 0, kl: u.kills, cs: u.cs });
       units.push(o);
     }
     const snap = { t: 'snap', time: +T.toFixed(3), units,

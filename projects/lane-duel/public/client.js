@@ -193,6 +193,7 @@ addEventListener('keydown', e => {
     if (e.ctrlKey || e.metaKey) return;
     e.preventDefault();
     if (e.shiftKey) return cmd({ c: 'lvl', s: qi });
+    if (myDef.abilities[qi].charge) { held[qi] = true; return cmd({ c: 'charge', s: qi }); }
     const t = unitAt(mouse.wx, mouse.wy, true);
     cmd({ c: 'cast', s: qi, x: mouse.wx, y: mouse.wy, id: t ? t.id : 0 });
   } else if (k === 'KeyD' || k === 'KeyF') cmd({ c: 'spell', s: k === 'KeyD' ? 'd' : 'f', x: mouse.wx, y: mouse.wy });
@@ -205,6 +206,13 @@ addEventListener('keydown', e => {
   else if (k === 'Escape') { pendingA = false; shopOpen = false; }
 });
 
+const held = {};
+addEventListener('keyup', e => {
+  const qi = ['KeyQ', 'KeyW', 'KeyE', 'KeyR'].indexOf(e.code);
+  if (qi < 0 || !held[qi]) return;
+  held[qi] = false; [mouse.wx, mouse.wy] = toWorld(mouse.x, mouse.y);
+  cmd({ c: 'cast', s: qi, x: mouse.wx, y: mouse.wy });
+});
 // ---------- rendering ----------
 const sx = x => (x - cam.x) * scale + W / 2, sy = y => (y - hello.map.h / 2) * scale + H / 2;
 let lastFrame = performance.now();
@@ -257,6 +265,12 @@ function frame() {
     else heroBar(u, a, mineTeam ? (u.id === me.id ? '#3fd06a' : '#4aa3ff') : '#ff5a5a', u.id === (me && me.id));
   }
   if (mine && mine.sg) { ctx.strokeStyle = '#8fd0ff66'; ctx.lineWidth = 2; ctx.setLineDash([14, 10]); ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), 1500 * scale, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
+  if (mine && mine.ch > 0 && myDef) {   // charge preview: where the shell will land and how wide
+    const def = myDef.abilities.find(a => a.charge), range = mine.sg ? 1500 : def.range, [wx, wy] = toWorld(mouse.x, mouse.y);
+    const d = Math.hypot(wx - mine.x, wy - mine.y) || 1, k = Math.min(1, range / d), px = mine.x + (wx - mine.x) * k, py = mine.y + (wy - mine.y) * k;
+    ctx.strokeStyle = '#ffffff55'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), range * scale, 0, 7); ctx.stroke();
+    ctx.fillStyle = '#8fd0ff33'; ctx.strokeStyle = '#dff2ff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx(px), sy(py), (def.radius + 90 * mine.ch) * scale, 0, 7); ctx.fill(); ctx.stroke();
+  }
   if (mine && pendingA && me) { ctx.strokeStyle = '#ffffffaa'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), (me.range + 55) * scale, 0, 7); ctx.stroke(); }
   ctx.restore();
   gfxCleanup(now);

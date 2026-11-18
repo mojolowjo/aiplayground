@@ -152,14 +152,14 @@ HEROES.kessa = {
   armor: 20, armorPer: 4, mr: 30, mrPer: 1.3, ms: 325, range: 525, melee: false,
   projSpeed: 1500, shot: 'orb', windup: 0.24, hpRegen: 0.7, manaRegen: 2.3,
   abilities: [
-    { key: 'Q', name: 'Arc Shell', kind: 'point', range: 1050, radius: 170, castTime: 0.25,
+    { key: 'Q', name: 'Arc Shell', kind: 'point', range: 1050, radius: 150, charge: { max: 1.2 },
       cd: [6, 5.5, 5, 4.5, 4], cost: [50, 55, 60, 65, 70],
       rangeOf: (g, h) => (h.siegeUntil > g.time ? 1500 : 1050), cdMult: (g, h) => (h.siegeUntil > g.time ? 0.5 : 1),
-      desc: 'Lob a shell that lands after a delay (longer at range) for 70/110/150/190/230 + 65% AP. Landing on your Beacon it hits a wider area and slows by 35%.',
+      desc: 'Hold to charge for up to 1.2s, release to lob a shell that lands after a delay (longer at range) for 60/95/130/165/200 + 55% AP. A full charge deals 50% more damage in a much wider blast. Landing on your Beacon it is wider still and slows by 35%.',
       cast(g, h, r, aim) {
-        const dmg = R([70, 110, 150, 190, 230], r) + 0.65 * h.ap, b = h.beacon;
+        const p = aim.power || 0, dmg = (R([60, 95, 130, 165, 200], r) + 0.55 * h.ap) * (1 + 0.5 * p), b = h.beacon;
         const lit = b && b.until > g.time && Math.hypot(aim.x - b.x, aim.y - b.y) <= b.r;
-        g.zone(h, { x: aim.x, y: aim.y, r: lit ? 250 : 170, delay: 0.45 + Math.hypot(aim.x - h.x, aim.y - h.y) / 2200, color: '#8fd0ff',
+        g.zone(h, { x: aim.x, y: aim.y, r: 150 + 90 * p + (lit ? 70 : 0), delay: 0.45 + Math.hypot(aim.x - h.x, aim.y - h.y) / 2200, color: '#8fd0ff',
           onHit(t) { g.damage(h, t, dmg, 'magic'); if (lit) g.addBuff(t, 'slow', 0.35, 1.5); } });
       } },
     { key: 'W', name: 'Beacon', kind: 'point', range: 900, radius: 300, cd: [16, 15, 14, 13, 12], cost: [60],
@@ -169,10 +169,10 @@ HEROES.kessa = {
         g.zone(h, { x: aim.x, y: aim.y, r: 300, delay: 6, color: '#ffe9a0', quiet: true, onHit() {} });
       } },
     { key: 'E', name: 'Repulse', kind: 'self', radius: 320, cd: [18, 17, 16, 15, 14], cost: [70],
-      desc: 'Blast enemies within 320 away from you, dealing 50/80/110/140/170 + 30% AP and slowing by 30% for 1s.',
+      desc: 'Blast enemies within 320 away from you, dealing 50/80/110/140/170 + 30% AP and stunning them for 0.75s.',
       cast(g, h, r) {
         const dmg = R([50, 80, 110, 140, 170], r) + 0.3 * h.ap;
-        g.burst(h, h.x, h.y, 320, '#8fd0ff', t => { g.damage(h, t, dmg, 'magic'); g.knock(t, h.x, h.y, 380); g.addBuff(t, 'slow', 0.3, 1.25); });
+        g.burst(h, h.x, h.y, 320, '#8fd0ff', t => { g.damage(h, t, dmg, 'magic'); g.knock(t, h.x, h.y, 380); g.stun(t, 0.75); });
       } },
     { key: 'R', name: 'Siege Stance', kind: 'self', cd: [110, 95, 80], cost: [100],
       desc: 'Plant yourself for 6/7/8s: you cannot move, but Arc Shell reaches 1500 range and recharges twice as fast. Press again to end early.',
