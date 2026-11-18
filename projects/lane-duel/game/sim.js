@@ -33,7 +33,7 @@ export const RULES = {
     heatPerShot: 0.4, maxHeat: 3, guardRange: 900, guardedMult: 0.33 },
   // Collision between heroes and minions: circles of these radii push apart. heroShare is how much of the push
   // the hero takes (1 = minions hold their ground); slide is how strongly a blocked hero is steered around.
-  collision: { hero: 34, minion: 26, heroShare: 1, slide: 1, detourFor: 1 },
+  collision: { hero: 34, minion: 18, heroShare: 1, slide: 1, detourFor: 1 },
   // Practice bot. react = seconds between decisions; hitErr = how far off its judgement of "one attack will
   // kill it" can be; skip = share of minions it does not try for at all; trade = chance per second of
   // attacking a player in range; qEvery = seconds between Q casts; aimErr = aim error in radians.
@@ -57,9 +57,9 @@ export const WAVES = {
 // vsMinionHp: bonus damage to other minions, as a share of the target's CURRENT health.
 // towerShot: share of this minion's MAX health one tower shot removes (0 = the tower's normal damage).
 export const MINION = {
-  melee:  { hp: 480, ad: 12, range: 110, as: 1.25, windupT: 0.3, radius: 32, gold: 20, xp: 60, projSpeed: 0, vsMinionHp: 0.02, towerShot: 0.45 },
-  caster: { hp: 290, ad: 23, range: 550, as: 0.67, windupT: 0.4, radius: 32, gold: 14, xp: 30, projSpeed: 650, vsMinionHp: 0.035, towerShot: 0.7 },
-  cannon: { hp: 900, ad: 41, range: 300, as: 1.0, windupT: 0.35, radius: 42, gold: 60, xp: 93, projSpeed: 1200, vsMinionHp: 0.05, towerShot: 0 },
+  melee:  { hp: 480, ad: 12, range: 110, as: 1.25, windupT: 0.3, radius: 22, gold: 20, xp: 60, projSpeed: 0, vsMinionHp: 0.02, towerShot: 0.45 },
+  caster: { hp: 290, ad: 23, range: 550, as: 0.67, windupT: 0.4, radius: 22, gold: 14, xp: 30, projSpeed: 650, vsMinionHp: 0.035, towerShot: 0.7 },
+  cannon: { hp: 900, ad: 41, range: 300, as: 1.0, windupT: 0.35, radius: 29, gold: 60, xp: 93, projSpeed: 1200, vsMinionHp: 0.05, towerShot: 0 },
 };
 
 const other = t => (t === 'blue' ? 'red' : 'blue');
