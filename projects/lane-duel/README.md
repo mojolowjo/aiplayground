@@ -5,12 +5,13 @@ server; both open a link. Original characters, standard lane-game mechanics:
 click-to-move, attack windup and cancelling, skillshots, minion waves and last
 hits, a tower with aggro, brush, recall, a shop.
 
-First to 2 kills, 100 minions, or the enemy tower wins.
+First to 8 kills, 100 minions, or both enemy towers wins. Each side has an outer and an inner
+tower; the inner one cannot be damaged until the outer one has fallen.
 
 ## Modes
 
 Pick **1v1** or **2v2** in the lobby. Both use the same lane. In 2v2 the targets are team
-totals and double: 4 kills or 200 minions. Players are put on alternating teams as they join;
+totals and double: 16 kills or 200 minions. Players are put on alternating teams as they join;
 **Switch team** moves you across if there is room, so two friends can play on the same side.
 Any seat nobody takes is filled by the practice opponent chosen next to the Start button.
 Damaging an enemy within 10 seconds of its death counts as an assist (150 gold, half the XP).
@@ -47,6 +48,9 @@ The stats panel shows your CS and missed CS, and **T** draws each minion's targe
 - A tower shot removes 45% of a melee minion's max health and 70% of a caster's, so under your
   tower a melee minion takes two tower shots and then your last hit. Cannon minions take the
   tower's normal damage.
+- A tower shot on a hero removes 18% of the hero's max health at level 1, ignoring armor. Each
+  level above 1 reduces that by 3% (so about half as much at level 18), and each shot in a row
+  on the same hero hits 40% harder.
 - Heroes cannot walk through minions; a wave in the way has to be walked around. Blinks and
   dashes pass through.
 
@@ -79,7 +83,7 @@ a separate room.
 | Shift or Ctrl + Q/W/E/R, or click the icon | Spend a skill point |
 | D / F | Blink / Mend (the lobby has a button to swap them; the choice is remembered) |
 | B | Recall to base (8s, cancelled by damage or orders) |
-| P | Shop (buy at base or while dead). With it open, click an item in your bag to sell it for 80% of its price |
+| P | Shop (buy at base or while dead). Standing at base with it open, click an item in your bag to sell it for 80% of its price |
 | Y / Space | Toggle camera lock / centre on your character |
 | T | Show what each minion is targeting (practice aid) |
 

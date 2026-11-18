@@ -133,9 +133,9 @@ function updateHud() {
   if (bagKey !== me.items.join()) {
     bagKey = me.items.join();
     $('bag').innerHTML = Array.from({ length: 6 }, (_, i) => { const it = hello.items.find(x => x.id === me.items[i]);
-      const sell = it ? ` — at base with the shop open (P), click to sell for ${Math.floor(it.cost * hello.rules.sellBack)}g` : '';
+      const sell = it ? ` — standing at base with the shop open (P), click to sell for ${Math.floor(it.cost * hello.rules.sellBack)}g` : '';
       return `<div class="bag" data-i="${i}" title="${it ? it.name + ': ' + it.desc + sell : ''}">${it ? ICON(it.id) : ''}</div>`; }).join('');
-    $('bag').onclick = e => { const d = e.target.closest('.bag'); if (d && shopOpen && me.shop && me.items[d.dataset.i]) cmd({ c: 'sell', i: +d.dataset.i }); };
+    $('bag').onclick = e => { const d = e.target.closest('.bag'); if (d && shopOpen && me.sell && me.items[d.dataset.i]) cmd({ c: 'sell', i: +d.dataset.i }); };
   }
   const cur = snaps[snaps.length - 1];
   const sc = t => `<span style="color:${TEAM[t]}">${esc(cur.sc[t].n)} ${cur.sc[t].k}K ${cur.sc[t].cs}CS</span>`;
@@ -144,7 +144,7 @@ function updateHud() {
   $('shop').style.display = shopOpen ? 'block' : 'none';
   if (shopOpen) {
     document.querySelectorAll('.item').forEach(d => { const it = hello.items.find(i => i.id === d.dataset.id); d.classList.toggle('no', !me.shop || me.gold < it.cost); });
-    $('inv').textContent = me.shop ? `Gold: ${me.gold} · ${6 - me.items.length} slots free · click an item in your bag to sell it for ${hello.rules.sellBack * 100}%` : 'Return to base to buy or sell';
+    $('inv').textContent = !me.shop ? 'Return to base to buy or sell' : `Gold: ${me.gold} · ${6 - me.items.length} slots free · ` + (me.sell ? `click an item in your bag to sell it for ${hello.rules.sellBack * 100}%` : 'selling needs you alive at base');
   }
 }
 function feed(text) {

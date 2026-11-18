@@ -5,11 +5,13 @@ import { think } from './bot.js';
 export const TICK = 30, DT = 1 / TICK;
 // Lane geometry. Minions spawn `minionOffset` in front of their base, so the first melee minions of each
 // side each walk (red spawn - blue spawn - 2 * minionOffset) / 2 = 8200 units and meet about 25s after
-// spawning at move speed 325. Each tower is 1300 from the middle of the lane (x = 9000).
+// spawning at move speed 325. Each outer tower is 1300 from the middle of the lane (x = 9000), with an
+// inner tower 3000 behind it. A team wins by destroying both enemy towers.
 export const MAP = {
   w: 18000, h: 1600, top: 220, bot: 1380, mid: 800, edge: 60,
   spawn: { blue: { x: 420, y: 800 }, red: { x: 17580, y: 800 } }, minionOffset: 380,
-  tower: { blue: { x: 7700, y: 800 }, red: { x: 10300, y: 800 } },
+  tower: { blue: { x: 7700, y: 800 }, red: { x: 10300, y: 800 } },          // outer towers
+  innerTower: { blue: { x: 4700, y: 800 }, red: { x: 13300, y: 800 } },     // cannot be damaged while that team's outer tower stands
   fountainR: 520, fountainBurn: 400,
   brush: [
     { x: 8300, y: 220, w: 1400, h: 190 },
@@ -18,13 +20,16 @@ export const MAP = {
 };
 export const RULES = {
   // kills and cs are per player on a team: a 2v2 team needs twice as many (team totals).
-  kills: 2, cs: 100, firstWave: 30, startGold: 500, goldPerSec: 2,
+  kills: 8, cs: 100, firstWave: 30, startGold: 500, goldPerSec: 2,
   modes: { '1v1': 1, '2v2': 2 },                    // players per team
   killGold: 300, assistGold: 150, assistWindow: 10, // an assist = damaged the victim in the last 10s
   sellBack: 0.8,                                    // share of an item's price returned when it is sold
   // Tower. Its damage to minions is a share of the minion's max health (MINION.*.towerShot); `ad` is what
-  // heroes and cannon minions take, rising by heatPerShot for each shot in a row on a hero.
+  // cannon minions take. A shot on a hero removes heroShot of the hero's max health, armor ignored. Each hero
+  // level above 1 cuts that by heroResistPerLevel (never below heroResistFloor of it), and each shot in a
+  // row on the same hero adds heatPerShot, up to maxHeat times.
   tower: { hp: 2500, ad: 150, armor: 40, mr: 40, range: 775, as: 0.83, windupT: 0.15, projSpeed: 1300, radius: 90,
+    heroShot: 0.18, heroResistPerLevel: 0.03, heroResistFloor: 0.4,
     heatPerShot: 0.4, maxHeat: 3, guardRange: 900, guardedMult: 0.33 },
   // Collision between heroes and minions: circles of these radii push apart. heroShare is how much of the push
   // the hero takes (1 = minions hold their ground); slide is how strongly a blocked hero is steered around.
@@ -66,10 +71,10 @@ export class Game {
     this.time = 0; this.nextId = 1; this.units = new Map(); this.shots = []; this.zones = []; this.pickups = [];
     this.events = []; this.over = null; this.nextWave = RULES.firstWave; this.waveNo = 0; this.spawnQ = []; this.wavesMet = false; this.heroes = new Map();
     for (const team of ['blue', 'red']) {
-      const p = MAP.tower[team];
       const t = RULES.tower;
-      this.add({ type: 'tower', team, x: p.x, y: p.y, radius: t.radius, hp: t.hp, mhp: t.hp, ad: t.ad, armor: t.armor, mr: t.mr,
-        range: t.range, as: t.as, windupT: t.windupT, projSpeed: t.projSpeed, melee: false, heat: 0 });
+      for (const [p, inner] of [[MAP.tower[team], false], [MAP.innerTower[team], true]])
+        this.add({ type: 'tower', team, inner, x: p.x, y: p.y, radius: t.radius, hp: t.hp, mhp: t.hp, ad: t.ad, armor: t.armor, mr: t.mr,
+          range: t.range, as: t.as, windupT: t.windupT, projSpeed: t.projSpeed, melee: false, heat: 0 });
     }
     this.teamSize = Math.max(1, ...['blue', 'red'].map(t => players.filter(p => p.team === t).length));
     this.goal = { kills: RULES.kills * this.teamSize, cs: RULES.cs * this.teamSize };
@@ -139,6 +144,9 @@ export class Game {
   shield(u, amt, dur) { u.shieldAmt = amt; u.shieldUntil = this.time + dur; }
   heal(u, amt) { if (!u.dead) u.hp = Math.min(u.mhp, u.hp + amt); }
   restoreMana(u, amt) { if (!u.dead) u.mp = Math.min(u.mmp, u.mp + amt); }
+  towers(team) { return [...this.units.values()].filter(u => u.type === 'tower' && u.team === team && !u.dead); }
+  // The tower a team is currently defending: the outer one, or the inner one once that has fallen.
+  frontTower(team) { const ts = this.towers(team); return ts.find(t => !t.inner) || ts[0] || MAP.innerTower[team]; }
   brushOf(u) { return MAP.brush.findIndex(b => u.x >= b.x && u.x <= b.x + b.w && u.y >= b.y && u.y <= b.y + b.h); }
   visible(u, team) {
     if (u.team === team || u.type !== 'hero' || u.revealUntil > this.time) return true;
@@ -246,7 +254,7 @@ export class Game {
   damage(src, t, amt, type, attack = false) {
     if (t.dead || this.over) return;
     if (t.type === 'tower') {
-      if (!attack) return;
+      if (!attack || (t.inner && this.towers(t.team).some(o => !o.inner))) return;   // the inner tower is safe behind the outer one
       const guarded = !this.enemiesIn(t.team, t.x, t.y, RULES.tower.guardRange).some(u => u.type === 'minion');
       if (guarded) amt *= RULES.tower.guardedMult;
     }
@@ -294,7 +302,8 @@ export class Game {
       }
       this.fx({ e: 'kill', k: k ? k.name : 'the lane', v: t.name });
     } else if (t.type === 'tower') {
-      this.over = { winner: other(t.team), reason: 'tower destroyed' };
+      this.units.delete(t.id); this.fx({ e: 'kill', k: src && src.name ? src.name : other(t.team) + ' minions', v: `a ${t.team} tower` });
+      if (!this.towers(t.team).length) this.over = { winner: other(t.team), reason: 'both towers destroyed' };
     }
     const pv = killer && killer.def.passive;
     if (pv && pv.onKill) pv.onKill(this, killer, t);
@@ -340,10 +349,10 @@ export class Game {
     if (h.items.length >= 6 || (it.unique && h.items.includes(id))) return;
     h.gold -= it.cost; h.items.push(id); this.refresh(h);
   }
-  // Sell the item in bag slot i for RULES.sellBack of its price. Same place rule as buying: at base or while dead.
+  // Sell the item in bag slot i for RULES.sellBack of its price. Only while standing in shop range (not while dead).
   sell(h, i) {
     const it = ITEM[h.items[i]];
-    if (!it || (this.dist(h, MAP.spawn[h.team]) > MAP.fountainR && !h.dead)) return;
+    if (!it || h.dead || this.dist(h, MAP.spawn[h.team]) > MAP.fountainR) return;
     h.items.splice(i, 1); h.gold += Math.floor(it.cost * RULES.sellBack); this.refresh(h);
     h.hp = Math.min(h.hp, h.mhp); h.mp = Math.min(h.mp, h.mmp);
   }
@@ -478,7 +487,11 @@ export class Game {
     let dmg = u.ad;
     const kind = MINION[t.kind];
     if (u.type === 'minion') dmg = t.type === 'hero' ? dmg * WAVES.vsHero : t.type === 'tower' ? dmg * WAVES.vsTower : dmg + ((MINION[u.kind] || {}).vsMinionHp || 0) * t.hp;
-    if (u.type === 'tower' && t.type === 'hero') { dmg *= 1 + RULES.tower.heatPerShot * u.heat; u.heat = Math.min(RULES.tower.maxHeat, u.heat + 1); }
+    if (u.type === 'tower' && t.type === 'hero') {
+      const R = RULES.tower, resist = Math.max(R.heroResistFloor, 1 - R.heroResistPerLevel * (t.lvl - 1));
+      const share = R.heroShot * resist * (1 + R.heatPerShot * u.heat); u.heat = Math.min(R.maxHeat, u.heat + 1);
+      return this.damage(u, t, share * t.mhp, 'true', true);
+    }
     // A tower shot takes a fixed share of a minion's max health, however much health upgrades have added.
     if (u.type === 'tower' && t.type === 'minion' && kind && kind.towerShot) return this.damage(u, t, kind.towerShot * t.mhp, 'true', true);
     if (u.type === 'hero') {
@@ -541,7 +554,7 @@ export class Game {
   // Practice dummy: stands by its tower and hits whatever comes into range.
   stepBot(h) {
     if (this.stepWindup(h)) return;
-    const post = MAP.tower[h.team], dir = h.team === 'blue' ? 1 : -1;
+    const post = this.frontTower(h.team), dir = h.team === 'blue' ? 1 : -1;
     const t = this.nearestEnemy(h, h.range + 150);
     if (t) this.engage(h, t); else this.moveToward(h, post.x + dir * 350, post.y + 120);
     if (h.points) for (const s of [3, 0, 1, 2]) this.levelUp(h, s);
@@ -737,7 +750,7 @@ export class Game {
     if (me) snap.me = { id: me.id, gold: Math.floor(me.gold), xp: r(me.xp), xpn: xpToNext(me.lvl), pts: me.points, ranks: me.ranks,
       cds: me.cds.map(c => Math.max(0, +(c - T).toFixed(1))), sd: Math.max(0, r(me.spellCds.d - T)), sf: Math.max(0, r(me.spellCds.f - T)),
       items: me.items, ad: r(me.ad), ap: r(me.ap), ar: r(me.armor), mr: r(me.mr), ms: r(this.speed(me)), as: +this.atkSpeed(me).toFixed(2),
-      range: me.range, miss: me.missed, wave: this.waveNo, pv: me.def.passive && me.def.passive.wait ? Math.max(0, +me.def.passive.wait(this, me).toFixed(1)) : 0,
+      range: me.range, sell: !me.dead && this.dist(me, MAP.spawn[me.team]) <= MAP.fountainR, miss: me.missed, wave: this.waveNo, pv: me.def.passive && me.def.passive.wait ? Math.max(0, +me.def.passive.wait(this, me).toFixed(1)) : 0,
       bt: me.state && me.state.name === 'barrage' ? Math.max(0, +(me.state.until - T).toFixed(1)) : 0, shop: me.dead || this.dist(me, MAP.spawn[me.team]) <= MAP.fountainR };
     return snap;
   }

@@ -13,7 +13,7 @@ export function think(g, h) {
   if (T < (mem.next || 0)) return;
   mem.next = T + cfg.react;
   const cmd = c => g.command(h.pid, c);
-  const dir = h.team === 'blue' ? 1 : -1, home = MAP.spawn[h.team], tower = MAP.tower[h.team], foeTower = MAP.tower[other(h.team)];
+  const dir = h.team === 'blue' ? 1 : -1, home = MAP.spawn[h.team], tower = g.frontTower(h.team), foeTower = g.frontTower(other(h.team));
   const atHome = g.dist(h, home) <= MAP.fountainR;
 
   // Skill points and shopping (the shop only works at base or while dead, as for a player).

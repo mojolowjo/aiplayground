@@ -17,7 +17,7 @@ export const HEROES = {
     abilities: [
       { key: 'Q', name: 'Cinder Lance', kind: 'line', range: 1050, width: 70, castTime: 0.25,
         cd: [7, 6.5, 6, 5.5, 5], cost: [55, 60, 65, 70, 75],
-        desc: 'Skillshot that hits the first enemy for 80/125/170/215/260 + 70% AP.',
+        desc: 'Skillshot that hits the first enemy for 80/125/170/215/260 + 70% AP magic damage.',
         cast(g, h, r, aim) {
           const dmg = R([80, 125, 170, 215, 260], r) + 0.7 * h.ap;
           g.line(h, aim, { speed: 1700, range: 1050, width: 70, color: '#ff9a4a',

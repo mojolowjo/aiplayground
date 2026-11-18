@@ -4,7 +4,13 @@ import { Game, TICK, MAP, WAVES, MINION, RULES } from '../game/sim.js';
 import { HEROES } from '../game/data.js';
 
 const run = (g, secs) => { for (let i = 0; i < secs * TICK; i++) g.step(); };
-const mk = (a, b) => new Game([{ id: 1, team: 'blue', hero: a, name: 'A' }, { id: 2, team: 'red', hero: b, name: 'B' }]);
+// Most checks stage their scene on open ground on blue's side of the lane, which is where the blue inner
+// tower stands. Those games are built without the inner towers; pass `true` to keep them.
+const mk = (a, b, innerTowers = false) => {
+  const g = new Game([{ id: 1, team: 'blue', hero: a, name: 'A' }, { id: 2, team: 'red', hero: b, name: 'B' }]);
+  if (!innerTowers) for (const u of [...g.units.values()]) if (u.type === 'tower' && u.inner) g.units.delete(u.id);
+  return g;
+};
 
 // 1. movement + minions meet + last hits give gold
 {
@@ -38,8 +44,8 @@ for (const key of Object.keys(HEROES)) {
 {
   const g = mk('sable', 'oriel'), h = g.heroes.get(1), e = g.heroes.get(2);
   h.x = 3000; e.x = 3100; h.y = e.y = 800;
-  for (let k = 0; k < 2; k++) { e.hp = 1; g.command(1, { c: 'atk', id: e.id }); run(g, 3); e.dead = false; e.x = h.x + 100; e.y = h.y; }
-  assert.equal(h.kills, 2); assert(g.over && g.over.winner === 'blue', 'game over on kills');
+  for (let k = 0; k < RULES.kills; k++) { e.hp = 1; g.command(1, { c: 'atk', id: e.id }); run(g, 3); e.dead = false; e.x = h.x + 100; e.y = h.y; }
+  assert.equal(h.kills, 8); assert(g.over && g.over.winner === 'blue', 'game over at 8 kills');
   const g2 = mk('wren', 'oriel'), a = g2.heroes.get(1), b = g2.heroes.get(2);
   b.x = MAP.brush[0].x + 100; b.y = MAP.brush[0].y + 50; a.x = 3000; a.y = 800;
   assert(!g2.snapshot(1).units.some(u => u.id === b.id), 'enemy in brush hidden');
@@ -265,8 +271,13 @@ const duel = (a, b = 'oriel') => {
     g.attackHit(tw, cannon); assert(Math.abs(cannon.mhp - cannon.hp - RULES.tower.ad) < 1e-9, 'cannon: the tower\'s normal damage');
     for (const m of [melee, caster, cannon]) g.units.delete(m.id);
   }
-  const hp = h.hp, armor = h.armor; g.time = 0; tw.heat = 0; g.attackHit(tw, h);
-  assert(Math.abs(hp - h.hp - RULES.tower.ad * 100 / (100 + armor)) < 0.01, 'tower damage to heroes is unchanged');
+  // On heroes: a share of max health that shrinks with level and grows with each shot in a row.
+  const T = RULES.tower, shot = lvl => { h.lvl = lvl; g.refresh(h); h.hp = h.mhp; h.armor = 500; tw.heat = 0; g.attackHit(tw, h); return (h.mhp - h.hp) / h.mhp; };
+  assert(Math.abs(shot(1) - T.heroShot) < 1e-9, 'level 1: one tower shot = 18% of max health, whatever the armor');
+  assert(Math.abs(shot(6) - T.heroShot * (1 - 5 * T.heroResistPerLevel)) < 1e-9, 'level 6 takes 15% less of it');
+  assert(Math.abs(shot(18) - T.heroShot * (1 - 17 * T.heroResistPerLevel)) < 1e-9 && shot(18) < shot(6) && shot(6) < shot(1), 'and level 18 less again');
+  h.lvl = 1; g.refresh(h); h.hp = h.mhp; tw.heat = 0; g.attackHit(tw, h); const first = h.mhp - h.hp; g.attackHit(tw, h);
+  assert(Math.abs((h.mhp - h.hp - first) / first - (1 + T.heatPerShot)) < 1e-9, 'a second shot in a row hits 40% harder');
   assert.equal(MINION.cannon.range, 300);
   console.log('tower ok');
 }
@@ -328,7 +339,9 @@ const duel = (a, b = 'oriel') => {
   assert.deepEqual(h.items, ['gem']); assert.equal(h.gold, gold + 1300 * RULES.sellBack); assert.equal(h.ad, ad - 40, 'selling returns 80% and removes the stats');
   g.command(1, { c: 'sell', i: 5 }); assert.equal(h.items.length, 1, 'an empty slot sells nothing');
   h.x = 5000; g.command(1, { c: 'sell', i: 0 }); assert.equal(h.items.length, 1, 'no selling away from base');
-  h.x = MAP.spawn.blue.x; h.hp = h.mhp; g.command(1, { c: 'sell', i: 0 }); assert(h.items.length === 0 && h.mhp === mhp - 150 && h.hp <= h.mhp, 'health is capped after selling a health item');
+  h.x = MAP.spawn.blue.x; h.dead = true; g.command(1, { c: 'sell', i: 0 }); assert.equal(h.items.length, 1, 'no selling while dead, though buying still works');
+  g.command(1, { c: 'buy', item: 'tome' }); assert.equal(h.items.length, 2); g.command(1, { c: 'sell', i: 1 }); h.dead = false; g.command(1, { c: 'sell', i: 1 }); assert.equal(h.items.length, 1);
+  h.hp = h.mhp; g.command(1, { c: 'sell', i: 0 }); assert(h.items.length === 0 && h.mhp === mhp - 150 && h.hp <= h.mhp, 'health is capped after selling a health item');
 
   const g2 = new Game([{ id: 1, team: 'blue', hero: 'sable', name: 'A' }, { id: 2, team: 'blue', hero: 'wren', name: 'B' },
     { id: 3, team: 'red', hero: 'oriel', name: 'C' }, { id: 4, team: 'red', hero: 'gorrum', name: 'D' }]);
@@ -338,9 +351,26 @@ const duel = (a, b = 'oriel') => {
   a.cds = [20, 20, 20, 20].map(v => g2.time + v); g2.damage(a, c, 10, 'true'); g2.damage(b, c, 99999, 'true');
   assert(b.kills === 1 && a.kills === 0 && a.assists === 1 && a.gold >= RULES.startGold + RULES.assistGold && b.gold >= RULES.startGold + RULES.killGold, 'killer and assister are both paid');
   assert(Math.abs(a.cds[0] - g2.time - 5) < 0.01, 'an assist triggers Encore');
-  g2.step(); assert(!g2.over, 'one hero reaching the 1v1 target does not end a 2v2');
-  a.kills = 2; g2.step(); assert(!g2.over); a.kills = 3; g2.step(); assert(g2.over && g2.over.winner === 'blue', 'the team total does');
-  const snap = g2.snapshot(3); assert(snap.sc.b.k === 4 && snap.sc.b.n === 'A & B' && snap.units.filter(u => u.k === 'h').length === 4);
+  a.kills = RULES.kills; g2.step(); assert(!g2.over, 'one hero reaching the 1v1 target does not end a 2v2');
+  a.kills = RULES.kills * 2 - 1; g2.step(); assert(g2.over && g2.over.winner === 'blue', 'the team total does');
+  const snap = g2.snapshot(3); assert(snap.sc.b.k === RULES.kills * 2 && snap.sc.b.n === 'A & B' && snap.units.filter(u => u.k === 'h').length === 4);
   console.log('shop and 2v2 ok');
+}
+// 13. Two towers a side: the inner one is protected, and both must fall to win. Oriel's Q scales with AP.
+{
+  const g = mk('wren', 'oriel', true), h = g.heroes.get(1); g.nextWave = Infinity;
+  const [outer, inner] = g.towers('red'); assert(outer && inner && !outer.inner && inner.inner && g.towers('blue').length === 2, 'two towers each');
+  assert(Math.abs(inner.x - MAP.innerTower.red.x) < 1 && inner.x > outer.x, 'the inner tower is behind the outer one');
+  const m = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 }); m.x = inner.x - 200;      // an attacker's minion nearby, so the tower is not "guarded"
+  g.damage(h, inner, 500, 'true', true); assert.equal(inner.hp, inner.mhp, 'the inner tower cannot be hurt while the outer one stands');
+  assert.equal(g.frontTower('red'), outer);
+  m.x = outer.x - 200; g.damage(h, outer, 99999, 'true', true); assert(!g.over && g.towers('red').length === 1 && g.frontTower('red') === inner, 'one tower down is not a win');
+  m.x = inner.x - 200; g.damage(h, inner, 500, 'true', true); assert(inner.hp < inner.mhp, 'now the inner tower takes damage');
+  g.damage(h, inner, 99999, 'true', true); assert(g.over && g.over.winner === 'blue' && g.over.reason === 'both towers destroyed');
+  const g2 = mk('oriel', 'gorrum'), q = g2.heroes.get(1), e = g2.heroes.get(2); g2.nextWave = Infinity; g2.command(1, { c: 'lvl', s: 0 });
+  const hit = () => { q.x = 3000; e.x = 3600; q.y = e.y = 800; e.hp = e.mhp = 5000; q.cds[0] = 0; q.mp = q.mmp; q.order = { type: 'hold' }; g2.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); run(g2, 1); return 5000 - e.hp; };
+  const base = hit(); q.items = ['staff', 'staff']; g2.refresh(q); const withAp = hit(), mult = 100 / (100 + e.mr);
+  assert.equal(q.ap, 120); assert(Math.abs(base - 80 * mult) < 1 && Math.abs(withAp - (80 + 0.7 * 120) * mult) < 1, `Cinder Lance: ${base | 0} with no AP, ${withAp | 0} with 120 AP, reduced by magic resist`);
+  console.log('towers ok');
 }
 console.log('all checks passed');
