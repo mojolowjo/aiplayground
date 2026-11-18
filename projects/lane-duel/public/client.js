@@ -221,15 +221,17 @@ document.addEventListener('fullscreenchange', () => {
   if (!on && navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock();
 });
 $('fs').onclick = () => (document.fullscreenElement ? document.exitFullscreen() : goFullscreen());
-cv.addEventListener('mousemove', e => {
+// Mouse input is taken from the whole window, not just the canvas, so the cursor is tracked and right-clicks
+// still move you when it is over the HUD, the shop or the score bar. Left-clicks on those panels still use them.
+addEventListener('mousemove', e => {
   mouse.x = e.clientX; mouse.y = e.clientY;
   if (mouse.rdown && inGame && performance.now() - mouse.lastMove > 120) { [mouse.wx, mouse.wy] = toWorld(mouse.x, mouse.y); rightClick(e.shiftKey); }
 });
-cv.addEventListener('mousedown', e => {
-  if (!inGame || !hello) return;
+addEventListener('mousedown', e => {
+  if (!inGame || !hello || e.target.closest('#over')) return;
   [mouse.wx, mouse.wy] = toWorld(e.clientX, e.clientY);
   if (e.button === 2) { mouse.rdown = true; pendingA = false; rightClick(e.shiftKey); }
-  else if (e.button === 0 && pendingA) {
+  else if (e.button === 0 && pendingA && e.target === cv) {
     pendingA = false; const u = unitAt(mouse.wx, mouse.wy);
     if (u) cmd({ c: 'atk', id: u.id }); else cmd({ c: 'amove', x: mouse.wx, y: mouse.wy });
     fx.push({ k: 'click', x: mouse.wx, y: mouse.wy, c: '#ff5a5a', t0: performance.now() / 1000, dur: 0.35 });
