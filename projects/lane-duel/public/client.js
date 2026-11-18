@@ -5,7 +5,7 @@ const TEAM = { b: '#4aa3ff', r: '#ff5a5a' };
 let ws, hello = null, myId = 0, lobbyState = null, inGame = false;
 let snaps = [], offset = null, me = null, meUnit = null, myDef = null;
 let cam = { x: 0, locked: true }, mouse = { x: 0, y: 0, wx: 0, wy: 0, rdown: false, lastMove: 0 };
-let pendingA = false, shopOpen = false, fx = [], ping = 0, W = 0, H = 0, scale = 1;
+let pendingA = false, shopOpen = false, showAggro = false, fx = [], ping = 0, W = 0, H = 0, scale = 1;
 
 let zoom = 1;
 function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; scale = H / 1250 * zoom; }
@@ -114,7 +114,7 @@ function updateHud() {
       pips.textContent = '●'.repeat(rank);
     }
   }
-  $('stats').innerHTML = `Lv ${meUnit.lvl} · <b style="color:#ffd24a">${me.gold}g</b><br>AD ${me.ad} · AP ${me.ap} · AS ${me.as}<br>Armor ${me.ar} · MR ${me.mr} · MS ${me.ms}`;
+  $('stats').innerHTML = `Lv ${meUnit.lvl} · <b style="color:#ffd24a">${me.gold}g</b> · CS ${meUnit.cs} · missed ${me.miss}<br>AD ${me.ad} · AP ${me.ap} · AS ${me.as}<br>Armor ${me.ar} · MR ${me.mr} · MS ${me.ms}`;
   if (bagKey !== me.items.join()) {
     bagKey = me.items.join();
     $('bag').innerHTML = Array.from({ length: 6 }, (_, i) => { const it = hello.items.find(x => x.id === me.items[i]);
@@ -209,6 +209,7 @@ addEventListener('keydown', e => {
   else if (k === 'KeyB') cmd({ c: 'recall' });
   else if (k === 'KeyP') shopOpen = !shopOpen;
   else if (k === 'KeyY') cam.locked = !cam.locked;
+  else if (k === 'KeyT') showAggro = !showAggro;
   else if (k === 'Space') { e.preventDefault(); if (meUnit) cam.x = meUnit.x; }
   else if (k === 'Escape') { pendingA = false; shopOpen = false; }
 });
@@ -266,7 +267,7 @@ function frame() {
   drawGroundParts(dt);
   // units, back to front
   const live = st.units.filter(u => !u.d).sort((a, b) => (a.k === 't' ? -1e5 : a.y) - (b.k === 't' ? -1e5 : b.y));
-  const anims = new Map();
+  const anims = new Map(), byId = new Map(st.units.map(u => [u.id, u]));
   for (const u of live) {
     const a = animUpdate(u, now, dt), col = TEAM[u.t]; anims.set(u.id, a);
     if (u.k === 't') {
@@ -279,14 +280,19 @@ function frame() {
     } else if (u.k === 'm') drawMinion(u, a, now, col);
     else drawHero(u, a, now, col, u.id === (me && me.id));
   }
-  const byId = new Map(st.units.map(u => [u.id, u]));
+  if (showAggro) for (const u of live) {   // debug: a line from each minion to whatever it is targeting
+    const tg = u.k === 'm' && byId.get(u.tg); if (!tg || tg.d) continue;
+    ctx.strokeStyle = TEAM[u.t]; ctx.globalAlpha = 0.75; ctx.lineWidth = tg.k === 'h' ? 3 : 1.5;
+    ctx.beginPath(); ctx.moveTo(sx(u.x), sy(u.y)); ctx.lineTo(sx(tg.x), sy(tg.y)); ctx.stroke();
+    ctx.fillStyle = TEAM[u.t]; ctx.beginPath(); ctx.arc(sx(tg.x), sy(tg.y), 4, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+  }
   for (const s of st.shots) drawShot(s, now, TEAM[s.t], byId);
   drawTrees(M, now, cam.x, halfW);
   drawParts(dt, now);
   for (const u of live) {
     const a = anims.get(u.id), mineTeam = u.t === my;
     if (u.k === 't') smallBar(u, a, 120, 10, 128, TEAM[u.t]);
-    else if (u.k === 'm') smallBar(u, a, 46, 5, 44, mineTeam ? '#4aa3ff' : '#ff5a5a');
+    else if (u.k === 'm') smallBar(u, a, u.m === 2 ? 62 : 46, u.m === 2 ? 6 : 5, u.m === 2 ? 56 : 44, mineTeam ? '#4aa3ff' : '#ff5a5a');
     else heroBar(u, a, mineTeam ? (u.id === me.id ? '#3fd06a' : '#4aa3ff') : '#ff5a5a', u.id === (me && me.id));
   }
   if (barrage) {   // barrage: range ring, and where the next shot would land

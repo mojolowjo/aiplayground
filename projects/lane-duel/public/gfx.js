@@ -236,6 +236,16 @@ function star(x, y, r, col) {
 function drawMinion(u, a, now, col) {
   const { s, p } = atkPose(a, now), step = Math.sin(a.walk) * a.moving, dark = shade(col, -0.45), flash = now - a.flash < 0.08;
   begin(u); ell(6, 9, 30, 20, 'rgba(0,0,0,.3)'); ctx.rotate(a.f ?? 0);
+  if (u.m === 2) {   // cannon: a wheeled gun carriage
+    const kick = -Math.max(0, s) * 10, gl = p >= 0 ? p : 0.15;
+    for (const k of [-1, 1]) { ell(-6, k * 30, 17, 9, '#3a2c1c', OUT, 3); ell(-6, k * 30, 6, 3.5, '#8a6a3c'); }
+    poly([-30, -22, 14, -22, 20, 0, 14, 22, -30, 22], dark, OUT, 3); ell(-8, 0, 15, 15, col, OUT, 3);
+    ctx.save(); ctx.translate(kick, 0);
+    poly([-4, -11, 46, -9, 46, 9, -4, 11], '#5d6570', OUT, 3); poly([-4, -11, 46, -9, 46, -4, -4, -5], '#8a939e'); poly([42, -13, 54, -13, 54, 13, 42, 13], col, OUT, 3);
+    glow(56, 0, 14 + gl * 30, col, 0.3 + gl * 0.6); ctx.restore();
+    if (flash) { ctx.globalCompositeOperation = 'lighter'; ell(0, 0, 30, 28, 'rgba(255,255,255,.28)'); ctx.globalCompositeOperation = 'source-over'; }
+    ctx.restore(); return;
+  }
   ell(step * 10, -10, 8, 6, '#22262c', OUT, 2); ell(-step * 10, 10, 8, 6, '#22262c', OUT, 2);
   if (u.m) {
     ell(0, 0, 16, 23, dark, OUT, 3);

@@ -12,7 +12,21 @@ export const MAP = {
     { x: 2500, y: 1190, w: 1400, h: 190 },
   ],
 };
-export const RULES = { kills: 2, cs: 100, firstWave: 15, waveEvery: 25, startGold: 500, goldPerSec: 2 };
+export const RULES = { kills: 2, cs: 100, firstWave: 30, startGold: 500, goldPerSec: 2 };
+// Minions. Times are in seconds of game time.
+export const WAVES = {
+  every: t => (t < 840 ? 30 : t < 1800 ? 25 : 20),                    // gap to the next wave
+  cannon: (n, t) => (t < 840 ? n % 3 === 0 : t < 1500 ? n % 2 === 0 : true),   // is wave n a cannon wave?
+  stagger: 0.8,                                                       // seconds between minions in a wave
+  upgradeEvery: 90, hpPerUpgrade: 0.045, adPerUpgrade: 0.03,          // newly spawned minions grow over time
+  vsHero: 0.6, vsTower: 0.5, vsMinionHp: 0.03,                        // damage dealt: x0.6 to heroes, x0.5 to towers, +3% of a minion's current health
+  sight: 500, keep: 750, helpRange: 1000, look: 0.5, xpRange: 1500,
+};
+export const MINION = {
+  melee:  { hp: 480, ad: 12, range: 110, as: 1.25, windupT: 0.3, radius: 32, gold: 20, xp: 60, projSpeed: 0 },
+  caster: { hp: 290, ad: 23, range: 550, as: 0.67, windupT: 0.4, radius: 32, gold: 14, xp: 30, projSpeed: 650 },
+  cannon: { hp: 900, ad: 41, range: 600, as: 1.0, windupT: 0.35, radius: 42, gold: 60, xp: 93, projSpeed: 1200 },
+};
 
 const other = t => (t === 'blue' ? 'red' : 'blue');
 const xpToNext = lvl => 180 + 100 * lvl;
@@ -21,7 +35,7 @@ const ITEM = Object.fromEntries(ITEMS.map(i => [i.id, i]));
 export class Game {
   constructor(players) {
     this.time = 0; this.nextId = 1; this.units = new Map(); this.shots = []; this.zones = []; this.pickups = [];
-    this.events = []; this.over = null; this.nextWave = RULES.firstWave; this.heroes = new Map();
+    this.events = []; this.over = null; this.nextWave = RULES.firstWave; this.waveNo = 0; this.spawnQ = []; this.wavesMet = false; this.heroes = new Map();
     for (const team of ['blue', 'red']) {
       const p = MAP.tower[team];
       this.add({ type: 'tower', team, x: p.x, y: p.y, radius: 90, hp: 2500, mhp: 2500, ad: 150, armor: 40, mr: 40,
@@ -32,7 +46,7 @@ export class Game {
 
   // ---------- setup ----------
   add(u) {
-    u.id = this.nextId++; u.buffs = []; u.nextAttack = 0; u.windup = null; u.dead = false;
+    u.id = this.nextId++; u.buffs = []; u.atkId = 0; u.atkAt = -9; u.nextAttack = 0; u.windup = null; u.dead = false;
     u.stunUntil = 0; u.rootUntil = 0; u.silenceUntil = 0; u.airUntil = 0; u.shieldAmt = 0; u.shieldUntil = 0; u.face = u.team === 'blue' ? 0 : Math.PI;
     this.units.set(u.id, u); return u;
   }
@@ -40,7 +54,7 @@ export class Game {
     const d = HEROES[p.hero], s = MAP.spawn[p.team];
     const h = this.add({ type: 'hero', team: p.team, pid: p.id, name: p.name, hero: p.hero, def: d, x: s.x, y: s.y,
       radius: 55, melee: d.melee, projSpeed: d.projSpeed, lvl: 1, xp: 0, points: 1, ranks: [0, 0, 0, 0],
-      cds: [0, 0, 0, 0], spellCds: { d: 0, f: 0 }, gold: RULES.startGold, items: [], kills: 0, deaths: 0, cs: 0,
+      cds: [0, 0, 0, 0], spellCds: { d: 0, f: 0 }, gold: RULES.startGold, items: [], kills: 0, deaths: 0, cs: 0, missed: 0,
       order: null, casting: null, dashing: null, recall: null, state: null, respawnAt: 0, revealUntil: 0, bot: !!p.bot,
       potionUntil: 0 });
     this.refresh(h); h.hp = h.mhp; h.mp = h.mmp; this.heroes.set(p.id, h); return h;
@@ -216,7 +230,6 @@ export class Game {
         for (const u of this.units.values()) {
           if (u.team !== t.team || u.dead) continue;
           if (u.type === 'tower' && this.inRange(u, src)) { if (u.forced !== src.id) { u.forced = src.id; u.heat = 0; } }
-          else if (u.type === 'minion' && this.dist(u, src) < 600) { u.targetId = src.id; u.aggroUntil = this.time + 2.5; }
         }
       }
     }
@@ -232,8 +245,8 @@ export class Game {
     if (t.type === 'minion') {
       this.units.delete(t.id);
       if (src && src.type === 'hero') { src.gold += t.gold; src.cs++; this.fx({ e: 'gold', x: t.x, y: t.y, n: t.gold, p: src.pid }); }
-      const near = enemy.filter(h => !h.dead && this.dist(h, t) < 1400);
-      for (const h of near) this.giveXp(h, t.xp / near.length);
+      const near = enemy.filter(h => !h.dead && this.dist(h, t) < WAVES.xpRange);
+      for (const h of near) { this.giveXp(h, t.xp / near.length); if (h !== src) h.missed++; }   // in range but no last hit = a missed minion
     } else if (t.type === 'hero') {
       t.deaths++; t.respawnAt = this.time + 5 + 1.5 * t.lvl; t.order = null; t.casting = null; t.dashing = null; t.recall = null;
       let k = killer;
@@ -322,6 +335,7 @@ export class Game {
     if (st) this.leave(h, 'done');
     // Target validation: an ability with `pick` chooses what it is aimed at; no valid target, no cast.
     if (def.pick) { aim.target = def.pick(this, h, aim); if (!aim.target) { this.fx({ e: 'say', p: h.pid, m: 'No target there' }); return; } }
+    if (aim.target && aim.target.type === 'hero' && aim.target.team !== h.team) this.callForHelp(h, aim.target);   // targeted ability on a champion
     h.mp -= cost; h.cds[s] = this.time + def.cd[Math.min(r, def.cd.length - 1)];
     h.recall = null; h.revealUntil = this.time + 1.5;
     if (h.windup) { h.windup = null; h.nextAttack = this.time; }
@@ -341,7 +355,8 @@ export class Game {
   step() {
     if (this.over) return;
     this.time += DT;
-    if (this.time >= this.nextWave) { this.spawnWave(); this.nextWave += RULES.waveEvery; }
+    if (this.time >= this.nextWave) { this.queueWave(); this.nextWave += WAVES.every(this.time); }
+    while (this.spawnQ.length && this.time >= this.spawnQ[0].at) this.spawnMinion(this.spawnQ.shift());
     for (const u of [...this.units.values()]) {
       if (u.buffs.length) {
         const done = u.buffs.filter(b => b.until <= this.time);
@@ -361,17 +376,20 @@ export class Game {
       else if (h.cs >= RULES.cs) this.over = { winner: h.team, reason: `${RULES.cs} minions` };
     }
   }
-  spawnWave() {
-    for (const team of ['blue', 'red']) {
-      const dir = team === 'blue' ? 1 : -1, sx = MAP.spawn[team].x + dir * 380;
-      for (let i = 0; i < 6; i++) {
-        const melee = i < 3, off = ((i % 3) - 1) * 90;
-        this.add({ type: 'minion', team, melee, x: sx - dir * (melee ? 0 : 180), y: MAP.mid + off, laneY: MAP.mid + off,
-          radius: 32, hp: melee ? 480 : 290, mhp: melee ? 480 : 290, ad: melee ? 12 : 23, armor: 0, mr: 0, ms: 325,
-          range: melee ? 110 : 550, as: melee ? 1.25 : 0.67, windupT: melee ? 0.3 : 0.4, projSpeed: 650,
-          gold: melee ? 21 : 14, xp: melee ? 60 : 30, targetId: 0, aggroUntil: 0 });
-      }
-    }
+  // A wave is queued as a list of spawns, one minion every WAVES.stagger seconds: melee, then the cannon, then casters.
+  queueWave() {
+    const n = ++this.waveNo, T = this.time, cannon = WAVES.cannon(n, T);
+    const kinds = [...Array(cannon && T >= 840 ? 2 : 3).fill('melee'), ...(cannon ? ['cannon'] : []), 'caster', 'caster', 'caster'];
+    const slot = { melee: 0, caster: 0, cannon: 1 };
+    kinds.forEach((kind, i) => { for (const team of ['blue', 'red']) this.spawnQ.push({ at: T + i * WAVES.stagger, team, kind, wave: n, slot: slot[kind] }); slot[kind]++; });
+  }
+  spawnMinion(q) {
+    const k = MINION[q.kind], dir = q.team === 'blue' ? 1 : -1, up = Math.floor(this.time / WAVES.upgradeEvery);
+    const hp = Math.round(k.hp * (1 + WAVES.hpPerUpgrade * up)), y = MAP.mid + (q.slot - 1) * 90;
+    return this.add({ type: 'minion', team: q.team, kind: q.kind, melee: q.kind === 'melee', wave: q.wave, slot: q.slot,
+      x: MAP.spawn[q.team].x + dir * 380, y, laneY: y, radius: k.radius, hp, mhp: hp, ad: k.ad * (1 + WAVES.adPerUpgrade * up),
+      armor: 0, mr: 0, ms: 325, range: k.range, as: k.as, windupT: k.windupT, projSpeed: k.projSpeed, gold: k.gold, xp: k.xp,
+      targetId: 0, mode: 'walk', lookAt: this.time + (this.nextId % 5) * 0.1 });
   }
   moveToward(u, x, y) {
     if (u.rootUntil > this.time) return false;
@@ -392,6 +410,8 @@ export class Game {
     if (this.inRange(u, t)) {
       u.face = Math.atan2(t.y - u.y, t.x - u.x);
       if (this.time >= u.nextAttack) {
+        u.atkId = t.id; u.atkAt = this.time;                       // who this unit is attacking, for minion target priority
+        if (u.type === 'hero' && t.type === 'hero') this.callForHelp(u, t);
         const period = 1 / this.atkSpeed(u);
         const wd = u.windupT ?? u.windupFrac * period;
         u.windup = { id: t.id, at: this.time + wd };
@@ -408,6 +428,7 @@ export class Game {
   attackHit(u, t) {
     if (t.dead) return;
     let dmg = u.ad;
+    if (u.type === 'minion') dmg = t.type === 'hero' ? dmg * WAVES.vsHero : t.type === 'tower' ? dmg * WAVES.vsTower : dmg + WAVES.vsMinionHp * t.hp;
     if (u.type === 'tower' && t.type === 'hero') { dmg *= 1 + 0.4 * u.heat; u.heat = Math.min(3, u.heat + 1); }
     if (u.type === 'hero') {
       // Empowered next attack: h.emp = { until, hit(target) -> bonus damage }, used up by one attack.
@@ -488,16 +509,65 @@ export class Game {
     }
     if (done) { h.dashing = null; if (d.onEnd) d.onEnd(); if (d.follow && !d.follow.dead) h.order = { type: 'atk', id: d.follow.id }; else if (h.order && h.order.type === 'move') h.order = null; }
   }
+  // ---------- minions ----------
+  // What a unit is attacking right now (its most recent attack target, if recent enough), or null.
+  attacking(u) { return this.time - u.atkAt <= 2.5 ? this.units.get(u.atkId) || null : null; }
+  // A champion attacked (or used a targeted ability on) an enemy champion: nearby minions of the victim's
+  // team look for a target at once instead of waiting for their next scheduled look.
+  callForHelp(attacker, victim) {
+    attacker.atkId = victim.id; attacker.atkAt = this.time;
+    for (const m of this.units.values())
+      if (m.type === 'minion' && m.team === victim.team && !m.dead && this.dist(m, victim) <= WAVES.helpRange) m.lookAt = 0;
+  }
+  // Target priority for minion m looking at enemy t at edge distance d. 1 is highest; 0 means "not a target".
+  // `reach` is how far m will look: WAVES.sight for new targets, WAVES.keep for the one it already has.
+  priority(m, t, d, reach) {
+    const a = this.attacking(t), ally = a && a.team === m.team && !a.dead ? a : null;
+    if (t.type === 'hero') {
+      if (m.wave === 1 && !this.wavesMet) return d <= 120 ? 6 : 0;          // first wave leaves champions alone until the waves meet
+      if (ally && ally.type === 'hero' && d <= WAVES.helpRange && this.dist(m, ally) <= WAVES.helpRange) return 1;
+      return d <= reach ? 6 : 0;
+    }
+    if (d > reach) return 0;
+    if (t.type === 'minion') return ally ? (ally.type === 'hero' ? 2 : 3) : 5;
+    return ally && ally.type === 'minion' ? 4 : 7;                          // tower: 4 if it is shooting allied minions, else last
+  }
+  // Keep the current target unless something of strictly higher priority shows up.
+  pickTarget(m, cur) {
+    const edge = t => this.dist(m, t) - t.radius;
+    const sieging = cur && cur.type === 'tower' && this.inRange(m, cur);     // minions hitting a tower ignore calls for help
+    const curP = cur ? this.priority(m, cur, edge(cur), WAVES.keep) : 0;
+    let best = null, bestP = 99, bestD = Infinity;
+    for (const t of this.units.values()) {
+      if (t === cur || !this.targetable(m, t)) continue;
+      const d = edge(t), p = this.priority(m, t, d, WAVES.sight);
+      if (!p || (sieging && p <= 2)) continue;
+      if (p < bestP || (p === bestP && d < bestD)) { best = t; bestP = p; bestD = d; }
+    }
+    if (curP && !(best && bestP < curP)) return cur;
+    // First clash: each first-wave melee minion takes the enemy melee in its own lane slot, so the attacks
+    // are spread across all three and both sides' melee die at about the same time.
+    if (best && best.type === 'minion' && bestP >= 3 && m.wave === 1 && m.melee) {
+      const twin = [...this.units.values()].find(t => t.type === 'minion' && t.team !== m.team && t.wave === 1 && t.melee && t.slot === m.slot && !t.dead && edge(t) <= 1200);
+      if (twin) best = twin;
+    }
+    return best;
+  }
+  // State machine: WALK the lane -> CHASE a target -> ATTACK it once in range.
   stepMinion(m) {
-    if (this.time < m.stunUntil || this.stepWindup(m)) return;
-    let t = this.units.get(m.targetId);
-    const forced = m.aggroUntil > this.time;
-    if (!this.targetable(m, t) || this.dist(m, t) - t.radius > (forced ? 900 : 700)) t = null;
-    if (!t || (!forced && (this.time * TICK | 0) % 15 === m.id % 15)) t = this.nearestEnemy(m, 600) || t;
+    if (this.time < m.stunUntil) return;
+    if (this.stepWindup(m)) return;
+    let t = this.units.get(m.targetId) || null;
+    if (t && !this.targetable(m, t)) t = null;                               // died or went out of sight
+    if (!t || !(this.time < m.lookAt)) { m.lookAt = this.time + WAVES.look; t = this.pickTarget(m, t); }
     m.targetId = t ? t.id : 0;
-    if (t) return this.engage(m, t);
-    const goal = MAP.spawn[other(m.team)];
-    const dir = m.team === 'blue' ? 1 : -1;
+    if (t) {
+      if (m.wave === 1 && t.type === 'minion' && this.inRange(m, t)) this.wavesMet = true;
+      m.mode = this.inRange(m, t) ? 'attack' : 'chase';
+      return this.engage(m, t);
+    }
+    m.mode = 'walk';
+    const goal = MAP.spawn[other(m.team)], dir = m.team === 'blue' ? 1 : -1;
     this.moveToward(m, Math.abs(goal.x - m.x) < 300 ? goal.x : m.x + dir * 200, m.y + Math.sign(m.laneY - m.y) * Math.min(60, Math.abs(m.laneY - m.y)));
   }
   stepTower(t) {
@@ -561,7 +631,7 @@ export class Game {
     for (const u of this.units.values()) {
       if (!this.visible(u, team) && !u.dead) continue;
       const o = { id: u.id, k: u.type[0], t: u.team[0], x: r(u.x), y: r(u.y), hp: Math.ceil(u.hp), mhp: r(u.mhp) };
-      if (u.type === 'minion') { o.m = u.melee ? 1 : 0; o.f = +u.face.toFixed(2); }
+      if (u.type === 'minion') { o.m = u.kind === 'melee' ? 1 : u.kind === 'cannon' ? 2 : 0; o.f = +u.face.toFixed(2); o.tg = u.targetId; }
       if (u.type === 'tower') o.tg = u.targetId;
       if (u.type === 'hero') Object.assign(o, { h: u.hero, n: u.name, lvl: u.lvl, mp: r(u.mp), mmp: r(u.mmp), f: +u.face.toFixed(2),
         d: u.dead ? Math.ceil(u.respawnAt - T) : 0, st: T < u.stunUntil ? 1 : 0, rt: T < u.rootUntil ? 1 : 0,
@@ -591,7 +661,7 @@ export class Game {
     if (me) snap.me = { id: me.id, gold: Math.floor(me.gold), xp: r(me.xp), xpn: xpToNext(me.lvl), pts: me.points, ranks: me.ranks,
       cds: me.cds.map(c => Math.max(0, +(c - T).toFixed(1))), sd: Math.max(0, r(me.spellCds.d - T)), sf: Math.max(0, r(me.spellCds.f - T)),
       items: me.items, ad: r(me.ad), ap: r(me.ap), ar: r(me.armor), mr: r(me.mr), ms: r(this.speed(me)), as: +this.atkSpeed(me).toFixed(2),
-      range: me.range, pv: me.def.passive && me.def.passive.wait ? Math.max(0, +me.def.passive.wait(this, me).toFixed(1)) : 0,
+      range: me.range, miss: me.missed, wave: this.waveNo, pv: me.def.passive && me.def.passive.wait ? Math.max(0, +me.def.passive.wait(this, me).toFixed(1)) : 0,
       bt: me.state && me.state.name === 'barrage' ? Math.max(0, +(me.state.until - T).toFixed(1)) : 0, shop: me.dead || this.dist(me, MAP.spawn[me.team]) <= MAP.fountainR };
     return snap;
   }

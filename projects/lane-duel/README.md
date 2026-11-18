@@ -53,6 +53,7 @@ a separate room.
 | B | Recall to base (8s, cancelled by damage or orders) |
 | P | Shop (buy at base or while dead) |
 | Y / Space | Toggle camera lock / centre on your character |
+| T | Show what each minion is targeting (practice aid) |
 
 ## Layout
 

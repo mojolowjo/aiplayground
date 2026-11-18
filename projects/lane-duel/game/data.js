@@ -157,6 +157,7 @@ HEROES.wren = {
       cast(g, h, r, aim) {
         g.blink(h, aim.x, aim.y);
         const t = g.nearestEnemy(h, this.seek), dmg = R([80, 130, 180, 230, 280], r) + 0.5 * h.ad + 0.75 * h.ap;
+        if (t && t.type === 'hero') g.callForHelp(h, t);               // an auto-targeted bolt counts as a targeted ability
         if (t) g.homing(h, h.x, h.y, t, 2000, '#fff2c0', () => { g.damage(h, t, dmg, 'magic'); landed(g, h, t); }, 'light');
       } },
     // Map-length piercing projectile; damage depends on what it hits.
