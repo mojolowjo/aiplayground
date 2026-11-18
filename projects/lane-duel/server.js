@@ -30,12 +30,14 @@ function lobby(room) {
   const players = room.players.map(p => ({ id: p.id, name: p.name, team: p.team, hero: p.hero }));
   for (const p of room.players) send(p.ws, { t: 'lobby', players, inGame: !!room.game });
 }
-function start(room) {
+const OPPONENTS = ['dummy', ...Object.keys(RULES.bot).filter(k => typeof RULES.bot[k] === 'object')];   // dummy, easy, normal, hard
+function start(room, opp) {
   const ps = room.players.filter(p => p.hero).map(p => ({ id: p.id, team: p.team, hero: p.hero, name: p.name }));
   if (!ps.length || ps.length < room.players.length) return;
   if (ps.length === 1) {
     const keys = Object.keys(HEROES);
-    ps.push({ id: -1, team: ps[0].team === 'blue' ? 'red' : 'blue', hero: keys[Math.random() * keys.length | 0], name: 'Dummy', bot: true });
+    ps.push({ id: -1, team: ps[0].team === 'blue' ? 'red' : 'blue', hero: keys[Math.random() * keys.length | 0],
+      name: opp === 'dummy' ? 'Dummy' : `Bot (${opp})`, bot: true, ai: opp === 'dummy' ? null : opp });
   }
   room.game = new Game(ps);
   clearInterval(room.timer);
@@ -71,7 +73,7 @@ new WebSocketServer({ server, perMessageDeflate: false }).on('connection', ws =>
     }
     if (!me) return;
     if (m.t === 'pick' && !room.game && HEROES[m.hero]) { me.hero = m.hero; lobby(room); }
-    else if (m.t === 'start' && !room.game) start(room);
+    else if (m.t === 'start' && !room.game) start(room, OPPONENTS.includes(m.opp) ? m.opp : 'dummy');
     else if (m.t === 'rematch' && room.game && room.game.over) {
       room.game = null; for (const p of room.players) p.hero = null; lobby(room);
     } else if (m.t === 'cmd' && room.game) room.game.command(me.id, m);

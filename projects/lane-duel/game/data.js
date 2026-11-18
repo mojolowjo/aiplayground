@@ -10,7 +10,7 @@ const lerp = (a, b, t) => a + (b - a) * Math.max(0, Math.min(1, t));
 
 export const HEROES = {
   oriel: {
-    name: 'Oriel', role: 'Mage', color: '#c58bff',
+    name: 'Oriel', botBuild: ['boots', 'tome', 'staff', 'crystal', 'staff', 'staff'], role: 'Mage', color: '#c58bff',
     hp: 560, hpPer: 90, mana: 420, manaPer: 30, ad: 52, adPer: 3, as: 0.63, asPer: 1.5,
     armor: 21, armorPer: 4, mr: 30, mrPer: 1.3, ms: 330, range: 550, melee: false,
     projSpeed: 1600, windup: 0.22, hpRegen: 0.7, manaRegen: 2.2,
@@ -56,7 +56,7 @@ export const HEROES = {
 // Gorrum, the Salvage Hulk: a grab tank. Forced movement, an empowered attack, and one ability
 // with a passive mode and an active mode.
 HEROES.gorrum = {
-  name: 'Gorrum', role: 'Grab tank', color: '#c9973f',
+  name: 'Gorrum', botBuild: ['boots', 'gem', 'plating', 'cloak', 'gem', 'tome'], role: 'Grab tank', color: '#c9973f',
   hp: 650, hpPer: 105, mana: 270, manaPer: 40, ad: 62, adPer: 3.5, as: 0.63, asPer: 1.5,
   armor: 40, armorPer: 4.5, mr: 32, mrPer: 2, ms: 325, range: 150, melee: true,
   windup: 0.25, hpRegen: 1.7, manaRegen: 1.7,
@@ -115,7 +115,7 @@ HEROES.gorrum = {
 // Every ability hit goes through `landed`, which adds a passive stack and pops her Waymark if it is there.
 const landed = (g, h, t, pop = true) => { HEROES.wren.passive.gain(g, h); if (pop) g.popMark(h, t); };
 HEROES.wren = {
-  name: 'Wren Ashby', role: 'Marksman', color: '#f0c05a',
+  name: 'Wren Ashby', botBuild: ['boots', 'blade', 'dagger', 'greatblade', 'greatblade', 'dagger'], role: 'Marksman', color: '#f0c05a',
   hp: 560, hpPer: 92, mana: 380, manaPer: 40, ad: 58, adPer: 2.8, as: 0.65, asPer: 2.5,
   armor: 24, armorPer: 4, mr: 30, mrPer: 1.3, ms: 325, range: 550, melee: false,
   projSpeed: 2000, shot: 'light', windup: 0.2, hpRegen: 0.8, manaRegen: 1.9,
@@ -161,11 +161,11 @@ HEROES.wren = {
         if (t) g.homing(h, h.x, h.y, t, 2000, '#fff2c0', () => { g.damage(h, t, dmg, 'magic'); landed(g, h, t); }, 'light');
       } },
     // Map-length piercing projectile; damage depends on what it hits.
-    { key: 'R', name: 'Meridian', kind: 'line', width: 300, castTime: 1, cd: [110, 95, 80], cost: [100],
+    { key: 'R', name: 'Meridian', kind: 'line', width: 300, reach: 20000, castTime: 1, cd: [110, 95, 80], cost: [100],
       desc: 'After 1s, send a wave of light across the whole map. It passes through everything, dealing 300/450/600 + 100% AD + 90% AP to heroes and half that to minions.',
       cast(g, h, r, aim) {
         const dmg = R([300, 450, 600], r) + h.ad + 0.9 * h.ap;
-        g.line(h, aim, { speed: 2000, range: 9000, width: this.width, color: '#fff2c0', style: 'wave', pierce: true, onHit(t) {
+        g.line(h, aim, { speed: 2000, range: this.reach, width: this.width, color: '#fff2c0', style: 'wave', pierce: true, onHit(t) {
           g.damage(h, t, t.type === 'hero' ? dmg : dmg * 0.5, 'magic'); landed(g, h, t);
         } });
       } },
@@ -182,7 +182,7 @@ const slash = (g, h) => {
 };
 const dropBlade = (g, h, x, y, delay) => g.drop(h, x, y, delay, { kind: 'blade', r: BLADE.r, life: BLADE.life, onTake: () => slash(g, h) });
 HEROES.sable = {
-  name: 'Sable Venn', role: 'Assassin', color: '#b9c8ec',
+  name: 'Sable Venn', botBuild: ['boots', 'blade', 'tome', 'greatblade', 'staff', 'gem'], role: 'Assassin', color: '#b9c8ec',
   hp: 620, hpPer: 98, mana: 300, manaPer: 30, ad: 60, adPer: 3.2, as: 0.68, asPer: 2.8,
   armor: 30, armorPer: 4, mr: 32, mrPer: 1.5, ms: 340, range: 130, melee: true,
   windup: 0.2, hpRegen: 1.3, manaRegen: 1.8,
@@ -243,7 +243,7 @@ HEROES.sable = {
 // Kessa is built from two shared pieces in sim.js: g.strike (telegraph -> delay -> resolve) and the ability
 // state machine (g.enter / g.leave). Each ability below is one of those, or both, with different numbers.
 HEROES.kessa = {
-  name: 'Kessa', role: 'Artillery', color: '#6fb6e8',
+  name: 'Kessa', botBuild: ['boots', 'tome', 'crystal', 'staff', 'staff', 'staff'], role: 'Artillery', color: '#6fb6e8',
   hp: 540, hpPer: 88, mana: 440, manaPer: 32, ad: 52, adPer: 3, as: 0.62, asPer: 1.4,
   armor: 20, armorPer: 4, mr: 30, mrPer: 1.3, ms: 325, range: 525, melee: false,
   projSpeed: 1500, shot: 'orb', windup: 0.24, hpRegen: 0.7, manaRegen: 3,

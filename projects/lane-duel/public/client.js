@@ -53,12 +53,14 @@ function renderLobby() {
   document.querySelectorAll('.hero').forEach(d => d.classList.toggle('sel', mine && d.dataset.k === mine.hero));
   const ready = ps.every(p => p.hero);
   $('start').disabled = !ready;
-  $('start').textContent = ps.length === 1 ? 'Practice vs dummy' : 'Start';
+  $('start').textContent = ps.length === 1 ? 'Practice' : 'Start';
+  $('oppRow').style.display = ps.length === 1 ? 'inline' : 'none';
   $('hint').textContent = ps.length === 1 ? 'Waiting for a second player — send them this page\'s link.' : ready ? '' : 'Both players must pick.';
   if (inGame && mine) { myDef = hello.heroes[mine.hero]; myHero = mine.hero; buildSlots(); buildShop(); cam.locked = true; cam.x = hello.map.spawn[mine.team].x; }
 }
 const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-$('start').onclick = () => { send({ t: 'start' }); goFullscreen(); };
+$('start').onclick = () => { localStorage.ldOpp = $('opp').value; send({ t: 'start', opp: $('opp').value }); goFullscreen(); };
+if (localStorage.ldOpp) $('opp').value = localStorage.ldOpp;
 $('rematch').onclick = () => send({ t: 'rematch' });
 $('name').onchange = () => { localStorage.ldName = $('name').value; };
 

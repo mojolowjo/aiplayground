@@ -1,31 +1,56 @@
 // Authoritative game simulation. No networking in here.
 import { HEROES, SPELLS, ITEMS } from './data.js';
+import { think } from './bot.js';
 
 export const TICK = 30, DT = 1 / TICK;
+// Lane geometry. Minions spawn `minionOffset` in front of their base, so the first melee minions of each
+// side each walk (red spawn - blue spawn - 2 * minionOffset) / 2 = 8200 units and meet about 25s after
+// spawning at move speed 325. Each tower is 1300 from the middle of the lane (x = 9000).
 export const MAP = {
-  w: 6400, h: 1600, top: 220, bot: 1380, mid: 800,
-  spawn: { blue: { x: 260, y: 800 }, red: { x: 6140, y: 800 } },
-  tower: { blue: { x: 1900, y: 800 }, red: { x: 4500, y: 800 } },
-  fountainR: 520,
+  w: 18000, h: 1600, top: 220, bot: 1380, mid: 800, edge: 60,
+  spawn: { blue: { x: 420, y: 800 }, red: { x: 17580, y: 800 } }, minionOffset: 380,
+  tower: { blue: { x: 7700, y: 800 }, red: { x: 10300, y: 800 } },
+  fountainR: 520, fountainBurn: 400,
   brush: [
-    { x: 2500, y: 220, w: 1400, h: 190 },
-    { x: 2500, y: 1190, w: 1400, h: 190 },
+    { x: 8300, y: 220, w: 1400, h: 190 },
+    { x: 8300, y: 1190, w: 1400, h: 190 },
   ],
 };
-export const RULES = { kills: 2, cs: 100, firstWave: 30, startGold: 500, goldPerSec: 2 };
+export const RULES = {
+  kills: 2, cs: 100, firstWave: 30, startGold: 500, goldPerSec: 2,
+  // Tower. Its damage to minions is a share of the minion's max health (MINION.*.towerShot); `ad` is what
+  // heroes and cannon minions take, rising by heatPerShot for each shot in a row on a hero.
+  tower: { hp: 2500, ad: 150, armor: 40, mr: 40, range: 775, as: 0.83, windupT: 0.15, projSpeed: 1300, radius: 90,
+    heatPerShot: 0.4, maxHeat: 3, guardRange: 900, guardedMult: 0.33 },
+  // Collision between heroes and minions: circles of these radii push apart. heroShare is how much of the push
+  // the hero takes (1 = minions hold their ground); slide is how strongly a blocked hero is steered around.
+  collision: { hero: 34, minion: 26, heroShare: 1, slide: 1, detourFor: 1 },
+  // Practice bot. react = seconds between decisions; hitErr = how far off its judgement of "one attack will
+  // kill it" can be; skip = share of minions it does not try for at all; trade = chance per second of
+  // attacking a player in range; qEvery = seconds between Q casts; aimErr = aim error in radians.
+  bot: {
+    easy:   { react: 0.35, hitErr: 0.30, skip: 0.45, trade: 0.12, qEvery: 10, aimErr: 0.30 },
+    normal: { react: 0.20, hitErr: 0.12, skip: 0.20, trade: 0.35, qEvery: 6.5, aimErr: 0.14 },
+    hard:   { react: 0.10, hitErr: 0.03, skip: 0, trade: 0.70, qEvery: 4.5, aimErr: 0.05 },
+    retreatHp: 0.35, returnHp: 0.9, safeDist: 1300, safeMinions: 650, retreatBehind: 250,
+    chase: 600, prepHp: 0.5, standRanged: 350, standMelee: 200, standOff: 140, tradeFor: 1.2, tradeReach: 60, towerMargin: 120,
+  },
+};
 // Minions. Times are in seconds of game time.
 export const WAVES = {
   every: t => (t < 840 ? 30 : t < 1800 ? 25 : 20),                    // gap to the next wave
   cannon: (n, t) => (t < 840 ? n % 3 === 0 : t < 1500 ? n % 2 === 0 : true),   // is wave n a cannon wave?
   stagger: 0.8,                                                       // seconds between minions in a wave
   upgradeEvery: 90, hpPerUpgrade: 0.045, adPerUpgrade: 0.03,          // newly spawned minions grow over time
-  vsHero: 0.6, vsTower: 0.5, vsMinionHp: 0.03,                        // damage dealt: x0.6 to heroes, x0.5 to towers, +3% of a minion's current health
+  vsHero: 0.6, vsTower: 0.6,                                          // damage dealt: x0.6 to heroes and to towers (bonus vs minions is per type, below)
   sight: 500, keep: 750, helpRange: 1000, look: 0.5, xpRange: 1500,
 };
+// vsMinionHp: bonus damage to other minions, as a share of the target's CURRENT health.
+// towerShot: share of this minion's MAX health one tower shot removes (0 = the tower's normal damage).
 export const MINION = {
-  melee:  { hp: 480, ad: 12, range: 110, as: 1.25, windupT: 0.3, radius: 32, gold: 20, xp: 60, projSpeed: 0 },
-  caster: { hp: 290, ad: 23, range: 550, as: 0.67, windupT: 0.4, radius: 32, gold: 14, xp: 30, projSpeed: 650 },
-  cannon: { hp: 900, ad: 41, range: 600, as: 1.0, windupT: 0.35, radius: 42, gold: 60, xp: 93, projSpeed: 1200 },
+  melee:  { hp: 480, ad: 12, range: 110, as: 1.25, windupT: 0.3, radius: 32, gold: 20, xp: 60, projSpeed: 0, vsMinionHp: 0.02, towerShot: 0.45 },
+  caster: { hp: 290, ad: 23, range: 550, as: 0.67, windupT: 0.4, radius: 32, gold: 14, xp: 30, projSpeed: 650, vsMinionHp: 0.035, towerShot: 0.7 },
+  cannon: { hp: 900, ad: 41, range: 300, as: 1.0, windupT: 0.35, radius: 42, gold: 60, xp: 93, projSpeed: 1200, vsMinionHp: 0.05, towerShot: 0 },
 };
 
 const other = t => (t === 'blue' ? 'red' : 'blue');
@@ -38,8 +63,9 @@ export class Game {
     this.events = []; this.over = null; this.nextWave = RULES.firstWave; this.waveNo = 0; this.spawnQ = []; this.wavesMet = false; this.heroes = new Map();
     for (const team of ['blue', 'red']) {
       const p = MAP.tower[team];
-      this.add({ type: 'tower', team, x: p.x, y: p.y, radius: 90, hp: 2500, mhp: 2500, ad: 150, armor: 40, mr: 40,
-        range: 775, as: 0.83, windupT: 0.15, projSpeed: 1300, melee: false, heat: 0 });
+      const t = RULES.tower;
+      this.add({ type: 'tower', team, x: p.x, y: p.y, radius: t.radius, hp: t.hp, mhp: t.hp, ad: t.ad, armor: t.armor, mr: t.mr,
+        range: t.range, as: t.as, windupT: t.windupT, projSpeed: t.projSpeed, melee: false, heat: 0 });
     }
     for (const p of players) this.addHero(p);
   }
@@ -55,7 +81,7 @@ export class Game {
     const h = this.add({ type: 'hero', team: p.team, pid: p.id, name: p.name, hero: p.hero, def: d, x: s.x, y: s.y,
       radius: 55, melee: d.melee, projSpeed: d.projSpeed, lvl: 1, xp: 0, points: 1, ranks: [0, 0, 0, 0],
       cds: [0, 0, 0, 0], spellCds: { d: 0, f: 0 }, gold: RULES.startGold, items: [], kills: 0, deaths: 0, cs: 0, missed: 0,
-      order: null, casting: null, dashing: null, recall: null, state: null, respawnAt: 0, revealUntil: 0, bot: !!p.bot,
+      order: null, casting: null, dashing: null, recall: null, state: null, respawnAt: 0, revealUntil: 0, bot: !!p.bot, ai: p.ai || null, aiMem: {},
       potionUntil: 0 });
     this.refresh(h); h.hp = h.mhp; h.mp = h.mmp; this.heroes.set(p.id, h); return h;
   }
@@ -123,7 +149,7 @@ export class Game {
     return out;
   }
   clampPos(u) {
-    u.x = Math.max(60, Math.min(MAP.w - 60, u.x)); u.y = Math.max(MAP.top + 30, Math.min(MAP.bot - 30, u.y));
+    u.x = Math.max(MAP.edge, Math.min(MAP.w - MAP.edge, u.x)); u.y = Math.max(MAP.top + 30, Math.min(MAP.bot - 30, u.y));
   }
   fx(e) { this.events.push(e); }
 
@@ -215,8 +241,8 @@ export class Game {
     if (t.dead || this.over) return;
     if (t.type === 'tower') {
       if (!attack) return;
-      const guarded = !this.enemiesIn(t.team, t.x, t.y, 900).some(u => u.type === 'minion');
-      if (guarded) amt *= 0.33;
+      const guarded = !this.enemiesIn(t.team, t.x, t.y, RULES.tower.guardRange).some(u => u.type === 'minion');
+      if (guarded) amt *= RULES.tower.guardedMult;
     }
     if (type !== 'true') amt *= 100 / (100 + (type === 'phys' ? t.armor : t.mr));
     if (t.shieldUntil > this.time && t.shieldAmt > 0) { const a = Math.min(t.shieldAmt, amt); t.shieldAmt -= a; amt -= a; }
@@ -387,7 +413,7 @@ export class Game {
     const k = MINION[q.kind], dir = q.team === 'blue' ? 1 : -1, up = Math.floor(this.time / WAVES.upgradeEvery);
     const hp = Math.round(k.hp * (1 + WAVES.hpPerUpgrade * up)), y = MAP.mid + (q.slot - 1) * 90;
     return this.add({ type: 'minion', team: q.team, kind: q.kind, melee: q.kind === 'melee', wave: q.wave, slot: q.slot,
-      x: MAP.spawn[q.team].x + dir * 380, y, laneY: y, radius: k.radius, hp, mhp: hp, ad: k.ad * (1 + WAVES.adPerUpgrade * up),
+      x: MAP.spawn[q.team].x + dir * MAP.minionOffset, y, laneY: y, radius: k.radius, hp, mhp: hp, ad: k.ad * (1 + WAVES.adPerUpgrade * up),
       armor: 0, mr: 0, ms: 325, range: k.range, as: k.as, windupT: k.windupT, projSpeed: k.projSpeed, gold: k.gold, xp: k.xp,
       targetId: 0, mode: 'walk', lookAt: this.time + (this.nextId % 5) * 0.1 });
   }
@@ -428,8 +454,11 @@ export class Game {
   attackHit(u, t) {
     if (t.dead) return;
     let dmg = u.ad;
-    if (u.type === 'minion') dmg = t.type === 'hero' ? dmg * WAVES.vsHero : t.type === 'tower' ? dmg * WAVES.vsTower : dmg + WAVES.vsMinionHp * t.hp;
-    if (u.type === 'tower' && t.type === 'hero') { dmg *= 1 + 0.4 * u.heat; u.heat = Math.min(3, u.heat + 1); }
+    const kind = MINION[t.kind];
+    if (u.type === 'minion') dmg = t.type === 'hero' ? dmg * WAVES.vsHero : t.type === 'tower' ? dmg * WAVES.vsTower : dmg + ((MINION[u.kind] || {}).vsMinionHp || 0) * t.hp;
+    if (u.type === 'tower' && t.type === 'hero') { dmg *= 1 + RULES.tower.heatPerShot * u.heat; u.heat = Math.min(RULES.tower.maxHeat, u.heat + 1); }
+    // A tower shot takes a fixed share of a minion's max health, however much health upgrades have added.
+    if (u.type === 'tower' && t.type === 'minion' && kind && kind.towerShot) return this.damage(u, t, kind.towerShot * t.mhp, 'true', true);
     if (u.type === 'hero') {
       // Empowered next attack: h.emp = { until, hit(target) -> bonus damage }, used up by one attack.
       if (u.emp) { const e = u.emp; u.emp = null; if (e.until > this.time) dmg += e.hit(t) || 0; }
@@ -450,6 +479,7 @@ export class Game {
 
   stepHero(h) {
     const T = this.time, sp = MAP.spawn[h.team];
+    if (h.ai) think(this, h);                       // practice bot: decides, then issues ordinary commands
     if (h.dead) {
       if (T >= h.respawnAt) { h.dead = false; h.hp = h.mhp; h.mp = h.mmp; h.x = sp.x; h.y = sp.y; h.order = null; }
       return;
@@ -459,7 +489,7 @@ export class Game {
     h.hp = Math.min(h.mhp, h.hp + (h.def.hpRegen + (home ? h.mhp * 0.1 : 0) + (h.potionUntil > T ? 15 : 0)) * DT);
     h.mp = Math.min(h.mmp, h.mp + (h.def.manaRegen + (home ? h.mmp * 0.1 : 0)) * DT);
     const es = MAP.spawn[other(h.team)];
-    if (this.dist(h, es) < MAP.fountainR) this.damage(null, h, 400 * DT, 'true');
+    if (this.dist(h, es) < MAP.fountainR) this.damage(null, h, MAP.fountainBurn * DT, 'true');
     if (h.dead || T < h.stunUntil) return;
     for (let s = 0; s < 4; s++) { const d = h.def.abilities[s]; if (d.tick && h.ranks[s] > 0) d.tick(this, h, h.ranks[s] - 1); }   // always-on effects
     if (h.state && T >= h.state.until) this.leave(h, 'timeout');
@@ -471,7 +501,7 @@ export class Game {
       if (T >= h.recall.at) { h.recall = null; h.x = sp.x; h.y = sp.y; h.order = null; this.fx({ e: 'blink', x: h.x, y: h.y }); }
       return;
     }
-    if (h.bot) return this.stepBot(h);
+    if (h.bot && !h.ai) return this.stepBot(h);
     const o = h.order, st = h.state;
     if (st && st.lock) return;
     if (st && st.noAttack) { if (o && (o.type === 'move' || o.type === 'amove') && this.moveToward(h, o.x, o.y)) h.order = null; return; }
@@ -588,6 +618,28 @@ export class Game {
       if (d >= min) continue;
       if (d < 0.01) { dx = 1; dy = (a.id % 2 ? 1 : -1); }
       const k = (min - d) / (2 * (d || 1.4)) * 0.5; a.x -= dx * k; a.y -= dy * k; b.x += dx * k; b.y += dy * k;
+    }
+    // Heroes and minions (either team) also push apart, so a wave can body-block a hero. The hero is also
+    // steered sideways along the minion's edge, so walking into a wave goes around it instead of stopping dead. Dashing or shoved units pass through; blinks simply land and get pushed clear.
+    const C = RULES.collision, min = C.hero + C.minion;
+    for (const h of this.heroes.values()) {
+      if (h.dead || h.dashing || h.push) continue;
+      for (const m of ms) {
+        if (m.push) continue;
+        let dx = h.x - m.x, dy = h.y - m.y, d = Math.hypot(dx, dy);
+        if (d >= min) continue;
+        if (d < 0.01) { dx = 0; dy = h.id % 2 ? 1 : -1; d = 1; }
+        // Pick one side to go around and stick with it for a moment; otherwise a hero between two minions is
+        // steered both ways at once and stops dead.
+        if (!h.detour || this.time > h.detour.until) h.detour = { side: Math.abs(dy) > 4 ? Math.sign(dy) : (h.id % 2 ? 1 : -1) };
+        h.detour.until = this.time + C.detourFor;
+        const over = min - d, nx = dx / d, ny = dy / d;
+        let tx = -ny, ty = nx;                                             // along the minion's edge...
+        if (Math.abs(ty) > 0.15 ? ty * h.detour.side < 0 : tx * Math.cos(h.face) + ty * Math.sin(h.face) < 0) { tx = -tx; ty = -ty; }   // ...toward the chosen side
+        h.x += nx * over * C.heroShare + tx * over * C.slide; h.y += ny * over * C.heroShare + ty * over * C.slide;
+        m.x -= nx * over * (1 - C.heroShare); m.y -= ny * over * (1 - C.heroShare);
+      }
+      this.clampPos(h);
     }
   }
   stepShots() {

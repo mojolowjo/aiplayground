@@ -16,7 +16,7 @@
   .hero b { font-size: 16px; } .hero small { color: #9fb2bf; display: block; margin-top: 2px; }
   button { background: #2a6fb0; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; font-size: 15px; cursor: pointer; }
   button:disabled { background: #3a4852; color: #8a979f; cursor: default; }
-  input { background: #0b1410; color: #e8eee9; border: 1px solid #33485a; border-radius: 4px; padding: 6px 8px; font-size: 14px; }
+  input, select { background: #0b1410; color: #e8eee9; border: 1px solid #33485a; border-radius: 4px; padding: 6px 8px; font-size: 14px; }
   #players { margin: 12px 0; } .blue { color: #5fb0ff; } .red { color: #ff6b6b; }
   #hud { bottom: 10px; left: 50%; transform: translateX(-50%); padding: 8px 10px; display: none; }
   #bars { width: 420px; margin-bottom: 6px; }
@@ -59,7 +59,11 @@
   <div>Name <input id="name" maxlength="16" value="Player"> <span id="status" style="margin-left:10px;color:#9fb2bf"></span></div>
   <div id="players"></div>
   <div class="heroes" id="heroes"></div>
-  <p><button id="start" disabled>Start</button> <span id="hint" style="color:#9fb2bf;margin-left:8px"></span></p>
+  <p><button id="start" disabled>Start</button>
+    <span id="oppRow" style="margin-left:8px">against <select id="opp">
+      <option value="dummy">a stationary dummy</option><option value="easy">a bot — easy</option>
+      <option value="normal" selected>a bot — normal</option><option value="hard">a bot — hard</option></select></span>
+    <span id="hint" style="color:#9fb2bf;margin-left:8px"></span></p>
 </div>
 
 <div id="top" class="panel"></div>

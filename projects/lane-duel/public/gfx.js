@@ -270,7 +270,7 @@ function drawTower(u, a, now, col, near) {
   const { p } = atkPose(a, now), charge = p >= 0 ? p : 0, flash = now - a.flash < 0.08;
   begin(u);
   ctx.globalAlpha = near ? 0.55 : 0.18; ctx.setLineDash([24, 18]); ctx.lineDashOffset = -now * 30;
-  ell(0, 0, 775, 775, null, col, 3); ctx.setLineDash([]); ctx.globalAlpha = 1;
+  ell(0, 0, hello.rules.tower.range, hello.rules.tower.range, null, col, 3); ctx.setLineDash([]); ctx.globalAlpha = 1;
   ell(16, 24, 112, 84, 'rgba(0,0,0,.4)');
   const oct = (r, rot) => { const pts = []; for (let i = 0; i < 8; i++) { const an = i / 8 * TAU + rot; pts.push(Math.cos(an) * r, Math.sin(an) * r); } return pts; };
   poly(oct(104, 0.39), '#5d6570', OUT, 4); poly(oct(92, 0.39), '#7a838f');
@@ -372,38 +372,38 @@ function buildScenery(M) {
     return c;
   };
   const r = rng(77), trees = [], tufts = [];
-  for (const [y0, y1] of [[-80, M.top - 20], [M.bot + 20, M.h + 80]])
-    for (let x = -100; x < M.w + 100; x += 62) for (let k = 0; k < 2; k++) trees.push({ x: x + r() * 60, y: y0 + r() * (y1 - y0), r: 55 + r() * 45, c: r() });
+  for (const [y0, y1] of [[-80, M.top - 20], [M.bot + 20, M.h + 80]])   // one TREE_PERIOD-wide stretch of forest, repeated along the lane
+    for (let x = 0; x < TREE_PERIOD; x += 62) for (let k = 0; k < 2; k++) trees.push({ x: x + r() * 60, y: y0 + r() * (y1 - y0), r: 55 + r() * 45, c: r() });
   trees.sort((a, b) => a.y - b.y);
   M.brush.forEach((b, bi) => { for (let i = 0; i < 150; i++) tufts.push({ x: b.x + 10 + r() * (b.w - 20), y: b.y + 26 + r() * (b.h - 30), h: 46 + r() * 34, ph: r() * 6, c: r(), bi }); });
   tufts.sort((a, b) => a.y - b.y);
   GFX.scenery = { grass: tile('#27492f', ['#31593a', '#1f3d27', '#3a6842', '#2c5435'], 260, 5), dirt: tile('#5a503c', ['#6b6048', '#4c4332', '#786c52', '#43392a'], 220, 9),
     forest: tile('#12251a', ['#183022', '#0d1c13'], 120, 3), trees, tufts };
 }
-// The ground never changes either: textures, lane edges, the shade under the tree line and the brush
-// floor are painted once onto one canvas and copied to the screen each frame. Filling the screen with
-// textures every frame was most of the frame time.
-const GROUND_RES = 0.75, GROUND_PAD = 220;   // canvas pixels per world unit; margin around the map
+// The ground and the forest never change, and both repeat along the lane, so one stretch of each is
+// painted once onto a canvas and copied across the screen each frame. Painting them live was most of the
+// frame time, and one canvas for the whole lane would be far too large.
+const GROUND_RES = 0.75, GROUND_PAD = 220, GROUND_PERIOD = 1024, TREE_PERIOD = 2480;   // GROUND_PERIOD is a multiple of the 256 texture tile
 function buildGroundLayer(M) {
-  const S = GFX.scenery, c = document.createElement('canvas'), g = c.getContext('2d'), w = M.w + GROUND_PAD * 2, h = M.h + GROUND_PAD * 2;
-  c.width = Math.ceil(w * GROUND_RES); c.height = Math.ceil(h * GROUND_RES);
-  g.scale(GROUND_RES, GROUND_RES); g.translate(GROUND_PAD, GROUND_PAD);
-  const fill = (tile, y, hh) => { g.fillStyle = g.createPattern(tile, 'repeat'); g.fillRect(-GROUND_PAD, y, w, hh); };
+  const S = GFX.scenery, c = document.createElement('canvas'), g = c.getContext('2d'), w = GROUND_PERIOD, h = M.h + GROUND_PAD * 2;
+  c.width = Math.round(w * GROUND_RES); c.height = Math.ceil(h * GROUND_RES);
+  g.scale(c.width / w, GROUND_RES); g.translate(0, GROUND_PAD);
+  const fill = (tile, y, hh) => { g.fillStyle = g.createPattern(tile, 'repeat'); g.fillRect(0, y, w, hh); };
   fill(S.forest, -GROUND_PAD, h); fill(S.grass, M.top, M.bot - M.top); fill(S.dirt, M.mid - 180, 360);
-  const fade = (y, d, len, c0, c1) => { const gr = g.createLinearGradient(0, y, 0, y + d * len); gr.addColorStop(0, c0); gr.addColorStop(1, c1); g.fillStyle = gr; g.fillRect(-GROUND_PAD, Math.min(y, y + d * len), w, len); };
+  const fade = (y, d, len, c0, c1) => { const gr = g.createLinearGradient(0, y, 0, y + d * len); gr.addColorStop(0, c0); gr.addColorStop(1, c1); g.fillStyle = gr; g.fillRect(0, Math.min(y, y + d * len), w, len); };
   fade(M.mid - 180, 1, 46, 'rgba(39,73,47,.95)', 'rgba(39,73,47,0)'); fade(M.mid + 180, -1, 46, 'rgba(39,73,47,.95)', 'rgba(39,73,47,0)');
   fade(M.top, 1, 110, 'rgba(0,0,0,.55)', 'rgba(0,0,0,0)'); fade(M.bot, -1, 110, 'rgba(0,0,0,.55)', 'rgba(0,0,0,0)');
-  for (const b of M.brush) { g.fillStyle = 'rgba(24,60,32,.85)'; g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 40); g.fill(); }
   S.ground = c;
+}
+// Copy a repeating layer across the visible part of the lane. `y` and `h` are in world units.
+function tileLayer(img, period, y, h, cam, halfW) {
+  const a = Math.floor((cam - halfW) / period), b = Math.floor((cam + halfW) / period), dy = Math.floor(sy(y)), dh = Math.ceil(sy(y + h)) - dy;
+  for (let k = a; k <= b; k++) { const dx = Math.round(sx(k * period)); ctx.drawImage(img, dx, dy, Math.round(sx((k + 1) * period)) - dx, dh); }
 }
 function drawGround(M, now, cam, halfW) {
   if (!GFX.scenery) buildScenery(M);
   const S = GFX.scenery; if (!S.ground) buildGroundLayer(M);
-  {   // copy the visible part of the baked ground
-    const x0 = Math.max(-GROUND_PAD, cam - halfW - 4), x1 = Math.min(M.w + GROUND_PAD, cam + halfW + 4);
-    const y0 = Math.max(-GROUND_PAD, M.h / 2 - H / 2 / scale - 4), y1 = Math.min(M.h + GROUND_PAD, M.h / 2 + H / 2 / scale + 4);
-    ctx.drawImage(S.ground, (x0 + GROUND_PAD) * GROUND_RES, (y0 + GROUND_PAD) * GROUND_RES, (x1 - x0) * GROUND_RES, (y1 - y0) * GROUND_RES, sx(x0), sy(y0), (x1 - x0) * scale, (y1 - y0) * scale);
-  }
+  tileLayer(S.ground, GROUND_PERIOD, -GROUND_PAD, M.h + GROUND_PAD * 2, cam, halfW);
   ctx.save(); ctx.translate(sx(0), sy(0)); ctx.scale(scale, scale);
   // fountains
   for (const t of ['blue', 'red']) {
@@ -416,7 +416,8 @@ function drawGround(M, now, cam, halfW) {
     ctx.rotate(now * 0.4); for (let i = 0; i < 6; i++) { ctx.rotate(TAU / 6); poly([150, -16, 190, 0, 150, 16, 162, 0], col); }
     ell(0, 0, 120, 120, null, col, 4); ctx.globalAlpha = 1; ctx.restore();
   }
-  // brush blades sway, so they are still drawn live
+  // brush (its blades sway, so it is drawn live)
+  for (const b of M.brush) { if (Math.abs(b.x + b.w / 2 - cam) > halfW + b.w) continue; ctx.fillStyle = 'rgba(24,60,32,.85)'; ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 40); ctx.fill(); }
   for (const t of S.tufts) {
     if (Math.abs(t.x - cam) > halfW + 60) continue;
     const sw = Math.sin(now * 1.6 + t.ph) * 9;
@@ -425,30 +426,25 @@ function drawGround(M, now, cam, halfW) {
   }
   ctx.restore();
 }
-// The forest never changes, so each band of trees is painted once onto its own canvas (1 pixel per
-// world unit) and then copied to the screen every frame. Painting ~400 trees per frame was most of the frame time.
+// Each band of forest: one repeating stretch, trees near an end drawn on both sides so the join is seamless.
 function buildTreeLayers(M) {
   const S = GFX.scenery, pad = 220;
   S.treeLayers = [[-pad, M.top + 110], [M.bot - 110, M.h + pad]].map(([y0, y1]) => {
-    const c = document.createElement('canvas'); c.width = M.w + pad * 2; c.height = y1 - y0;
-    const g = c.getContext('2d'), saved = ctx; ctx = g; g.translate(pad, -y0);
-    for (const t of S.trees) {
-      if (t.y + t.r + 30 < y0 || t.y - t.r > y1) continue;
+    const c = document.createElement('canvas'); c.width = TREE_PERIOD; c.height = y1 - y0;
+    const g = c.getContext('2d'), saved = ctx; ctx = g; g.translate(0, -y0);
+    for (const t of S.trees) for (const x of [t.x - TREE_PERIOD, t.x, t.x + TREE_PERIOD]) {
+      if (t.y + t.r + 30 < y0 || t.y - t.r > y1 || x + t.r + 20 < 0 || x - t.r > TREE_PERIOD) continue;
       const col = t.c < 0.5 ? '#1c4a2a' : '#235a31';
-      ell(t.x + 14, t.y + 18, t.r, t.r * 0.8, 'rgba(0,0,0,.35)');
-      ell(t.x, t.y, t.r, t.r, col, '#0c1f13', 4); ell(t.x - t.r * 0.2, t.y - t.r * 0.22, t.r * 0.66, t.r * 0.66, shade(col, 0.12));
-      ell(t.x - t.r * 0.32, t.y - t.r * 0.36, t.r * 0.3, t.r * 0.3, 'rgba(120,190,120,.22)');
+      ell(x + 14, t.y + 18, t.r, t.r * 0.8, 'rgba(0,0,0,.35)');
+      ell(x, t.y, t.r, t.r, col, '#0c1f13', 4); ell(x - t.r * 0.2, t.y - t.r * 0.22, t.r * 0.66, t.r * 0.66, shade(col, 0.12));
+      ell(x - t.r * 0.32, t.y - t.r * 0.36, t.r * 0.3, t.r * 0.3, 'rgba(120,190,120,.22)');
     }
-    ctx = saved; return { c, x: -pad, y: y0 };
+    ctx = saved; return { c, y: y0, h: y1 - y0 };
   });
 }
 function drawTrees(M, now, cam, halfW) {
   if (!GFX.scenery.treeLayers) buildTreeLayers(M);
-  const x0 = Math.max(-220, cam - halfW - 20), x1 = Math.min(M.w + 220, cam + halfW + 20);
-  for (const L of GFX.scenery.treeLayers) {   // copy only the part of the band that is on screen
-    const dx = Math.floor(sx(x0)), dw = Math.ceil(sx(x1)) - dx;
-    ctx.drawImage(L.c, x0 - L.x, 0, x1 - x0, L.c.height, dx, sy(L.y), dw, L.c.height * scale);
-  }
+  for (const L of GFX.scenery.treeLayers) tileLayer(L.c, TREE_PERIOD, L.y, L.h, cam, halfW);
 }
 
 // ---------- bars ----------

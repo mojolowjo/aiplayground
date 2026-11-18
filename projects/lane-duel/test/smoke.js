@@ -1,6 +1,6 @@
 // Headless rules check: runs the simulation directly, no network.
 import assert from 'node:assert';
-import { Game, TICK, MAP, WAVES, MINION } from '../game/sim.js';
+import { Game, TICK, MAP, WAVES, MINION, RULES } from '../game/sim.js';
 import { HEROES } from '../game/data.js';
 
 const run = (g, secs) => { for (let i = 0; i < secs * TICK; i++) g.step(); };
@@ -12,11 +12,11 @@ const mk = (a, b) => new Game([{ id: 1, team: 'blue', hero: a, name: 'A' }, { id
   g.command(1, { c: 'lvl', s: 0 }); assert.equal(h.ranks[0], 1);
   g.command(1, { c: 'move', x: 2600, y: 800 }); run(g, 10);
   assert(Math.abs(h.x - 2600) < 5, 'hero walked to target: ' + h.x);
-  g.command(1, { c: 'amove', x: 3300, y: 800 }); run(g, 80);
-  const minions = [...g.units.values()].filter(u => u.type === 'minion');
-  assert(minions.length > 0, 'minions exist');
-  assert(h.cs > 0 && h.gold > 500, `attack-move farmed: cs=${h.cs} gold=${h.gold | 0}`);
-  assert(h.lvl > 1, 'levelled up');
+  h.x = MAP.w / 2 - 500; g.command(1, { c: 'amove', x: MAP.w / 2, y: 800 });      // jump to mid lane and farm the first wave
+  while (h.cs < 1 && g.time < 120) g.step();
+  assert([...g.units.values()].some(u => u.type === 'minion'), 'minions exist');
+  assert(h.cs > 0 && h.gold > 500 && h.xp > 0 && !h.dead, `attack-move farmed: cs=${h.cs} gold=${h.gold | 0} xp=${h.xp | 0}`);
+  g.giveXp(h, 300); assert(h.lvl > 1 && h.points === 1, 'levelled up');
   console.log(`farm ok: cs=${h.cs} lvl=${h.lvl} gold=${h.gold | 0} t=${g.time | 0}s`);
 }
 // 2. every ability of every hero casts without throwing and spends its cooldown
@@ -209,10 +209,12 @@ const duel = (a, b = 'oriel') => {
     g.time = 900; g.waveNo = 31; g.spawnQ = []; g.queueWave(); assert.equal(g.spawnQ.filter(q => q.team === 'blue' && q.kind === 'melee').length, 2, 'late cannon waves have 2 melee'); }
   // first wave: ignores a champion standing beside the lane, pairs off melee, both sides' melee die together
   { const { g, e } = fresh(); e.x = 3000; e.y = 1000; e.hp = e.mhp = 9000; e.bot = false; e.order = { type: 'hold' }; run(g, 37.5);
-    assert(minions(g, 'blue').every(m => !tgt(g, m) || tgt(g, m).type !== 'hero'), 'first wave walks past an idle champion'); e.x = 6000; e.y = 800;
-    const died = {}; for (let i = 0; i < 28 * TICK; i++) { g.step();
-      if (Math.abs(g.time - 46) < 0.02) for (const m of minions(g).filter(m => m.melee)) assert(tgt(g, m) && tgt(g, m).melee && tgt(g, m).slot === m.slot, 'each melee fights the enemy melee in its own slot');
-      for (const t of ['blue', 'red']) if (!died[t] && !minions(g, t).some(m => m.melee)) died[t] = g.time; }
+    assert(minions(g, 'blue').every(m => !tgt(g, m) || tgt(g, m).type !== 'hero'), 'first wave walks past an idle champion'); e.x = MAP.spawn.red.x; e.y = 800;
+    let met = 0; while (!g.wavesMet && g.time < 90) g.step(); met = g.time - RULES.firstWave;
+    assert(met >= 22 && met <= 28, `first clash ${met.toFixed(1)}s after the wave spawns (want 22-28)`);
+    const died = {}; for (let i = 0; i < 25 * TICK; i++) { g.step();
+      if (Math.abs(g.time - 61) < 0.02) for (const m of minions(g).filter(m => m.melee && m.wave === 1)) assert(tgt(g, m) && tgt(g, m).melee && tgt(g, m).slot === m.slot, 'each melee fights the enemy melee in its own slot');
+      for (const t of ['blue', 'red']) if (!died[t] && !minions(g, t).some(m => m.melee && m.wave === 1)) died[t] = g.time; }
     assert(died.blue && died.red && Math.abs(died.blue - died.red) < 2, `both melee lines fall together: ${died.blue.toFixed(1)}s vs ${died.red.toFixed(1)}s`); }
   // priority and call for help, on a hand-built scene
   { const { g, h, e } = fresh(); g.nextWave = Infinity; g.wavesMet = true;
@@ -233,7 +235,12 @@ const duel = (a, b = 'oriel') => {
   { const { g, h, e } = fresh(); g.nextWave = Infinity; g.wavesMet = true; h.order = e.order = { type: 'hold' }; e.x = 6000;
     const m = g.spawnMinion({ team: 'red', kind: 'caster', wave: 2, slot: 1 }), b = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 });
     h.armor = 0; let hp = h.hp; g.attackHit(m, h); assert(Math.abs(hp - h.hp - m.ad * WAVES.vsHero) < 0.01, 'minions deal 60% to champions');
-    hp = b.hp; g.attackHit(m, b); assert(Math.abs(hp - b.hp - (m.ad + WAVES.vsMinionHp * hp)) < 0.01, 'and bonus damage to minions by current health');
+    hp = b.hp; g.attackHit(m, b); assert(Math.abs(hp - b.hp - (m.ad + 0.035 * hp)) < 0.01, 'casters add 3.5% of a minion\'s current health');
+    for (const [kind, share] of [['melee', 0.02], ['cannon', 0.05]]) { const a = g.spawnMinion({ team: 'red', kind, wave: 2, slot: 1 }); hp = b.hp; g.attackHit(a, b);
+      assert(Math.abs(hp - b.hp - (a.ad + share * hp)) < 0.01, `${kind} adds ${share * 100}%`); g.units.delete(a.id); }
+    b.hp = b.mhp;
+    const tw = [...g.units.values()].find(u => u.type === 'tower' && u.team === 'blue'); m.x = tw.x + 200; m.y = tw.y; hp = tw.hp; g.attackHit(m, tw);
+    assert(Math.abs(hp - tw.hp - m.ad * 0.6 * 100 / (100 + tw.armor)) < 0.01, 'minions deal 60% to towers'); tw.hp = tw.mhp;
     h.x = 3000; m.x = 3400; m.y = h.y = 800; b.x = 500; const gold = h.gold, xp = h.xp;
     g.damage(b, m, 9999, 'true'); assert(h.gold - gold < 1 && h.xp > xp && h.missed === 1 && h.cs === 0, 'no last hit: XP but no gold, and it counts as missed');
     const m2 = g.spawnMinion({ team: 'red', kind: 'cannon', wave: 3, slot: 1 }); m2.x = 3400; m2.y = 800; const gold2 = h.gold;
@@ -241,5 +248,75 @@ const duel = (a, b = 'oriel') => {
     const m3 = g.spawnMinion({ team: 'red', kind: 'melee', wave: 3, slot: 1 }); m3.x = 5000; const xp3 = h.xp; g.damage(b, m3, 9999, 'true');
     assert(h.xp === xp3 && h.missed === 1, 'no XP and no miss beyond 1500'); JSON.stringify(g.snapshot(1)); }
   console.log('minions ok');
+}
+// 9. Tower shots on minions are a share of max health, whatever upgrades have added
+{
+  const g = mk('wren', 'gorrum'), h = g.heroes.get(1); g.nextWave = Infinity;
+  const tw = [...g.units.values()].find(u => u.type === 'tower' && u.team === 'blue');
+  for (const time of [0, 900]) {                      // fresh minions, and minions with ten upgrades
+    g.time = time;
+    const mk1 = kind => { const m = g.spawnMinion({ team: 'red', kind, wave: 2, slot: 1 }); m.x = tw.x + 300; return m; };
+    const melee = mk1('melee'), caster = mk1('caster'), cannon = mk1('cannon');
+    if (time) assert(melee.mhp > MINION.melee.hp * 1.4, 'late minions really are tougher');
+    g.attackHit(tw, melee); assert(Math.abs(melee.hp / melee.mhp - 0.55) < 1e-9, 'melee: one tower shot = 45% of max health');
+    g.attackHit(tw, melee); assert(Math.abs(melee.hp / melee.mhp - 0.10) < 1e-9, 'melee: two shots leave 10%, a last hit');
+    if (!time) assert(melee.hp < h.ad, 'which one basic attack finishes at level 1');
+    g.attackHit(tw, caster); assert(Math.abs(caster.hp / caster.mhp - 0.30) < 1e-9, 'caster: one tower shot = 70% of max health');
+    g.attackHit(tw, cannon); assert(Math.abs(cannon.mhp - cannon.hp - RULES.tower.ad) < 1e-9, 'cannon: the tower\'s normal damage');
+    for (const m of [melee, caster, cannon]) g.units.delete(m.id);
+  }
+  const hp = h.hp, armor = h.armor; g.time = 0; tw.heat = 0; g.attackHit(tw, h);
+  assert(Math.abs(hp - h.hp - RULES.tower.ad * 100 / (100 + armor)) < 0.01, 'tower damage to heroes is unchanged');
+  assert.equal(MINION.cannon.range, 300);
+  console.log('tower ok');
+}
+// 10. Heroes and minions collide; dashes pass through
+{
+  const g = mk('wren', 'gorrum'), h = g.heroes.get(1); g.nextWave = Infinity; g.wavesMet = true;
+  const wall = y => { const m = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 }); Object.assign(m, { x: 3300, y, laneY: y, ms: 0 }); return m; };
+  const ms = [wall(740), wall(800), wall(860)], gap = RULES.collision.hero + RULES.collision.minion;
+  const walk = () => { h.x = 3000; h.y = 800; h.face = 0; g.command(1, { c: 'move', x: 3600, y: 800 }); let t = 0, off = 0, near = 1e9;
+    while (h.order && t < 10) { g.step(); t += 1 / TICK; off = Math.max(off, Math.abs(h.y - 800)); for (const m of ms) near = Math.min(near, g.dist(h, m)); } return { t, off, near }; };
+  for (const m of ms) m.x = 9000;                       // no wall: a straight walk
+  const free = walk(); assert(free.off < 1 && Math.abs(free.t - 600 / 325) < 0.1, 'open ground: straight line');
+  for (const m of ms) m.x = 3300;
+  const blocked = walk();
+  assert(Math.abs(h.x - 3600) < 1 && blocked.t > free.t + 0.2 && blocked.off > 60, `a wave in the way has to be walked around: ${blocked.t.toFixed(2)}s vs ${free.t.toFixed(2)}s, ${blocked.off | 0} off the line`);
+  assert(blocked.near > gap - 12, 'and the hero never walks through a minion: closest ' + (blocked.near | 0));
+  for (const m of ms) { m.x = 3300; } ms[0].y = 740; ms[1].y = 800; ms[2].y = 860;
+  h.x = 3000; h.y = 800; g.dash(h, { x: 3600, y: 800, speed: 1500 }); let near = 1e9; for (let i = 0; i < TICK; i++) { g.step(); near = Math.min(near, g.dist(h, ms[1])); }
+  assert(Math.abs(h.x - 3600) < 1 && Math.abs(h.y - 800) < 1 && near < 30, 'a dash goes straight through');
+  g.blink(h, 3300, 800); run(g, 0.5); assert(ms.every(m => g.dist(h, m) > gap - 12), 'a blink into a wave is pushed clear');
+  // minions still block skillshots
+  const e = g.heroes.get(2); h.x = 3000; h.y = 800; e.x = 3700; e.y = 800; e.hp = e.mhp = 5000; const red = g.spawnMinion({ team: 'red', kind: 'melee', wave: 2, slot: 1 }); Object.assign(red, { x: 3400, y: 800, ms: 0 });
+  h.ranks[0] = 1; h.cds[0] = 0; g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); run(g, 0.8); assert(red.hp < red.mhp && e.hp === 5000, 'an enemy minion still blocks a skillshot');
+  console.log('collision ok');
+}
+// 11. Practice opponent: last-hits, backs off and recalls, respects vision; the dummy is still there
+{
+  // The bot rolls dice, so give this section a fixed sequence of them: the checks are then the same every run.
+  const realRandom = Math.random; let seed = 12345; Math.random = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const bot = (ai, hero = 'wren') => { const g = new Game([{ id: 1, team: 'blue', hero: 'kessa', name: 'A' }, { id: -1, team: 'red', hero, name: 'Bot', bot: true, ai }]);
+    const me = g.heroes.get(1), b = g.heroes.get(-1); me.order = { type: 'hold' }; return { g, me, b }; };
+  const farm = ai => { let cs = 0, seen = 0; for (const hero of ['wren', 'gorrum', 'sable']) { const { g, b } = bot(ai, hero); run(g, 200); cs += b.cs; seen += b.cs + b.missed; } return cs / seen; };
+  const easy = farm('easy'), hard = farm('hard');
+  assert(hard > 0.5 && easy > 0.1 && hard > easy + 0.1, `the bot last-hits, better on hard: ${(hard * 100) | 0}% vs ${(easy * 100) | 0}% on easy`);
+  { const { g, me, b } = bot('normal'); run(g, 70); const x = b.x; assert(Math.abs(b.x - MAP.w / 2) < 1500 && b.items.length > 0, 'it walks to lane and shops first');
+    b.hp = b.mhp * 0.2; me.x = b.x - 600; me.y = 800; run(g, 1.5);
+    assert(b.x > x + 300 && !b.recall, 'low health with the player close: it backs off toward its tower');
+    me.x = 500; run(g, 6); assert(b.recall || g.dist(b, MAP.spawn.red) < MAP.fountainR, 'once safe it recalls'); while (b.recall) g.step();
+    assert(g.dist(b, MAP.spawn.red) < MAP.fountainR && b.hp < b.mhp * 0.5, 'which takes it to base'); run(g, 18); assert(!b.aiMem.heal && b.hp > b.mhp * 0.8 && b.x < MAP.spawn.red.x - 1000, 'then heads back to lane healed'); }
+  { const { g, me, b } = bot('hard', 'oriel'); g.nextWave = Infinity; g.spawnQ = []; b.x = 9400; b.y = 800; b.lvl = 3; b.points = 2; g.refresh(b);
+    const br = MAP.brush[0]; me.x = br.x + br.w / 2; me.y = br.y + 100; me.hp = me.mhp = 9000; run(g, 25);
+    assert(!(b.cds[0] > 0) && me.hp >= 9000 - 1, 'it never fires at a player it cannot see (hidden in brush)');
+    me.x = b.x - 700; me.y = 800; let fired = 0; for (let i = 0; i < 25 * TICK && !fired; i++) { g.step(); if (b.cds[0] > g.time) fired = g.time; }
+    assert(fired, 'it does throw its Q at a visible player'); const mp = b.mp;
+    b.mp = 0; b.cds[0] = 0; run(g, 20); assert(!(b.cds[0] > g.time) || b.mp > 0, 'and not without the mana for it'); }
+  { const g = new Game([{ id: 1, team: 'blue', hero: 'kessa', name: 'A' }, { id: -1, team: 'red', hero: 'wren', name: 'Dummy', bot: true }]); run(g, 60);
+    const d = g.heroes.get(-1); assert(Math.abs(d.x - MAP.tower.red.x) < 500 && d.cs === 0, 'the stationary dummy still just stands by its tower'); }
+  assert.deepEqual(['easy', 'normal', 'hard'].map(k => RULES.bot[k].aimErr > 0 && RULES.bot[k].react > 0), [true, true, true]);
+  assert(RULES.bot.easy.aimErr > RULES.bot.normal.aimErr && RULES.bot.normal.aimErr > RULES.bot.hard.aimErr && RULES.bot.easy.trade < RULES.bot.hard.trade);
+  Math.random = realRandom;
+  console.log('bot ok');
 }
 console.log('all checks passed');
