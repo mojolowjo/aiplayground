@@ -76,7 +76,7 @@ a separate room.
 
 | Input | Action |
 |---|---|
-| Right-click | Move, or attack the enemy under the cursor (hold to keep moving) |
+| Right-click | Move, or attack the enemy under the cursor (hold to keep moving). Your character never attacks on its own: it only attacks what you click, or what it meets on an attack-move |
 | A, then left-click | Attack-move (Shift + right-click also works) |
 | S | Stop |
 | Q W E R | Abilities, cast at the cursor. Kessa's Q charges while held and fires on release; her R is pressed again for each shot |

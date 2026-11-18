@@ -541,7 +541,7 @@ export class Game {
     if (st && st.lock) return;
     if (st && st.noAttack) { if (o && (o.type === 'move' || o.type === 'amove') && this.moveToward(h, o.x, o.y)) h.order = null; return; }
     if (this.stepWindup(h)) return;
-    if (!o) { const t = this.nearestEnemy(h, h.range); if (t) this.engage(h, t); return; }
+    if (!o) return;                                  // idle heroes never attack on their own: it takes an attack click or attack-move
     if (o.type === 'move') { if (this.moveToward(h, o.x, o.y)) h.order = null; }
     else if (o.type === 'atk') {
       const t = this.units.get(o.id);

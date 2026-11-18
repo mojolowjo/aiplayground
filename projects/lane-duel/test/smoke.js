@@ -18,7 +18,8 @@ const mk = (a, b, innerTowers = false) => {
   g.command(1, { c: 'lvl', s: 0 }); assert.equal(h.ranks[0], 1);
   g.command(1, { c: 'move', x: 2600, y: 800 }); run(g, 10);
   assert(Math.abs(h.x - 2600) < 5, 'hero walked to target: ' + h.x);
-  h.x = MAP.w / 2 - 500; g.command(1, { c: 'amove', x: MAP.w / 2, y: 800 });      // jump to mid lane and farm the first wave
+  h.x = MAP.w / 2 - 500; while (!g.wavesMet && g.time < 90) g.step();              // jump to mid lane and wait for the first wave
+  g.command(1, { c: 'amove', x: MAP.w / 2 + 600, y: 800 });                        // then attack-move into it
   while (h.cs < 1 && g.time < 120) g.step();
   assert([...g.units.values()].some(u => u.type === 'minion'), 'minions exist');
   assert(h.cs > 0 && h.gold > 500 && h.xp > 0 && !h.dead, `attack-move farmed: cs=${h.cs} gold=${h.gold | 0} xp=${h.xp | 0}`);
@@ -329,6 +330,19 @@ const duel = (a, b = 'oriel') => {
   assert(RULES.bot.easy.aimErr > RULES.bot.normal.aimErr && RULES.bot.normal.aimErr > RULES.bot.hard.aimErr && RULES.bot.easy.trade < RULES.bot.hard.trade);
   Math.random = realRandom;
   console.log('bot ok');
+}
+// 11b. Heroes only attack on an attack click or an attack-move
+{
+  const g = mk('wren', 'oriel'), h = g.heroes.get(1), e = g.heroes.get(2); g.nextWave = Infinity;
+  h.x = 3000; e.x = 3300; h.y = e.y = 800; e.hp = e.mhp = 5000; e.order = { type: 'hold' };
+  const m = g.spawnMinion({ team: 'red', kind: 'melee', wave: 2, slot: 1 }); Object.assign(m, { x: 3200, y: 700, ms: 0, ad: 0, hp: 5000, mhp: 5000 });
+  run(g, 3); assert(e.hp === 5000 && m.hp === 5000, 'standing idle next to enemies: no attacks');
+  g.command(1, { c: 'move', x: 3050, y: 800 }); run(g, 3); assert(e.hp === 5000 && m.hp === 5000, 'nor after a move order finishes');
+  g.command(1, { c: 'stop' }); run(g, 2); assert(e.hp === 5000 && m.hp === 5000, 'nor after Stop');
+  g.command(1, { c: 'atk', id: m.id }); run(g, 2); assert(m.hp < 5000 && e.hp === 5000, 'clicking a minion attacks it, and only it');
+  m.hp = 1; run(g, 2); assert(!g.units.has(m.id) && h.order === null, 'when it dies the hero stops'); run(g, 2); assert.equal(e.hp, 5000, 'instead of picking a new target');
+  g.command(1, { c: 'amove', x: 3100, y: 800 }); run(g, 2); assert(e.hp < 5000, 'attack-move attacks what it meets');
+  console.log('attack orders ok');
 }
 // 12. Selling items back, and 2v2: team totals, assists, four heroes
 {
