@@ -46,6 +46,7 @@
   #over { top: 35%; left: 50%; transform: translate(-50%, -50%); text-align: center; display: none; padding: 24px 40px; }
   #over h1 { margin: 0 0 8px; font-size: 40px; }
   #feed { position: fixed; top: 60px; left: 12px; font-size: 14px; pointer-events: none; }
+  #fs { position: fixed; left: 10px; bottom: 10px; padding: 4px 10px; font-size: 12px; background: #24323c; z-index: 4; }
   #help { position: fixed; left: 10px; top: 8px; max-width: 30vw; font-size: 11px; color: #8a9aa5; line-height: 1.5; pointer-events: none; }
 </style>
 </head>
@@ -74,7 +75,8 @@
 <div id="tip" class="panel"></div>
 <div id="shop" class="panel"><b>Shop</b> <small style="color:#9fb2bf">(P) — buy at your base</small><div id="items"></div><div id="inv"></div></div>
 <div id="over" class="panel"><h1 id="ot"></h1><div id="or"></div><p><button id="rematch">Back to lobby</button></p></div>
-<div id="help">Right-click move/attack · A + click attack-move · S stop · Q W E R abilities (Shift+key or click the icon to level up) · D F spells · B recall · P shop · Y camera lock · Space centre · T show minion targets</div>
+<button id="fs" title="Fullscreen also stops browser shortcuts like Ctrl+W (Chrome and Edge)">Fullscreen</button>
+<div id="help">Right-click move/attack · A + click attack-move · S stop · Q W E R abilities (Shift or Ctrl + key, or click the icon, to level up) · D F spells · B recall · P shop · Y camera lock · Space centre · T show minion targets</div>
 <script src="icons.js"></script>
 <script src="gfx.js"></script>
 <script src="client.js"></script>

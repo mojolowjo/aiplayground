@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const cv = $('c'), ctx = cv.getContext('2d');
+const cv = $('c'); let ctx = cv.getContext('2d');   // let: gfx.js points it at an offscreen canvas while pre-rendering
 const TEAM = { b: '#4aa3ff', r: '#ff5a5a' };
 let ws, hello = null, myId = 0, lobbyState = null, inGame = false;
 let snaps = [], offset = null, me = null, meUnit = null, myDef = null;
@@ -58,7 +58,7 @@ function renderLobby() {
   if (inGame && mine) { myDef = hello.heroes[mine.hero]; myHero = mine.hero; buildSlots(); buildShop(); cam.locked = true; cam.x = hello.map.spawn[mine.team].x; }
 }
 const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-$('start').onclick = () => send({ t: 'start' });
+$('start').onclick = () => { send({ t: 'start' }); goFullscreen(); };
 $('rematch').onclick = () => send({ t: 'rematch' });
 $('name').onchange = () => { localStorage.ldName = $('name').value; };
 
@@ -175,7 +175,35 @@ function rightClick(shift) {
   fx.push({ k: 'click', x, y, c: u || shift ? '#ff5a5a' : '#6fe08a', t0: performance.now() / 1000, dur: 0.35 });
   mouse.lastMove = performance.now();
 }
-cv.addEventListener('contextmenu', e => e.preventDefault());
+// ---------- keep the browser out of the way ----------
+// A page can cancel most browser shortcuts, but not the ones that close or switch tabs (Ctrl+W, Ctrl+T,
+// Ctrl+N, Ctrl+Tab). Those only reach the game in fullscreen with the keyboard locked, which Chrome and
+// Edge support. So: cancel what we can, offer fullscreen for the rest, and confirm before leaving mid-game.
+const KEEP = new Set(['F11', 'F12']);   // fullscreen and dev tools stay with the browser
+function swallow(e) {
+  if (!inGame || e.target.tagName === 'INPUT' || KEEP.has(e.code)) return;
+  e.preventDefault();
+}
+addEventListener('keydown', swallow, true);
+addEventListener('keyup', e => { if (inGame && (e.key === 'Alt' || e.key === 'Meta')) e.preventDefault(); }, true);   // Alt would focus the browser menu
+addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('dragstart', e => e.preventDefault());
+addEventListener('selectstart', e => { if (e.target.tagName !== 'INPUT') e.preventDefault(); });
+addEventListener('wheel', e => { if (e.ctrlKey || inGame) e.preventDefault(); }, { passive: false });               // no page zoom or scroll
+for (const ev of ['mousedown', 'mouseup', 'auxclick']) addEventListener(ev, e => { if (e.button === 1 || e.button > 2) e.preventDefault(); });   // middle-click scroll, back/forward buttons
+addEventListener('beforeunload', e => { if (inGame && !(snaps.length && snaps[snaps.length - 1].over)) { e.preventDefault(); e.returnValue = ''; } });
+async function goFullscreen() {
+  try {
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+    if (navigator.keyboard && navigator.keyboard.lock) await navigator.keyboard.lock();   // hands Esc, Ctrl+W and friends to the game
+  } catch { /* refused: the game still works windowed */ }
+}
+document.addEventListener('fullscreenchange', () => {
+  const on = !!document.fullscreenElement;
+  $('fs').textContent = on ? 'Exit fullscreen' : 'Fullscreen';
+  if (!on && navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock();
+});
+$('fs').onclick = () => (document.fullscreenElement ? document.exitFullscreen() : goFullscreen());
 cv.addEventListener('mousemove', e => {
   mouse.x = e.clientX; mouse.y = e.clientY;
   if (mouse.rdown && inGame && performance.now() - mouse.lastMove > 120) { [mouse.wx, mouse.wy] = toWorld(mouse.x, mouse.y); rightClick(e.shiftKey); }
@@ -196,9 +224,7 @@ addEventListener('keydown', e => {
   const k = e.code, qi = ['KeyQ', 'KeyW', 'KeyE', 'KeyR'].indexOf(k);
   [mouse.wx, mouse.wy] = toWorld(mouse.x, mouse.y);
   if (qi >= 0) {
-    if (e.ctrlKey || e.metaKey) return;
-    e.preventDefault();
-    if (e.shiftKey) return cmd({ c: 'lvl', s: qi });
+    if (e.shiftKey || e.ctrlKey || e.metaKey) return cmd({ c: 'lvl', s: qi });
     const why = blocked(qi); if (why) return say(why);
     if (myDef.abilities[qi].charge) { held[qi] = true; return cmd({ c: 'charge', s: qi }); }
     const t = unitAt(mouse.wx, mouse.wy, true);

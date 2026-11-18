@@ -48,12 +48,23 @@ a separate room.
 | A, then left-click | Attack-move (Shift + right-click also works) |
 | S | Stop |
 | Q W E R | Abilities, cast at the cursor. Kessa's Q charges while held and fires on release; her R is pressed again for each shot |
-| Shift + Q/W/E/R, or click the icon | Spend a skill point |
+| Shift or Ctrl + Q/W/E/R, or click the icon | Spend a skill point |
 | D / F | Blink / Mend |
 | B | Recall to base (8s, cancelled by damage or orders) |
 | P | Shop (buy at base or while dead) |
 | Y / Space | Toggle camera lock / centre on your character |
 | T | Show what each minion is targeting (practice aid) |
+
+## Browser shortcuts
+
+While a game is running the page cancels the browser's own shortcuts (refresh, find, save,
+print, zoom, right-click menu, Alt menu, back/forward mouse buttons) and asks before the tab
+is closed or reloaded. F11 and F12 are left alone.
+
+A page is not allowed to cancel the shortcuts that close or switch tabs (Ctrl+W, Ctrl+T,
+Ctrl+N, Ctrl+Tab) on its own. Use the **Fullscreen** button, or start the game (which goes
+fullscreen for whoever presses Start): in Chrome and Edge that hands those keys to the game
+too. Hold Esc to leave fullscreen. Firefox and Safari do not support this part.
 
 ## Layout
 
