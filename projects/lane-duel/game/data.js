@@ -153,31 +153,31 @@ HEROES.kessa = {
   name: 'Kessa', role: 'Artillery', color: '#6fb6e8',
   hp: 540, hpPer: 88, mana: 440, manaPer: 32, ad: 52, adPer: 3, as: 0.62, asPer: 1.4,
   armor: 20, armorPer: 4, mr: 30, mrPer: 1.3, ms: 325, range: 525, melee: false,
-  projSpeed: 1500, shot: 'orb', windup: 0.24, hpRegen: 0.7, manaRegen: 2.3,
+  projSpeed: 1500, shot: 'orb', windup: 0.24, hpRegen: 0.7, manaRegen: 3,
   // Event hooks: sim.js calls onAttack when her basic attack lands and onKill when she kills anything.
   passive: { name: 'Recycler', every: 12, perKill: 2,
-    desc: 'Every 12s your next attack restores 30 + 4 per level mana, doubled against heroes. Each enemy you kill shortens the wait by 2s.',
+    desc: 'Every 12s your next attack restores 40 + 5 per level mana, doubled against heroes. Each enemy you kill shortens the wait by 2s.',
     wait: (g, h) => (h.surgeAt || 0) - g.time,
     onAttack(g, h, t) {
       if (this.wait(g, h) > 0) return;
-      const n = (30 + 4 * h.lvl) * (t.type === 'hero' ? 2 : 1);
+      const n = (40 + 5 * h.lvl) * (t.type === 'hero' ? 2 : 1);
       g.restoreMana(h, n); h.surgeAt = g.time + this.every; g.fx({ e: 'mana', x: Math.round(h.x), y: Math.round(h.y), n, p: h.pid });
     },
     onKill(g, h) { if (this.wait(g, h) > 0) h.surgeAt -= this.perKill; } },
   abilities: [
     // IDLE -> CHARGING (hold) -> FIRING (release). The charge itself lives in sim.js (startCharge / cast).
-    { key: 'Q', name: 'Rail Lance', kind: 'line', range: 1400,
-      charge: { full: 1.5, hold: 3, min: 700, max: 1400, width: 130, slow: 0.5 },
-      cd: [9, 8, 7, 6, 5], cost: [60, 65, 70, 75, 80],
-      desc: 'Hold to charge: range grows from 700 to 1400 over 1.5s while you move 50% slower. Release to fire a beam that hits every enemy in a line for 70/110/150/190/230 + 75% AP. Holding for more than 3s cancels it.',
+    { key: 'Q', name: 'Rail Lance', kind: 'line', range: 1150,
+      charge: { full: 1.5, hold: 3, min: 600, max: 1150, width: 130, slow: 0.5, delay: 0.4 },
+      cd: [9, 8, 7, 6, 5], cost: [45, 50, 55, 60, 65],
+      desc: 'Hold to charge: range grows from 600 to 1150 over 1.5s while you move 50% slower. Release to fire a beam that, after 0.4s, hits every enemy in a line for 70/110/150/190/230 + 75% AP. Holding for more than 3s cancels it.',
       cast(g, h, r, aim) {
         const c = this.charge, len = lerp(c.min, c.max, aim.power), dmg = R([70, 110, 150, 190, 230], r) + 0.75 * h.ap;
-        g.strike(h, { shape: 'line', x: h.x, y: h.y, dx: aim.dx, dy: aim.dy, len, w: c.width, delay: 0.3, color: '#8fd0ff',
+        g.strike(h, { shape: 'line', x: h.x, y: h.y, dx: aim.dx, dy: aim.dy, len, w: c.width, delay: c.delay, color: '#8fd0ff',
           onHit(t) { g.damage(h, t, dmg, 'magic'); } });
-        g.enter(h, 0, 'firing', 0.3, { lock: true });
+        g.enter(h, 0, 'firing', c.delay, { lock: true });
       } },
     { key: 'W', name: 'Ground Zero', kind: 'point', range: 1000, radius: 260, inner: 120, castTime: 0.2,
-      cd: [14, 13, 12, 11, 10], cost: [70, 80, 90, 100, 110],
+      cd: [14, 13, 12, 11, 10], cost: [60, 65, 70, 75, 80],
       desc: 'Mark an area that blows up after 0.7s for 60/95/130/165/200 + 60% AP and a 25% slow for 2.5s. Enemies in the centre take 50% more damage and are slowed by 60% instead.',
       cast(g, h, r, aim) {
         const dmg = R([60, 95, 130, 165, 200], r) + 0.6 * h.ap;
@@ -187,7 +187,7 @@ HEROES.kessa = {
         } });
       } },
     { key: 'E', name: 'Concussion Shell', kind: 'line', range: 1050, width: 70, castTime: 0.25,
-      cd: [13, 12.5, 12, 11.5, 11], cost: [60, 65, 70, 75, 80],
+      cd: [13, 12.5, 12, 11.5, 11], cost: [50, 55, 60, 65, 70],
       desc: 'Fire a shell that hits the first enemy for 80/110/140/170/200 + 45% AP and stuns it for 0.5s to 2s, longer the farther the shell flew.',
       cast(g, h, r, aim) {
         const dmg = R([80, 110, 140, 170, 200], r) + 0.45 * h.ap, range = this.range;

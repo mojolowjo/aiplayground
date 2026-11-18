@@ -199,6 +199,7 @@ addEventListener('keydown', e => {
     if (e.ctrlKey || e.metaKey) return;
     e.preventDefault();
     if (e.shiftKey) return cmd({ c: 'lvl', s: qi });
+    const why = blocked(qi); if (why) return say(why);
     if (myDef.abilities[qi].charge) { held[qi] = true; return cmd({ c: 'charge', s: qi }); }
     const t = unitAt(mouse.wx, mouse.wy, true);
     cmd({ c: 'cast', s: qi, x: mouse.wx, y: mouse.wy, id: t ? t.id : 0 });
@@ -213,6 +214,19 @@ addEventListener('keydown', e => {
 });
 
 const held = {};
+// Why an ability key would do nothing right now, so a dead key press always explains itself.
+function blocked(i) {
+  if (!me || !meUnit || meUnit.d) return '';
+  const a = myDef.abilities[i], rank = me.ranks[i];
+  if (!rank) return `${a.name} not learned — Shift+${a.key}`;
+  if (meUnit.bg) return i === 3 ? '' : 'Busy firing — S to end';
+  if (meUnit.st) return 'Stunned';
+  if (me.cds[i] > 0) return `${a.name} on cooldown`;
+  if (meUnit.mp < a.cost[Math.min(rank - 1, a.cost.length - 1)]) return 'Not enough mana';
+  return '';
+}
+let said = 0;
+function say(text) { const now = performance.now(); if (now - said < 400) return; said = now; floater(meUnit.x, meUnit.y - 60, text, '#ffb0a0', 15); }
 addEventListener('keyup', e => {
   const qi = ['KeyQ', 'KeyW', 'KeyE', 'KeyR'].indexOf(e.code);
   if (qi < 0 || !held[qi]) return;

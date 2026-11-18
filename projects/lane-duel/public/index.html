@@ -29,7 +29,8 @@
   .slot.off .ic { filter: grayscale(.85) brightness(.45); }
   .slot.small { width: 44px; height: 44px; } .slot .k { position: absolute; left: 3px; top: 1px; font-size: 11px; font-weight: 700; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; }
   .slot .cd { font-size: 20px; font-weight: 700; line-height: 56px; text-shadow: 0 0 4px #000, 0 0 4px #000; } .slot.small .cd { line-height: 44px; font-size: 15px; }
-  .slot.nomana { border-color: #2f6fbe; } .slot.up { border-color: #ffd24a; box-shadow: 0 0 8px #ffd24a; }
+  .slot.nomana { border-color: #3f8fff; } .slot.nomana .ic { filter: grayscale(.5) brightness(.4); }
+  .slot.nomana::after { content: 'no mana'; position: absolute; left: 0; right: 0; bottom: 14px; font-size: 10px; font-weight: 700; color: #8fc4ff; text-shadow: 0 0 3px #000, 0 0 3px #000; } .slot.up { border-color: #ffd24a; box-shadow: 0 0 8px #ffd24a; }
   .slot .pips { position: absolute; bottom: 1px; text-shadow: 0 0 2px #000; left: 0; right: 0; font-size: 8px; letter-spacing: 1px; color: #ffd24a; }
   #stats { margin-left: 10px; font-size: 12px; color: #b8c7d1; line-height: 1.45; white-space: nowrap; }
   #tip { display: none; max-width: 300px; pointer-events: none; padding: 8px 10px; font-size: 13px; z-index: 5; }

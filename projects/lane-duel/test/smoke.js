@@ -71,17 +71,17 @@ for (const key of Object.keys(HEROES)) {
   assert(near > 0.5 && near < 0.9 && far > 1.6 && far <= 2, `E stun scales with distance: ${near.toFixed(2)}s near, ${far.toFixed(2)}s far`);
 
   // Q: IDLE -> CHARGING -> FIRING. Range grows with hold time, she is slowed while charging, too long cancels.
-  reset(1300); g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y });
+  reset(1100); g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y });
   assert(!h.state && !beam(), 'Q does not fire without charging');
   g.command(1, { c: 'charge', s: 0 }); assert.equal(h.state.name, 'charging');
   assert.equal(g.speed(h), h.baseMs * 0.5, 'slowed while charging');
   run(g, 0.3); g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y });
   const short = beam().len; assert.equal(h.state.name, 'firing'); run(g, 0.5);
-  assert(short > 700 && short < 900 && e.hp === 5000 && !h.state, 'a short charge falls short: ' + (short | 0));
-  reset(1300); g.command(1, { c: 'charge', s: 0 }); run(g, 1.6); g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y });
-  assert.equal(beam().len, 1400); run(g, 0.2); assert.equal(e.hp, 5000, 'beam waits for its delay'); run(g, 0.3);
-  assert(e.hp < 5000 && h.cds[0] > g.time, 'a full charge reaches 1400');
-  reset(1300); const mp = h.mp; g.command(1, { c: 'charge', s: 0 }); run(g, 3.1);
+  assert(short > 600 && short < 800 && e.hp === 5000 && !h.state, 'a short charge falls short: ' + (short | 0));
+  reset(1100); g.command(1, { c: 'charge', s: 0 }); run(g, 1.6); g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y });
+  assert.equal(beam().len, 1150); run(g, 0.3); assert.equal(e.hp, 5000, 'beam waits for its delay'); run(g, 0.2);
+  assert(e.hp < 5000 && h.cds[0] > g.time, 'a full charge reaches 1150');
+  reset(1100); const mp = h.mp; g.command(1, { c: 'charge', s: 0 }); run(g, 3.1);
   assert(!h.state && h.cds[0] <= g.time && h.mp >= mp, 'held too long: cancelled, nothing spent');
   g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); assert(!beam(), 'releasing after a cancel fires nothing');
   g.command(1, { c: 'charge', s: 0 }); g.stun(h, 0.1); assert(!h.state, 'a stun cancels the charge'); run(g, 0.2);
@@ -101,7 +101,7 @@ for (const key of Object.keys(HEROES)) {
   // Passive: a ready attack restores mana, then waits; kills shorten the wait
   for (const u of [...g.units.values()]) if (u.type === 'minion') g.units.delete(u.id);
   g.shots = []; g.nextWave = Infinity; reset(300); h.mp = 100; h.surgeAt = 0; g.command(1, { c: 'atk', id: e.id }); run(g, 1);
-  assert(h.mp > 100 + 2 * (30 + 4 * h.lvl) - 1, 'ready attack restored mana: ' + (h.mp | 0));
+  assert(h.mp > 100 + 2 * (40 + 5 * h.lvl) - 1, 'ready attack restored mana: ' + (h.mp | 0));
   const wait = HEROES.kessa.passive.wait(g, h); assert(wait > 10, 'passive went on its wait');
   g.command(1, { c: 'stop' }); const m = g.add({ type: 'minion', team: 'red', x: 3100, y: 900, radius: 32, hp: 1, mhp: 1, ad: 0, armor: 0, mr: 0, ms: 0, range: 0, as: 1, gold: 1, xp: 1 });
   g.damage(h, m, 5, 'true');
