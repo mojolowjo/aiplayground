@@ -319,4 +319,28 @@ const duel = (a, b = 'oriel') => {
   Math.random = realRandom;
   console.log('bot ok');
 }
+// 12. Selling items back, and 2v2: team totals, assists, four heroes
+{
+  const g = mk('wren', 'oriel'), h = g.heroes.get(1); h.gold = 2000;
+  g.command(1, { c: 'buy', item: 'greatblade' }); g.command(1, { c: 'buy', item: 'gem' });
+  const ad = h.ad, mhp = h.mhp, gold = h.gold; assert.deepEqual(h.items, ['greatblade', 'gem']);
+  g.command(1, { c: 'sell', i: 0 });
+  assert.deepEqual(h.items, ['gem']); assert.equal(h.gold, gold + 1300 * RULES.sellBack); assert.equal(h.ad, ad - 40, 'selling returns 80% and removes the stats');
+  g.command(1, { c: 'sell', i: 5 }); assert.equal(h.items.length, 1, 'an empty slot sells nothing');
+  h.x = 5000; g.command(1, { c: 'sell', i: 0 }); assert.equal(h.items.length, 1, 'no selling away from base');
+  h.x = MAP.spawn.blue.x; h.hp = h.mhp; g.command(1, { c: 'sell', i: 0 }); assert(h.items.length === 0 && h.mhp === mhp - 150 && h.hp <= h.mhp, 'health is capped after selling a health item');
+
+  const g2 = new Game([{ id: 1, team: 'blue', hero: 'sable', name: 'A' }, { id: 2, team: 'blue', hero: 'wren', name: 'B' },
+    { id: 3, team: 'red', hero: 'oriel', name: 'C' }, { id: 4, team: 'red', hero: 'gorrum', name: 'D' }]);
+  const [a, b, c, d] = [1, 2, 3, 4].map(i => g2.heroes.get(i)); g2.nextWave = Infinity;
+  assert.deepEqual(g2.goal, { kills: RULES.kills * 2, cs: RULES.cs * 2 }, '2v2 doubles the targets'); assert(a.y !== b.y, 'teammates spawn side by side');
+  for (const u of [a, b, c, d]) { u.x = 5000; u.y = 800; u.order = { type: 'hold' }; } c.y = 900;
+  a.cds = [20, 20, 20, 20].map(v => g2.time + v); g2.damage(a, c, 10, 'true'); g2.damage(b, c, 99999, 'true');
+  assert(b.kills === 1 && a.kills === 0 && a.assists === 1 && a.gold >= RULES.startGold + RULES.assistGold && b.gold >= RULES.startGold + RULES.killGold, 'killer and assister are both paid');
+  assert(Math.abs(a.cds[0] - g2.time - 5) < 0.01, 'an assist triggers Encore');
+  g2.step(); assert(!g2.over, 'one hero reaching the 1v1 target does not end a 2v2');
+  a.kills = 2; g2.step(); assert(!g2.over); a.kills = 3; g2.step(); assert(g2.over && g2.over.winner === 'blue', 'the team total does');
+  const snap = g2.snapshot(3); assert(snap.sc.b.k === 4 && snap.sc.b.n === 'A & B' && snap.units.filter(u => u.k === 'h').length === 4);
+  console.log('shop and 2v2 ok');
+}
 console.log('all checks passed');

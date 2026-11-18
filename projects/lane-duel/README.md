@@ -7,6 +7,14 @@ hits, a tower with aggro, brush, recall, a shop.
 
 First to 2 kills, 100 minions, or the enemy tower wins.
 
+## Modes
+
+Pick **1v1** or **2v2** in the lobby. Both use the same lane. In 2v2 the targets are team
+totals and double: 4 kills or 200 minions. Players are put on alternating teams as they join;
+**Switch team** moves you across if there is room, so two friends can play on the same side.
+Any seat nobody takes is filled by the practice opponent chosen next to the Start button.
+Damaging an enemy within 10 seconds of its death counts as an assist (150 gold, half the XP).
+
 ## Run it
 
 Needs Node.js 20 or newer.
@@ -69,9 +77,9 @@ a separate room.
 | S | Stop |
 | Q W E R | Abilities, cast at the cursor. Kessa's Q charges while held and fires on release; her R is pressed again for each shot |
 | Shift or Ctrl + Q/W/E/R, or click the icon | Spend a skill point |
-| D / F | Blink / Mend |
+| D / F | Blink / Mend (the lobby has a button to swap them; the choice is remembered) |
 | B | Recall to base (8s, cancelled by damage or orders) |
-| P | Shop (buy at base or while dead) |
+| P | Shop (buy at base or while dead). With it open, click an item in your bag to sell it for 80% of its price |
 | Y / Space | Toggle camera lock / centre on your character |
 | T | Show what each minion is targeting (practice aid) |
 

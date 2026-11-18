@@ -17,7 +17,11 @@ export const MAP = {
   ],
 };
 export const RULES = {
+  // kills and cs are per player on a team: a 2v2 team needs twice as many (team totals).
   kills: 2, cs: 100, firstWave: 30, startGold: 500, goldPerSec: 2,
+  modes: { '1v1': 1, '2v2': 2 },                    // players per team
+  killGold: 300, assistGold: 150, assistWindow: 10, // an assist = damaged the victim in the last 10s
+  sellBack: 0.8,                                    // share of an item's price returned when it is sold
   // Tower. Its damage to minions is a share of the minion's max health (MINION.*.towerShot); `ad` is what
   // heroes and cannon minions take, rising by heatPerShot for each shot in a row on a hero.
   tower: { hp: 2500, ad: 150, armor: 40, mr: 40, range: 775, as: 0.83, windupT: 0.15, projSpeed: 1300, radius: 90,
@@ -67,6 +71,8 @@ export class Game {
       this.add({ type: 'tower', team, x: p.x, y: p.y, radius: t.radius, hp: t.hp, mhp: t.hp, ad: t.ad, armor: t.armor, mr: t.mr,
         range: t.range, as: t.as, windupT: t.windupT, projSpeed: t.projSpeed, melee: false, heat: 0 });
     }
+    this.teamSize = Math.max(1, ...['blue', 'red'].map(t => players.filter(p => p.team === t).length));
+    this.goal = { kills: RULES.kills * this.teamSize, cs: RULES.cs * this.teamSize };
     for (const p of players) this.addHero(p);
   }
 
@@ -77,12 +83,12 @@ export class Game {
     this.units.set(u.id, u); return u;
   }
   addHero(p) {
-    const d = HEROES[p.hero], s = MAP.spawn[p.team];
-    const h = this.add({ type: 'hero', team: p.team, pid: p.id, name: p.name, hero: p.hero, def: d, x: s.x, y: s.y,
+    const d = HEROES[p.hero], s = MAP.spawn[p.team], mates = [...this.heroes.values()].filter(o => o.team === p.team).length;
+    const h = this.add({ type: 'hero', team: p.team, pid: p.id, name: p.name, hero: p.hero, def: d, x: s.x, y: s.y + mates * 130 - (this.teamSize - 1) * 65,
       radius: 55, melee: d.melee, projSpeed: d.projSpeed, lvl: 1, xp: 0, points: 1, ranks: [0, 0, 0, 0],
       cds: [0, 0, 0, 0], spellCds: { d: 0, f: 0 }, gold: RULES.startGold, items: [], kills: 0, deaths: 0, cs: 0, missed: 0,
       order: null, casting: null, dashing: null, recall: null, state: null, respawnAt: 0, revealUntil: 0, bot: !!p.bot, ai: p.ai || null, aiMem: {},
-      potionUntil: 0 });
+      potionUntil: 0, hitBy: new Map() });
     this.refresh(h); h.hp = h.mhp; h.mp = h.mmp; this.heroes.set(p.id, h); return h;
   }
   refresh(h) {
@@ -252,7 +258,7 @@ export class Game {
     if (t.type === 'hero') {
       t.recall = null;
       if (src && src.type === 'hero') {
-        t.lastHeroDmg = { id: src.id, at: this.time };
+        t.hitBy.set(src.id, this.time);                            // for kill credit and assists
         for (const u of this.units.values()) {
           if (u.team !== t.team || u.dead) continue;
           if (u.type === 'tower' && this.inRange(u, src)) { if (u.forced !== src.id) { u.forced = src.id; u.heat = 0; } }
@@ -275,10 +281,17 @@ export class Game {
       for (const h of near) { this.giveXp(h, t.xp / near.length); if (h !== src) h.missed++; }   // in range but no last hit = a missed minion
     } else if (t.type === 'hero') {
       t.deaths++; t.respawnAt = this.time + 5 + 1.5 * t.lvl; t.order = null; t.casting = null; t.dashing = null; t.recall = null;
-      let k = killer;
-      if (!k && t.lastHeroDmg && this.time - t.lastHeroDmg.at < 10) k = this.units.get(t.lastHeroDmg.id);
+      // Credit: whoever landed the blow, or else the hero who damaged the victim most recently. Every other
+      // hero who damaged it within the assist window gets an assist.
+      const recent = [...t.hitBy].filter(([, at]) => this.time - at < RULES.assistWindow).sort((a, b) => b[1] - a[1]).map(([id]) => this.units.get(id)).filter(Boolean);
+      const k = killer || recent[0] || null, xp = 100 + 40 * t.lvl; t.hitBy.clear();
       killer = k;
-      if (k) { k.kills++; k.gold += 300; this.giveXp(k, 100 + 40 * t.lvl); this.fx({ e: 'gold', x: t.x, y: t.y, n: 300, p: k.pid }); }
+      if (k) { k.kills++; k.gold += RULES.killGold; this.giveXp(k, xp); this.fx({ e: 'gold', x: t.x, y: t.y, n: RULES.killGold, p: k.pid }); }
+      for (const a of recent) {
+        if (a === k) continue;
+        a.assists = (a.assists || 0) + 1; a.gold += RULES.assistGold; this.giveXp(a, xp / 2); this.fx({ e: 'gold', x: t.x, y: t.y, n: RULES.assistGold, p: a.pid });
+        if (a.def.passive && a.def.passive.onKill) a.def.passive.onKill(this, a, t);
+      }
       this.fx({ e: 'kill', k: k ? k.name : 'the lane', v: t.name });
     } else if (t.type === 'tower') {
       this.over = { winner: other(t.team), reason: 'tower destroyed' };
@@ -300,6 +313,7 @@ export class Game {
     const num = v => (Number.isFinite(v) ? v : 0);
     if (c.c === 'lvl') return this.levelUp(h, c.s | 0);
     if (c.c === 'buy') return this.buy(h, c.item);
+    if (c.c === 'sell') return this.sell(h, c.i | 0);
     if (h.dead) return;
     const interrupt = () => { h.windup && (h.nextAttack = this.time); h.windup = null; h.recall = null; };
     switch (c.c) {
@@ -325,6 +339,13 @@ export class Game {
     if (it.potion) { h.gold -= it.cost; h.potionUntil = Math.max(this.time, h.potionUntil) + 10; return; }
     if (h.items.length >= 6 || (it.unique && h.items.includes(id))) return;
     h.gold -= it.cost; h.items.push(id); this.refresh(h);
+  }
+  // Sell the item in bag slot i for RULES.sellBack of its price. Same place rule as buying: at base or while dead.
+  sell(h, i) {
+    const it = ITEM[h.items[i]];
+    if (!it || (this.dist(h, MAP.spawn[h.team]) > MAP.fountainR && !h.dead)) return;
+    h.items.splice(i, 1); h.gold += Math.floor(it.cost * RULES.sellBack); this.refresh(h);
+    h.hp = Math.min(h.hp, h.mhp); h.mp = Math.min(h.mp, h.mmp);
   }
   aimFor(h, def, c) {
     let x = Number.isFinite(c.x) ? c.x : h.x, y = Number.isFinite(c.y) ? c.y : h.y;
@@ -396,10 +417,11 @@ export class Game {
     }
     this.separate();
     this.stepShots(); this.stepZones(); this.stepPickups();
-    for (const h of this.heroes.values()) {
+    for (const team of ['blue', 'red']) {               // win on team totals
       if (this.over) break;
-      if (h.kills >= RULES.kills) this.over = { winner: h.team, reason: `${RULES.kills} kills` };
-      else if (h.cs >= RULES.cs) this.over = { winner: h.team, reason: `${RULES.cs} minions` };
+      const hs = [...this.heroes.values()].filter(h => h.team === team), sum = k => hs.reduce((n, h) => n + h[k], 0);
+      if (sum('kills') >= this.goal.kills) this.over = { winner: team, reason: `${this.goal.kills} kills` };
+      else if (sum('cs') >= this.goal.cs) this.over = { winner: team, reason: `${this.goal.cs} minions` };
     }
   }
   // A wave is queued as a list of spawns, one minion every WAVES.stagger seconds: melee, then the cannon, then casters.
@@ -709,6 +731,8 @@ export class Game {
         p: +Math.min(1, (T - z.born) / Math.max(0.01, z.at - z.born)).toFixed(2) })),
       pk: this.pickups.map(b => ({ id: b.id, x: b.x | 0, y: b.y | 0, r: b.r, t: b.team[0], k: b.kind,
         p: +Math.min(1, (T - b.born) / Math.max(0.01, b.at - b.born)).toFixed(2), l: +Math.max(0, b.until - T).toFixed(1) })),
+      sc: Object.fromEntries(['blue', 'red'].map(t => { const hs = [...this.heroes.values()].filter(h => h.team === t);   // team scores
+        return [t[0], { n: hs.map(h => h.name).join(' & '), k: hs.reduce((n, h) => n + h.kills, 0), cs: hs.reduce((n, h) => n + h.cs, 0) }]; })),
       ev: this.events.filter(e => e.p === undefined || e.p === pid), over: this.over };
     if (me) snap.me = { id: me.id, gold: Math.floor(me.gold), xp: r(me.xp), xpn: xpToNext(me.lvl), pts: me.points, ranks: me.ranks,
       cds: me.cds.map(c => Math.max(0, +(c - T).toFixed(1))), sd: Math.max(0, r(me.spellCds.d - T)), sf: Math.max(0, r(me.spellCds.f - T)),

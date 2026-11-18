@@ -188,7 +188,7 @@ HEROES.sable = {
   windup: 0.2, hpRegen: 1.3, manaRegen: 1.8,
   // Kill-event hook. (The slash on picking up a blade lives with the blades, above.)
   passive: { name: 'Encore', refund: 15,
-    desc: 'Killing an enemy hero takes 15s off all your cooldowns. Walking over one of your dropped blades picks it up and slashes enemies within 340 for 45 + 10 per level + 35% AD + 45% AP.',
+    desc: 'A kill or assist on an enemy hero takes 15s off all your cooldowns. Walking over one of your dropped blades picks it up and slashes enemies within 340 for 45 + 10 per level + 35% AD + 45% AP.',
     onKill(g, h, t) { if (t.type === 'hero') for (let s = 0; s < 4; s++) h.cds[s] -= this.refund; } },
   abilities: [
     { key: 'Q', name: 'Ricochet Crescent', kind: 'pick', range: 650, cd: [10, 9.5, 9, 8.5, 8], cost: [40],

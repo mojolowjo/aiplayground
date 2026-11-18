@@ -15,6 +15,8 @@
   .hero:hover { border-color: #6f8fa8; } .hero.sel { border-color: #ffd24a; background: #1c2a33; }
   .hero b { font-size: 16px; } .hero small { color: #9fb2bf; display: block; margin-top: 2px; }
   button { background: #2a6fb0; color: #fff; border: 0; border-radius: 6px; padding: 8px 16px; font-size: 15px; cursor: pointer; }
+  button.mini { padding: 4px 10px; font-size: 13px; background: #24323c; margin-left: 8px; }
+  .bag { cursor: pointer; }
   button:disabled { background: #3a4852; color: #8a979f; cursor: default; }
   input, select { background: #0b1410; color: #e8eee9; border: 1px solid #33485a; border-radius: 4px; padding: 6px 8px; font-size: 14px; }
   #players { margin: 12px 0; } .blue { color: #5fb0ff; } .red { color: #ff6b6b; }
@@ -55,12 +57,14 @@
 
 <div id="lobby" class="panel">
   <h1>Lane Duel</h1>
-  <div class="sub">1v1 lane. First to <b id="rk">2</b> kills, <b id="rc">100</b> minions, or the enemy tower.</div>
+  <div class="sub"><span id="modeName">1v1</span> lane. First to <b id="rk">2</b> kills, <b id="rc">100</b> minions<span id="teamNote"></span>, or the enemy tower.</div>
   <div>Name <input id="name" maxlength="16" value="Player"> <span id="status" style="margin-left:10px;color:#9fb2bf"></span></div>
+  <div style="margin-top:10px">Mode <select id="mode"><option value="1v1">1v1</option><option value="2v2">2v2</option></select>
+    <button id="team" class="mini">Switch team</button> <button id="swap" class="mini"></button></div>
   <div id="players"></div>
   <div class="heroes" id="heroes"></div>
   <p><button id="start" disabled>Start</button>
-    <span id="oppRow" style="margin-left:8px">against <select id="opp">
+    <span id="oppRow" style="margin-left:8px"><span id="oppLabel">against</span> <select id="opp">
       <option value="dummy">a stationary dummy</option><option value="easy">a bot — easy</option>
       <option value="normal" selected>a bot — normal</option><option value="hard">a bot — hard</option></select></span>
     <span id="hint" style="color:#9fb2bf;margin-left:8px"></span></p>

@@ -26,19 +26,22 @@ const rooms = new Map();
 let nextPid = 1;
 const send = (ws, m) => ws.readyState === 1 && ws.send(JSON.stringify(m));
 
+const sizeOf = room => RULES.modes[room.mode];
+const count = (room, team) => room.players.filter(p => p.team === team).length;
 function lobby(room) {
-  const players = room.players.map(p => ({ id: p.id, name: p.name, team: p.team, hero: p.hero }));
-  for (const p of room.players) send(p.ws, { t: 'lobby', players, inGame: !!room.game });
+  const players = room.players.map(p => ({ id: p.id, name: p.name, team: p.team, hero: p.hero })), size = sizeOf(room);
+  for (const p of room.players) send(p.ws, { t: 'lobby', players, inGame: !!room.game, mode: room.mode, size,
+    goal: { kills: RULES.kills * size, cs: RULES.cs * size } });
 }
 const OPPONENTS = ['dummy', ...Object.keys(RULES.bot).filter(k => typeof RULES.bot[k] === 'object')];   // dummy, easy, normal, hard
 function start(room, opp) {
   const ps = room.players.filter(p => p.hero).map(p => ({ id: p.id, team: p.team, hero: p.hero, name: p.name }));
   if (!ps.length || ps.length < room.players.length) return;
-  if (ps.length === 1) {
-    const keys = Object.keys(HEROES);
-    ps.push({ id: -1, team: ps[0].team === 'blue' ? 'red' : 'blue', hero: keys[Math.random() * keys.length | 0],
+  // Empty seats are filled with the chosen practice opponent, on both teams.
+  const keys = Object.keys(HEROES); let botId = -1;
+  for (const team of ['blue', 'red']) while (ps.filter(p => p.team === team).length < sizeOf(room))
+    ps.push({ id: botId--, team, hero: keys[Math.random() * keys.length | 0],
       name: opp === 'dummy' ? 'Dummy' : `Bot (${opp})`, bot: true, ai: opp === 'dummy' ? null : opp });
-  }
   room.game = new Game(ps);
   clearInterval(room.timer);
   let last = performance.now(), acc = 0;
@@ -61,10 +64,10 @@ new WebSocketServer({ server, perMessageDeflate: false }).on('connection', ws =>
     if (m.t === 'ping') return send(ws, { t: 'pong', c: m.c });
     if (m.t === 'join' && !me) {
       const id = String(m.room || 'main').slice(0, 24);
-      room = rooms.get(id) || { id, players: [], game: null, timer: null };
+      room = rooms.get(id) || { id, players: [], game: null, timer: null, mode: '1v1' };
       rooms.set(id, room);
-      if (room.players.length >= 2) { room = null; return send(ws, { t: 'full' }); }
-      const team = room.players.some(p => p.team === 'blue') ? 'red' : 'blue';
+      if (room.players.length >= 2 * sizeOf(room)) { room = null; return send(ws, { t: 'full' }); }
+      const team = count(room, 'blue') <= count(room, 'red') ? 'blue' : 'red';
       me = { id: nextPid++, ws, team, hero: null, name: String(m.name || 'Player').slice(0, 16) || 'Player' };
       room.players.push(me);
       const strip = o => JSON.parse(JSON.stringify(o));
@@ -73,6 +76,15 @@ new WebSocketServer({ server, perMessageDeflate: false }).on('connection', ws =>
     }
     if (!me) return;
     if (m.t === 'pick' && !room.game && HEROES[m.hero]) { me.hero = m.hero; lobby(room); }
+    else if (m.t === 'mode' && !room.game && RULES.modes[m.mode]) {
+      // Switching to a smaller mode only works if everyone still fits, one team each side.
+      const size = RULES.modes[m.mode];
+      if (count(room, 'blue') <= size && count(room, 'red') <= size) room.mode = m.mode;
+      lobby(room);                                    // also when refused, so the asker's dropdown snaps back
+    } else if (m.t === 'team' && !room.game) {
+      const to = me.team === 'blue' ? 'red' : 'blue';
+      if (count(room, to) < sizeOf(room)) { me.team = to; lobby(room); }
+    }
     else if (m.t === 'start' && !room.game) start(room, OPPONENTS.includes(m.opp) ? m.opp : 'dummy');
     else if (m.t === 'rematch' && room.game && room.game.over) {
       room.game = null; for (const p of room.players) p.hero = null; lobby(room);

@@ -24,9 +24,9 @@ function connect() {
     const m = JSON.parse(e.data);
     if (m.t === 'snap') return onSnap(m);
     if (m.t === 'pong') ping = Math.round(performance.now() - m.c);
-    else if (m.t === 'hello') { hello = m; myId = m.id; $('rk').textContent = m.rules.kills; $('rc').textContent = m.rules.cs; buildHeroes(); }
+    else if (m.t === 'hello') { hello = m; myId = m.id; buildHeroes(); }
     else if (m.t === 'lobby') { lobbyState = m; inGame = m.inGame; if (!inGame) { snaps = []; offset = null; } renderLobby(); }
-    else if (m.t === 'full') $('status').textContent = 'This room already has two players.';
+    else if (m.t === 'full') $('status').textContent = 'This room is full.';
     else if (m.t === 'left') feed('The other player left.');
   };
   ws.onclose = () => { $('status').textContent = 'Disconnected — reload the page.'; $('lobby').style.display = 'block'; };
@@ -51,16 +51,29 @@ function renderLobby() {
   if (!inGame) { $('over').style.display = 'none'; $('shop').style.display = 'none'; shopOpen = false; }
   $('players').innerHTML = ps.map(p => `<div class="${p.team}">${p.team.toUpperCase()}: ${esc(p.name)}${p.id === myId ? ' (you)' : ''} — ${p.hero ? hello.heroes[p.hero].name : 'choosing…'}</div>`).join('');
   document.querySelectorAll('.hero').forEach(d => d.classList.toggle('sel', mine && d.dataset.k === mine.hero));
-  const ready = ps.every(p => p.hero);
+  const ready = ps.every(p => p.hero), seats = lobbyState.size * 2, empty = seats - ps.length, other = mine && mine.team === 'blue' ? 'red' : 'blue';
+  if (mine) hello.team = mine.team;                       // the team can change in the lobby
+  $('mode').value = lobbyState.mode; $('modeName').textContent = lobbyState.mode;
+  $('rk').textContent = lobbyState.goal.kills; $('rc').textContent = lobbyState.goal.cs; $('teamNote').textContent = lobbyState.size > 1 ? ' (team totals)' : '';
+  $('team').textContent = `Switch to ${other}`; $('team').disabled = ps.filter(p => p.team === other).length >= lobbyState.size;
   $('start').disabled = !ready;
   $('start').textContent = ps.length === 1 ? 'Practice' : 'Start';
-  $('oppRow').style.display = ps.length === 1 ? 'inline' : 'none';
-  $('hint').textContent = ps.length === 1 ? 'Waiting for a second player — send them this page\'s link.' : ready ? '' : 'Both players must pick.';
+  $('oppRow').style.display = empty ? 'inline' : 'none';
+  $('oppLabel').textContent = ps.length === 1 && seats === 2 ? 'against' : `empty seat${empty > 1 ? 's' : ''} filled by`;
+  $('hint').textContent = !ready ? 'Everyone must pick a character.' : empty ? 'Send this page\'s link to bring in more players.' : '';
   if (inGame && mine) { myDef = hello.heroes[mine.hero]; myHero = mine.hero; buildSlots(); buildShop(); cam.locked = true; cam.x = hello.map.spawn[mine.team].x; }
 }
 const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 $('start').onclick = () => { localStorage.ldOpp = $('opp').value; send({ t: 'start', opp: $('opp').value }); goFullscreen(); };
 if (localStorage.ldOpp) $('opp').value = localStorage.ldOpp;
+$('mode').onchange = () => send({ t: 'mode', mode: $('mode').value });
+$('team').onclick = () => send({ t: 'team' });
+// Blink and Mend can swap keys. spellKey maps the D and F keys to the spell each one casts.
+let swapSpells = localStorage.ldSwap === '1';
+const spellKey = () => (swapSpells ? { KeyD: 'f', KeyF: 'd' } : { KeyD: 'd', KeyF: 'f' });
+function showSwap() { $('swap').textContent = `Blink on ${swapSpells ? 'F' : 'D'}, Mend on ${swapSpells ? 'D' : 'F'} — swap`; }
+$('swap').onclick = () => { swapSpells = !swapSpells; localStorage.ldSwap = swapSpells ? '1' : '0'; showSwap(); if (inGame && myDef) buildSlots(); };
+showSwap();
 $('rematch').onclick = () => send({ t: 'rematch' });
 $('name').onchange = () => { localStorage.ldName = $('name').value; };
 
@@ -68,7 +81,7 @@ $('name').onchange = () => { localStorage.ldName = $('name').value; };
 let slotEls = [], myHero = '', bagKey = null;
 function buildSlots() {
   const el = $('slots'); el.innerHTML = ''; slotEls = [];
-  const defs = [...(myDef.passive ? [{ ...myDef.passive, pv: true, key: '' }] : []), ...myDef.abilities.map((a, i) => ({ ...a, i })), { ...hello.spells.d, sp: 'd' }, { ...hello.spells.f, sp: 'f' }];
+  const defs = [...(myDef.passive ? [{ ...myDef.passive, pv: true, key: '' }] : []), ...myDef.abilities.map((a, i) => ({ ...a, i })), ...['KeyD', 'KeyF'].map(k => ({ ...hello.spells[spellKey()[k]], sp: spellKey()[k], key: k[3] }))];
   for (const a of defs) {
     const d = document.createElement('div'); d.className = 'slot' + (a.sp || a.pv ? ' small' : '');
     d.innerHTML = `<div class="ic">${ICON(a.pv ? myHero + 'P' : a.sp ? 'spell_' + a.sp : myHero + a.i)}</div><div class="sweep"></div><span class="k">${a.key}</span><div class="cd"></div><div class="pips"></div>`;
@@ -120,16 +133,18 @@ function updateHud() {
   if (bagKey !== me.items.join()) {
     bagKey = me.items.join();
     $('bag').innerHTML = Array.from({ length: 6 }, (_, i) => { const it = hello.items.find(x => x.id === me.items[i]);
-      return `<div class="bag" title="${it ? it.name + ': ' + it.desc : ''}">${it ? ICON(it.id) : ''}</div>`; }).join('');
+      const sell = it ? ` — at base with the shop open (P), click to sell for ${Math.floor(it.cost * hello.rules.sellBack)}g` : '';
+      return `<div class="bag" data-i="${i}" title="${it ? it.name + ': ' + it.desc + sell : ''}">${it ? ICON(it.id) : ''}</div>`; }).join('');
+    $('bag').onclick = e => { const d = e.target.closest('.bag'); if (d && shopOpen && me.shop && me.items[d.dataset.i]) cmd({ c: 'sell', i: +d.dataset.i }); };
   }
-  const cur = snaps[snaps.length - 1], hs = cur.units.filter(u => u.k === 'h');
-  const sc = t => { const h = hs.find(u => u.t === t); return h ? `<span style="color:${TEAM[t]}">${esc(h.n)} ${h.kl}K ${h.cs}CS</span>` : `<span style="color:${TEAM[t]}">?</span>`; };
+  const cur = snaps[snaps.length - 1];
+  const sc = t => `<span style="color:${TEAM[t]}">${esc(cur.sc[t].n)} ${cur.sc[t].k}K ${cur.sc[t].cs}CS</span>`;
   const tm = cur.time | 0;
   $('top').innerHTML = `${sc('b')} &nbsp; ${tm / 60 | 0}:${String(tm % 60).padStart(2, '0')} &nbsp; ${sc('r')} &nbsp; <small style="color:#8a9aa5">${ping}ms</small>`;
   $('shop').style.display = shopOpen ? 'block' : 'none';
   if (shopOpen) {
     document.querySelectorAll('.item').forEach(d => { const it = hello.items.find(i => i.id === d.dataset.id); d.classList.toggle('no', !me.shop || me.gold < it.cost); });
-    $('inv').textContent = me.shop ? `Gold: ${me.gold} · ${6 - me.items.length} slots free` : 'Return to base to buy';
+    $('inv').textContent = me.shop ? `Gold: ${me.gold} · ${6 - me.items.length} slots free · click an item in your bag to sell it for ${hello.rules.sellBack * 100}%` : 'Return to base to buy or sell';
   }
 }
 function feed(text) {
@@ -231,7 +246,7 @@ addEventListener('keydown', e => {
     if (myDef.abilities[qi].charge) { held[qi] = true; return cmd({ c: 'charge', s: qi }); }
     const t = unitAt(mouse.wx, mouse.wy, true);
     cmd({ c: 'cast', s: qi, x: mouse.wx, y: mouse.wy, id: t ? t.id : 0 });
-  } else if (k === 'KeyD' || k === 'KeyF') cmd({ c: 'spell', s: k === 'KeyD' ? 'd' : 'f', x: mouse.wx, y: mouse.wy });
+  } else if (k === 'KeyD' || k === 'KeyF') cmd({ c: 'spell', s: spellKey()[k], x: mouse.wx, y: mouse.wy });
   else if (k === 'KeyA') pendingA = true;
   else if (k === 'KeyS') { cmd({ c: 'stop' }); pendingA = false; }
   else if (k === 'KeyB') cmd({ c: 'recall' });
