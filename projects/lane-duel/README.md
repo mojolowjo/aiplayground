@@ -19,8 +19,28 @@ npm install
 npm start
 ```
 
-Then open http://localhost:3000. With one player in the room, "Practice vs
-dummy" starts a solo game against a stationary enemy.
+Then open http://localhost:3000.
+
+## Practice alone
+
+With one player in the room the Start button becomes **Practice**, with a choice of opponent:
+
+- **A stationary dummy** stands by its tower and hits whatever comes into range.
+- **A bot (easy / normal / hard)** plays the lane: it last-hits minions, sometimes trades when you
+  walk up, throws its Q at you now and then, backs off below 35% health and recalls when safe.
+  Difficulty changes how accurately it last-hits, how often it trades and how well it aims.
+  It follows the same rules as a player (vision, cooldowns, mana).
+
+The stats panel shows your CS and missed CS, and **T** draws each minion's target.
+
+## Lane rules worth knowing
+
+- The first wave spawns at 0:30 and the two waves meet in the middle about 25 seconds later.
+- A tower shot removes 45% of a melee minion's max health and 70% of a caster's, so under your
+  tower a melee minion takes two tower shots and then your last hit. Cannon minions take the
+  tower's normal damage.
+- Heroes cannot walk through minions; a wave in the way has to be walked around. Blinks and
+  dashes pass through.
 
 ## Play over the internet
 
@@ -69,7 +89,9 @@ too. Hold Esc to leave fullscreen. Firefox and Safari do not support this part.
 ## Layout
 
 - `server.js` — web server and WebSocket rooms; runs the game at 30 ticks/s.
-- `game/sim.js` — all game rules. The server is the only authority.
+- `game/sim.js` — all game rules. The server is the only authority. The tunable numbers for the
+  map, towers, minions, collision and the bot are at the top, in `MAP`, `RULES`, `WAVES` and `MINION`.
+- `game/bot.js` — the practice bot. It plays through the same commands a player sends.
 - `game/data.js` — characters, abilities, items. Tune numbers here.
   Kessa's kit shows the two shared building blocks: `g.strike` (telegraph, delay,
   resolve) and the ability state machine (`g.enter` / `g.leave`), both in `sim.js`.
