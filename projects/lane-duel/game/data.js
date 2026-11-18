@@ -9,7 +9,7 @@ export const HEROES = {
     name: 'Vesk', role: 'Marksman', color: '#e8c14a',
     hp: 600, hpPer: 95, mana: 300, manaPer: 35, ad: 58, adPer: 3, as: 0.66, asPer: 3,
     armor: 26, armorPer: 4, mr: 30, mrPer: 1.3, ms: 325, range: 575, melee: false,
-    projSpeed: 2200, windup: 0.2, hpRegen: 0.8, manaRegen: 1.6,
+    projSpeed: 2200, shot: 'arrow', windup: 0.2, hpRegen: 0.8, manaRegen: 1.6,
     abilities: [
       { key: 'Q', name: 'Rapid Fire', kind: 'self', cd: [16, 15, 14, 13, 12], cost: [50],
         desc: 'Gain 30/40/50/60/70% attack speed for 4s.',
@@ -19,11 +19,11 @@ export const HEROES = {
         desc: 'Fire a bolt that hits the first enemy (60/95/130/165/200 + 50% AD) and bounces to another nearby enemy for 60%.',
         cast(g, h, r, aim) {
           const dmg = R([60, 95, 130, 165, 200], r) + 0.5 * h.ad;
-          g.line(h, aim, { speed: 1800, range: 1000, width: 60, color: '#ffe27a', onHit(t) {
+          g.line(h, aim, { speed: 1800, range: 1000, width: 60, color: '#ffe27a', style: 'arrow', onHit(t) {
             g.damage(h, t, dmg, 'phys');
             const n = g.enemiesIn(h.team, t.x, t.y, 450).filter(u => u !== t && !u.dead)
               .sort((a, b) => g.dist(a, t) - g.dist(b, t))[0];
-            if (n) g.homing(h, t.x, t.y, n, 1600, '#ffe27a', () => g.damage(h, n, dmg * 0.6, 'phys'));
+            if (n) g.homing(h, t.x, t.y, n, 1600, '#ffe27a', () => g.damage(h, n, dmg * 0.6, 'phys'), 'arrow');
           } });
         } },
       { key: 'E', name: 'Backstep', kind: 'dash', range: 350, cd: [18, 16, 14, 12, 10], cost: [40],
@@ -121,7 +121,7 @@ export const HEROES = {
         desc: 'Skillshot dealing 65/100/135/170/205 + 60% AD and marking the target for 4s. Your next attack on a marked target deals 30/45/60/75/90 bonus damage.',
         cast(g, h, r, aim) {
           const dmg = R([65, 100, 135, 170, 205], r) + 0.6 * h.ad;
-          g.line(h, aim, { speed: 2000, range: 850, width: 60, color: '#8affd9', onHit(t) {
+          g.line(h, aim, { speed: 2000, range: 850, width: 60, color: '#8affd9', style: 'blade', onHit(t) {
             g.damage(h, t, dmg, 'phys'); t.mark = { by: h.id, until: g.time + 4, dmg: 30 + 15 * r };
           } });
         } },

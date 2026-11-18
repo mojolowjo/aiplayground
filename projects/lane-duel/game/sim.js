@@ -90,10 +90,11 @@ export class Game {
   // ---------- ability primitives ----------
   line(h, aim, o) {
     this.shots.push({ id: this.nextId++, kind: 'line', x: h.x, y: h.y, dx: aim.dx, dy: aim.dy, left: o.range, team: h.team,
-      speed: o.speed, w: o.width, color: o.color, onHit: o.onHit, pierce: o.pierce, hit: new Set() });
+      speed: o.speed, w: o.width, color: o.color, onHit: o.onHit, pierce: o.pierce, hit: new Set(), style: o.style || 'orb' });
   }
-  homing(src, x, y, target, speed, color, onHit) {
-    this.shots.push({ id: this.nextId++, kind: 'home', x, y, target, speed, team: src.team, color, onHit, w: 24 });
+  homing(src, x, y, target, speed, color, onHit, style) {
+    this.shots.push({ id: this.nextId++, kind: 'home', x, y, target, speed, team: src.team, color, onHit, w: 24,
+      style: style || (src.type === 'tower' ? 'bolt' : src.type === 'minion' ? 'mote' : src.def.shot || 'orb') });
   }
   zone(h, o) {
     this.zones.push({ id: this.nextId++, x: o.x, y: o.y, r: o.r, team: h.team, born: this.time, at: this.time + o.delay,
@@ -120,6 +121,8 @@ export class Game {
     if (type !== 'true') amt *= 100 / (100 + (type === 'phys' ? t.armor : t.mr));
     if (t.shieldUntil > this.time && t.shieldAmt > 0) { const a = Math.min(t.shieldAmt, amt); t.shieldAmt -= a; amt -= a; }
     t.hp -= amt;
+    if (src && amt >= 1) this.fx({ e: 'dmg', id: t.id, x: Math.round(t.x), y: Math.round(t.y), n: Math.round(amt),
+      s: src.type === 'hero' ? src.id : 0, k: t.type[0], ty: type[0] });
     if (t.type === 'hero') {
       t.recall = null;
       if (src && src.type === 'hero') {
@@ -136,6 +139,7 @@ export class Game {
   }
   kill(src, t) {
     t.dead = true; t.hp = 0; t.windup = null; t.buffs = [];
+    this.fx({ e: 'die', x: Math.round(t.x), y: Math.round(t.y), t: t.team[0], k: t.type[0], h: t.hero });
     const enemy = [...this.heroes.values()].filter(h => h.team !== t.team);
     if (t.type === 'minion') {
       this.units.delete(t.id);
@@ -217,6 +221,7 @@ export class Game {
     h.recall = null; h.revealUntil = this.time + 1.5;
     if (h.windup) { h.windup = null; h.nextAttack = this.time; }
     if (def.kind !== 'self') h.face = Math.atan2(aim.dy, aim.dx);
+    this.fx({ e: 'cast', id: h.id, s, d: def.castTime || 0 });
     const fire = () => def.cast(this, h, r, aim);
     if (def.castTime) h.casting = { at: this.time + def.castTime, fire }; else fire();
   }
@@ -279,7 +284,9 @@ export class Game {
       u.face = Math.atan2(t.y - u.y, t.x - u.x);
       if (this.time >= u.nextAttack) {
         const period = 1 / this.atkSpeed(u);
-        u.windup = { id: t.id, at: this.time + (u.windupT ?? u.windupFrac * period) };
+        const wd = u.windupT ?? u.windupFrac * period;
+        u.windup = { id: t.id, at: this.time + wd };
+        this.fx({ e: 'atk', id: u.id, d: +wd.toFixed(2) });
         u.nextAttack = this.time + period;
       }
     } else this.moveToward(u, t.x, t.y);
@@ -437,7 +444,7 @@ export class Game {
     for (const u of this.units.values()) {
       if (!this.visible(u, team) && !u.dead) continue;
       const o = { id: u.id, k: u.type[0], t: u.team[0], x: r(u.x), y: r(u.y), hp: Math.ceil(u.hp), mhp: r(u.mhp) };
-      if (u.type === 'minion') o.m = u.melee ? 1 : 0;
+      if (u.type === 'minion') { o.m = u.melee ? 1 : 0; o.f = +u.face.toFixed(2); }
       if (u.type === 'tower') o.tg = u.targetId;
       if (u.type === 'hero') Object.assign(o, { h: u.hero, n: u.name, lvl: u.lvl, mp: r(u.mp), mmp: r(u.mmp), f: +u.face.toFixed(2),
         d: u.dead ? Math.ceil(u.respawnAt - T) : 0, st: T < u.stunUntil ? 1 : 0, rt: T < u.rootUntil ? 1 : 0,
@@ -447,7 +454,8 @@ export class Game {
       units.push(o);
     }
     const snap = { t: 'snap', time: +T.toFixed(3), units,
-      shots: this.shots.map(s => ({ id: s.id, x: r(s.x), y: r(s.y), w: s.w, t: s.team[0], c: s.color })),
+      shots: this.shots.map(s => ({ id: s.id, x: r(s.x), y: r(s.y), w: s.w, t: s.team[0], c: s.color, s: s.style,
+        a: +(s.kind === 'home' ? Math.atan2(s.target.y - s.y, s.target.x - s.x) : Math.atan2(s.dy, s.dx)).toFixed(2) })),
       zones: this.zones.map(z => ({ id: z.id, x: z.x | 0, y: z.y | 0, r: z.r, t: z.team[0], c: z.color,
         p: +Math.min(1, (T - z.born) / Math.max(0.01, z.at - z.born)).toFixed(2) })),
       ev: this.events.filter(e => e.p === undefined || e.p === pid), over: this.over };

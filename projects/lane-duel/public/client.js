@@ -7,7 +7,7 @@ let snaps = [], offset = null, me = null, meUnit = null, myDef = null;
 let cam = { x: 0, locked: true }, mouse = { x: 0, y: 0, wx: 0, wy: 0, rdown: false, lastMove: 0 };
 let pendingA = false, shopOpen = false, fx = [], ping = 0, W = 0, H = 0, scale = 1;
 
-function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; scale = H / 1500; }
+function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; scale = H / 1250; }
 addEventListener('resize', resize); resize();
 
 // ---------- networking ----------
@@ -125,12 +125,7 @@ function onSnap(s) {
   offset = offset === null || Math.abs(o - offset) > 0.5 ? o : offset + (o - offset) * 0.05;
   snaps.push(s); if (snaps.length > 20) snaps.shift();
   me = s.me; meUnit = s.units.find(u => u.id === (me && me.id));
-  for (const e of s.ev) {
-    if (e.e === 'gold') fx.push({ k: 'text', x: e.x, y: e.y, s: '+' + e.n, t0: now, dur: 1 });
-    else if (e.e === 'burst') fx.push({ k: 'burst', x: e.x, y: e.y, r: e.r, c: e.c, t0: now, dur: 0.3 });
-    else if (e.e === 'blink') fx.push({ k: 'burst', x: e.x, y: e.y, r: 70, c: '#ffffff', t0: now, dur: 0.25 });
-    else if (e.e === 'kill') feed(`${e.k} killed ${e.v}`);
-  }
+  for (const e of s.ev) { if (e.e === 'kill') feed(`${e.k} killed ${e.v}`); else gfxEvent(e, now, me ? me.id : 0); }
   if (s.over && $('over').style.display !== 'block') {
     const won = hello.team === s.over.winner;
     $('ot').textContent = won ? 'Victory' : 'Defeat'; $('ot').style.color = won ? '#ffd24a' : '#ff6b6b';
@@ -203,21 +198,11 @@ addEventListener('keydown', e => {
 
 // ---------- rendering ----------
 const sx = x => (x - cam.x) * scale + W / 2, sy = y => (y - hello.map.h / 2) * scale + H / 2;
-function circle(x, y, r, fill, stroke, lw) {
-  ctx.beginPath(); ctx.arc(sx(x), sy(y), r * scale, 0, 7);
-  if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw || 2; ctx.stroke(); }
-}
-function hpBar(u, w, h, yOff, col) {
-  const x = sx(u.x) - w / 2, y = sy(u.y) - yOff * scale - h;
-  ctx.fillStyle = '#000a'; ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
-  ctx.fillStyle = col; ctx.fillRect(x, y, w * Math.max(0, u.hp) / u.mhp, h);
-  return [x, y];
-}
 let lastFrame = performance.now();
 function frame() {
   requestAnimationFrame(frame);
-  const nowMs = performance.now(), dt = (nowMs - lastFrame) / 1000, now = nowMs / 1000; lastFrame = nowMs;
-  ctx.fillStyle = '#0b1410'; ctx.fillRect(0, 0, W, H);
+  const nowMs = performance.now(), dt = Math.min(0.1, (nowMs - lastFrame) / 1000), now = nowMs / 1000; lastFrame = nowMs;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#0b1410'; ctx.fillRect(0, 0, W, H);
   if (!hello || !inGame) return;
   const st = interp(); if (!st) return;
   const M = hello.map, my = hello.team[0], mine = st.units.find(u => u.id === (me && me.id));
@@ -226,68 +211,51 @@ function frame() {
   if (cam.locked && mine && !mine.d) cam.x = mine.x;
   else if (!cam.locked) { if (mouse.x < 24) cam.x -= 2200 * dt; if (mouse.x > W - 24) cam.x += 2200 * dt; }
   cam.x = halfW * 2 >= M.w ? M.w / 2 : Math.max(halfW, Math.min(M.w - halfW, cam.x));
-  // ground
-  ctx.fillStyle = '#1b3324'; ctx.fillRect(sx(0), sy(M.top), M.w * scale, (M.bot - M.top) * scale);
-  ctx.fillStyle = '#3a3a2c'; ctx.fillRect(sx(0), sy(M.mid - 170), M.w * scale, 340 * scale);
-  for (const t of ['blue', 'red']) circle(M.spawn[t].x, M.spawn[t].y, M.fountainR, t === 'blue' ? '#4aa3ff22' : '#ff5a5a22', t === 'blue' ? '#4aa3ff66' : '#ff5a5a66');
-  ctx.fillStyle = '#2f6b3acc';
-  for (const b of M.brush) ctx.fillRect(sx(b.x), sy(b.y), b.w * scale, b.h * scale);
-  // zones
-  for (const z of st.zones) {
-    const col = z.t === my ? '#6fb8ff' : '#ff6b6b';
-    circle(z.x, z.y, z.r, col + '22', col, 2); circle(z.x, z.y, z.r * z.p, col + '33');
-  }
-  // units
-  const order = { t: 0, m: 1, h: 2 };
-  for (const u of [...st.units].sort((a, b) => order[a.k] - order[b.k])) {
-    const col = TEAM[u.t];
-    if (u.k === 't') {
-      circle(u.x, u.y, 775 + 0, null, col + '30', 1);
-      circle(u.x, u.y, 90, '#2a3138', col, 5); circle(u.x, u.y, 45, col);
-      hpBar(u, 110, 9, 110, col);
-      const tg = st.units.find(o => o.id === u.tg);
-      if (tg && tg.k === 'h') { ctx.strokeStyle = '#ff3030'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx(u.x), sy(u.y)); ctx.lineTo(sx(tg.x), sy(tg.y)); ctx.stroke(); }
-    } else if (u.k === 'm') {
-      circle(u.x, u.y, u.m ? 32 : 26, col, '#0008', 2);
-      if (!u.m) circle(u.x, u.y, 10, '#fff9');
-      hpBar(u, 44, 5, 42, u.t === my ? '#4aa3ff' : '#ff5a5a');
-    } else if (!u.d) {
-      const def = hello.heroes[u.h];
-      ctx.globalAlpha = u.br ? 0.55 : 1;
-      circle(u.x, u.y, 55, def.color, col, 5);
-      ctx.strokeStyle = '#000'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(sx(u.x), sy(u.y));
-      ctx.lineTo(sx(u.x + Math.cos(u.f) * 55), sy(u.y + Math.sin(u.f) * 55)); ctx.stroke();
-      ctx.globalAlpha = 1;
-      if (u.sh) circle(u.x, u.y, 66, null, '#ffffff', 3);
-      if (u.mk) circle(u.x, u.y, 75, null, '#8affd9', 2);
-      if (u.rc) { ctx.strokeStyle = '#7fd0ff'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(sx(u.x), sy(u.y), 80 * scale, -1.57, -1.57 + 6.283 * u.rc); ctx.stroke(); }
-      const [bx, by] = hpBar(u, 96, 10, 78, u.t === my ? '#3fd06a' : '#ff5a5a');
-      ctx.fillStyle = '#000a'; ctx.fillRect(bx - 1, by + 11, 98, 4); ctx.fillStyle = '#4a8fe0'; ctx.fillRect(bx, by + 11, 96 * u.mp / u.mmp, 3);
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 12px system-ui'; ctx.textAlign = 'center';
-      ctx.fillText(`${u.lvl} ${u.n}`, sx(u.x), by - 4);
-      const tag = u.st ? 'STUNNED' : u.rt ? 'ROOTED' : u.sl ? 'slowed' : '';
-      if (tag) { ctx.fillStyle = '#ffd24a'; ctx.fillText(tag, sx(u.x), by - 18); }
-    }
-  }
-  // projectiles
-  for (const s of st.shots) circle(s.x, s.y, Math.max(10, s.w / 2.4), s.c || TEAM[s.t], '#000a', 1);
-  // effects
+  GFX.shake *= Math.exp(-dt * 9);
+  ctx.save(); if (GFX.shake > 0.3) ctx.translate((Math.random() - 0.5) * GFX.shake, (Math.random() - 0.5) * GFX.shake);
+  drawGround(M, now, cam.x, halfW);
+  for (const z of st.zones) drawZone(z, now, z.t === my);
+  // click markers sit on the ground
   fx = fx.filter(f => now - f.t0 < f.dur);
   for (const f of fx) {
-    const p = (now - f.t0) / f.dur;
-    if (f.k === 'burst') { ctx.globalAlpha = 1 - p; circle(f.x, f.y, f.r * (0.7 + 0.3 * p), (f.c || '#fff') + '55', f.c || '#fff', 3); ctx.globalAlpha = 1; }
-    else if (f.k === 'click') circle(f.x, f.y, 40 * (1 - p), null, f.c, 2);
-    else { ctx.fillStyle = '#ffd24a'; ctx.font = 'bold 15px system-ui'; ctx.textAlign = 'center'; ctx.fillText(f.s, sx(f.x), sy(f.y) - 30 - 30 * p); }
+    const p = (now - f.t0) / f.dur; ctx.strokeStyle = f.c; ctx.lineWidth = 2.5; ctx.globalAlpha = 1 - p;
+    ctx.beginPath(); ctx.ellipse(sx(f.x), sy(f.y), 44 * (1 - p) * scale + 3, 30 * (1 - p) * scale + 2, 0, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
   }
-  if (mine && pendingA && me) circle(mine.x, mine.y, me.range + 55, null, '#ffffff88', 1);
+  // units, back to front
+  const live = st.units.filter(u => !u.d).sort((a, b) => (a.k === 't' ? -1e5 : a.y) - (b.k === 't' ? -1e5 : b.y));
+  const anims = new Map();
+  for (const u of live) {
+    const a = animUpdate(u, now, dt), col = TEAM[u.t]; anims.set(u.id, a);
+    if (u.k === 't') {
+      drawTower(u, a, now, col, !!mine && Math.hypot(mine.x - u.x, mine.y - u.y) < 1100);
+      const tg = st.units.find(o => o.id === u.tg);
+      if (tg && tg.k === 'h' && !tg.d) {
+        ctx.strokeStyle = '#ff3030'; ctx.lineWidth = 2 + 1.5 * Math.sin(now * 20); ctx.globalAlpha = 0.8; ctx.setLineDash([10, 8]); ctx.lineDashOffset = -now * 120;
+        ctx.beginPath(); ctx.moveTo(sx(u.x), sy(u.y)); ctx.lineTo(sx(tg.x), sy(tg.y)); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+      }
+    } else if (u.k === 'm') drawMinion(u, a, now, col);
+    else drawHero(u, a, now, col, u.id === (me && me.id));
+  }
+  for (const s of st.shots) drawShot(s, now, TEAM[s.t]);
+  drawTrees(M, now, cam.x, halfW);
+  drawParts(dt, now);
+  for (const u of live) {
+    const a = anims.get(u.id), mineTeam = u.t === my;
+    if (u.k === 't') smallBar(u, a, 120, 10, 128, TEAM[u.t]);
+    else if (u.k === 'm') smallBar(u, a, 46, 5, 44, mineTeam ? '#4aa3ff' : '#ff5a5a');
+    else heroBar(u, a, mineTeam ? (u.id === me.id ? '#3fd06a' : '#4aa3ff') : '#ff5a5a', u.id === (me && me.id));
+  }
+  if (mine && pendingA && me) { ctx.strokeStyle = '#ffffffaa'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), (me.range + 55) * scale, 0, 7); ctx.stroke(); }
+  ctx.restore();
+  gfxCleanup(now);
   // minimap strip
   const mw = Math.min(520, W * 0.4), mx = W - mw - 10, myy = 10, mh = 26;
   ctx.fillStyle = '#0c141acc'; ctx.fillRect(mx, myy, mw, mh); ctx.strokeStyle = '#33485a'; ctx.lineWidth = 1; ctx.strokeRect(mx, myy, mw, mh);
-  for (const u of st.units) { if (u.d) continue; ctx.fillStyle = TEAM[u.t]; const r = u.k === 'h' ? 5 : u.k === 't' ? 6 : 2;
+  for (const u of live) { ctx.fillStyle = TEAM[u.t]; const r = u.k === 'h' ? 5 : u.k === 't' ? 6 : 2;
     ctx.fillRect(mx + u.x / M.w * mw - r / 2, myy + 4 + (u.y - M.top) / (M.bot - M.top) * (mh - 8) - r / 2, r, r); }
   ctx.strokeStyle = '#fff8'; ctx.strokeRect(mx + (cam.x - halfW) / M.w * mw, myy, Math.min(mw, halfW * 2 / M.w * mw), mh);
   // death overlay
-  if (meUnit && meUnit.d) { ctx.fillStyle = '#0008'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = '#fff'; ctx.font = 'bold 34px system-ui'; ctx.textAlign = 'center';
+  if (meUnit && meUnit.d) { ctx.fillStyle = '#0009'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = '#fff'; ctx.font = 'bold 34px system-ui'; ctx.textAlign = 'center';
     ctx.fillText(`Respawning in ${meUnit.d}`, W / 2, H * 0.3); }
   updateHud();
 }

@@ -59,5 +59,6 @@ a separate room.
 - `server.js` — web server and WebSocket rooms; runs the game at 30 ticks/s.
 - `game/sim.js` — all game rules. The server is the only authority.
 - `game/data.js` — characters, abilities, items. Tune numbers here.
-- `public/` — the browser client (rendering and input only).
+- `public/client.js` — networking, input, HUD and the frame loop.
+- `public/gfx.js` — all art, drawn in code: characters, animations, particles, map.
 - `test/smoke.js` — rules check without a network: `npm test`.
