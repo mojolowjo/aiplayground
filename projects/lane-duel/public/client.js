@@ -229,6 +229,7 @@ function frame() {
     const p = (now - f.t0) / f.dur; ctx.strokeStyle = f.c; ctx.lineWidth = 2.5; ctx.globalAlpha = 1 - p;
     ctx.beginPath(); ctx.ellipse(sx(f.x), sy(f.y), 44 * (1 - p) * scale + 3, 30 * (1 - p) * scale + 2, 0, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
   }
+  drawGroundParts(dt);
   // units, back to front
   const live = st.units.filter(u => !u.d).sort((a, b) => (a.k === 't' ? -1e5 : a.y) - (b.k === 't' ? -1e5 : b.y));
   const anims = new Map();

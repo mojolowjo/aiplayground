@@ -27,7 +27,7 @@ function animUpdate(u, now, dt) {
     if (a.f === null) a.f = u.f;
     let d = u.f - a.f; d = Math.atan2(Math.sin(d), Math.cos(d)); a.f += d * Math.min(1, dt * 18);
   }
-  if (mv && u.k === 'h' && (a.dust -= dt) <= 0) { a.dust = 0.22; burstParts(u.x, u.y + 20, 2, { color: '#b8a888', speed: 30, life: 0.5, size: 7, alpha: 0.35 }); }
+  if (mv && u.k === 'h' && (a.dust -= dt) <= 0) { a.dust = 0.22; burstParts(u.x - Math.cos(a.f || 0) * 34, u.y - Math.sin(a.f || 0) * 34 + 10, 2, { color: '#b8a888', speed: 26, life: 0.5, size: 6, alpha: 0.3, ground: true }); }
   if (a.hp > u.hp) a.hp = Math.max(u.hp, a.hp - u.mhp * 0.6 * dt); else a.hp = u.hp;
   a.x = u.x; a.y = u.y; a.seen = now;
   return a;
@@ -46,14 +46,17 @@ function burstParts(x, y, n, o) {
     const r0 = o.ring ? o.ring : 0;
     GFX.parts.push({ x: x + Math.cos(ang) * r0, y: y + Math.sin(ang) * r0, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp + (o.vy || 0),
       life: (o.life || 0.5) * (0.6 + Math.random() * 0.6), max: o.life || 0.5, size: (o.size || 6) * (0.6 + Math.random() * 0.8),
-      color: o.color || '#fff', glow: !!o.glow, alpha: o.alpha ?? 1, drag: o.drag ?? 2.5 });
+      color: o.color || '#fff', glow: !!o.glow, alpha: o.alpha ?? 1, drag: o.drag ?? 2.5, ground: !!o.ground });
   }
   if (GFX.parts.length > 900) GFX.parts.splice(0, GFX.parts.length - 900);
 }
 function floater(x, y, text, color, size) { GFX.floaters.push({ x: x + (Math.random() - 0.5) * 40, y, text, color, size: size || 15, t0: performance.now() / 1000, dur: 0.9 }); }
-function drawParts(dt, now) {
+// Ground particles (dust) are drawn before the units so they sit under them; everything else goes on top.
+function drawGroundParts(dt) { drawPartLayer(dt, true); }
+function drawPartLayer(dt, ground) {
   const keep = [];
   for (const p of GFX.parts) {
+    if (p.ground !== ground) { keep.push(p); continue; }
     p.life -= dt; if (p.life <= 0) continue;
     p.x += p.vx * dt; p.y += p.vy * dt; const k = Math.max(0, 1 - p.drag * dt); p.vx *= k; p.vy *= k;
     const f = clamp01(p.life / p.max);
@@ -62,6 +65,9 @@ function drawParts(dt, now) {
     keep.push(p);
   }
   GFX.parts = keep; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+}
+function drawParts(dt, now) {
+  drawPartLayer(dt, false);
   GFX.floaters = GFX.floaters.filter(f => now - f.t0 < f.dur);
   ctx.textAlign = 'center';
   for (const f of GFX.floaters) {
