@@ -47,7 +47,7 @@ a separate room.
 | Right-click | Move, or attack the enemy under the cursor (hold to keep moving) |
 | A, then left-click | Attack-move (Shift + right-click also works) |
 | S | Stop |
-| Q W E R | Abilities, cast at the cursor |
+| Q W E R | Abilities, cast at the cursor. Kessa's Q charges while held and fires on release; her R is pressed again for each shot |
 | Shift + Q/W/E/R, or click the icon | Spend a skill point |
 | D / F | Blink / Mend |
 | B | Recall to base (8s, cancelled by damage or orders) |
@@ -59,6 +59,8 @@ a separate room.
 - `server.js` — web server and WebSocket rooms; runs the game at 30 ticks/s.
 - `game/sim.js` — all game rules. The server is the only authority.
 - `game/data.js` — characters, abilities, items. Tune numbers here.
+  Kessa's kit shows the two shared building blocks: `g.strike` (telegraph, delay,
+  resolve) and the ability state machine (`g.enter` / `g.leave`), both in `sim.js`.
 - `public/client.js` — networking, input, HUD and the frame loop.
 - `public/gfx.js` — all art, drawn in code: characters, animations, particles, map.
 - `public/icons.js` — ability, spell and item icons as inline SVG.

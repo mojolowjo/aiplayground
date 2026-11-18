@@ -66,16 +66,17 @@ $('name').onchange = () => { localStorage.ldName = $('name').value; };
 let slotEls = [], myHero = '', bagKey = null;
 function buildSlots() {
   const el = $('slots'); el.innerHTML = ''; slotEls = [];
-  const defs = [...myDef.abilities.map((a, i) => ({ ...a, i })), { ...hello.spells.d, sp: 'd' }, { ...hello.spells.f, sp: 'f' }];
+  const defs = [...(myDef.passive ? [{ ...myDef.passive, pv: true, key: '' }] : []), ...myDef.abilities.map((a, i) => ({ ...a, i })), { ...hello.spells.d, sp: 'd' }, { ...hello.spells.f, sp: 'f' }];
   for (const a of defs) {
-    const d = document.createElement('div'); d.className = 'slot' + (a.sp ? ' small' : '');
-    d.innerHTML = `<div class="ic">${ICON(a.sp ? 'spell_' + a.sp : myHero + a.i)}</div><div class="sweep"></div><span class="k">${a.key}</span><div class="cd"></div><div class="pips"></div>`;
+    const d = document.createElement('div'); d.className = 'slot' + (a.sp || a.pv ? ' small' : '');
+    d.innerHTML = `<div class="ic">${ICON(a.pv ? myHero + 'P' : a.sp ? 'spell_' + a.sp : myHero + a.i)}</div><div class="sweep"></div><span class="k">${a.key}</span><div class="cd"></div><div class="pips"></div>`;
     d.onmouseenter = () => { const t = $('tip'); t.style.display = 'block';
-      const cds = Array.isArray(a.cd) ? a.cd.join('/') : a.cd;
-      t.innerHTML = `<b>${a.name}</b> (${a.key})<br>${a.desc}<br><small style="color:#9fb2bf">Cooldown ${cds}s${a.cost ? ' · Mana ' + a.cost.join('/') : ''}${a.range ? ' · Range ' + a.range : ''}</small>`;
+      const cds = Array.isArray(a.cd) ? a.cd.join('/') : a.cd, range = Array.isArray(a.range) ? a.range.join('/') : a.range;
+      t.innerHTML = a.pv ? `<b>${a.name}</b> (passive)<br>${a.desc}` :
+        `<b>${a.name}</b> (${a.key})<br>${a.desc}<br><small style="color:#9fb2bf">Cooldown ${cds}s${a.cost ? ' · Mana ' + a.cost.join('/') : ''}${range ? ' · Range ' + range : ''}</small>`;
       const r = d.getBoundingClientRect(); t.style.left = r.left + 'px'; t.style.bottom = (innerHeight - r.top + 8) + 'px'; };
     d.onmouseleave = () => { $('tip').style.display = 'none'; };
-    if (!a.sp) d.onclick = () => cmd({ c: 'lvl', s: a.i });
+    if (!a.sp && !a.pv) d.onclick = () => cmd({ c: 'lvl', s: a.i });
     el.appendChild(d); slotEls.push({ d, a, sweep: d.children[1], cdEl: d.children[3], pips: d.children[4] });
   }
   const s = document.createElement('div'); s.id = 'stats'; el.appendChild(s);
@@ -95,6 +96,11 @@ function updateHud() {
   if (!me || !meUnit) return;
   setBar('hpb', meUnit.hp, meUnit.mhp, true); setBar('mpb', meUnit.mp, meUnit.mmp, true); setBar('xpb', me.xp, me.xpn);
   for (const { d, a, sweep, cdEl, pips } of slotEls) {
+    if (a.pv) {   // passive: shows the wait until it is ready again
+      cdEl.textContent = me.pv > 0 ? Math.ceil(me.pv) : ''; d.classList.toggle('off', me.pv > 0);
+      sweep.style.background = me.pv > 0 ? `conic-gradient(rgba(0,0,0,0) ${100 - Math.min(100, 100 * me.pv / a.every)}%, rgba(4,8,12,.72) 0)` : 'none';
+      continue;
+    }
     const cd = a.sp ? (a.sp === 'd' ? me.sd : me.sf) : me.cds[a.i], rank = a.sp ? 1 : me.ranks[a.i];
     cdEl.textContent = cd > 0 ? (cd < 10 && !a.sp ? cd.toFixed(1) : Math.ceil(cd)) : '';
     const full = a.sp ? a.cd : a.cd[Math.min(Math.max(rank - 1, 0), a.cd.length - 1)], pct = Math.min(100, 100 * cd / full);
@@ -223,8 +229,9 @@ function frame() {
   if (!hello || !inGame) return;
   const st = interp(); if (!st) return;
   const M = hello.map, my = hello.team[0], mine = st.units.find(u => u.id === (me && me.id));
-  // camera (zooms out while planted in a long-range stance)
-  zoom += ((mine && mine.sg ? 0.72 : 1) - zoom) * Math.min(1, dt * 5); scale = H / 1250 * zoom;
+  // camera (zooms out during a barrage until the whole range fits on screen)
+  const barrage = mine && mine.bg && myDef && me ? myDef.abilities[3].range[Math.max(0, me.ranks[3] - 1)] : 0;
+  zoom += ((barrage ? Math.min(1, W / 2 / (H / 1250) / (barrage + 250)) : 1) - zoom) * Math.min(1, dt * 5); scale = H / 1250 * zoom;
   const halfW = W / 2 / scale;
   if (cam.locked && mine && !mine.d) cam.x = mine.x;
   else if (!cam.locked) { if (mouse.x < 24) cam.x -= 2200 * dt; if (mouse.x > W - 24) cam.x += 2200 * dt; }
@@ -264,12 +271,18 @@ function frame() {
     else if (u.k === 'm') smallBar(u, a, 46, 5, 44, mineTeam ? '#4aa3ff' : '#ff5a5a');
     else heroBar(u, a, mineTeam ? (u.id === me.id ? '#3fd06a' : '#4aa3ff') : '#ff5a5a', u.id === (me && me.id));
   }
-  if (mine && mine.sg) { ctx.strokeStyle = '#8fd0ff66'; ctx.lineWidth = 2; ctx.setLineDash([14, 10]); ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), 1500 * scale, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
-  if (mine && mine.ch > 0 && myDef) {   // charge preview: where the shell will land and how wide
-    const def = myDef.abilities.find(a => a.charge), range = mine.sg ? 1500 : def.range, [wx, wy] = toWorld(mouse.x, mouse.y);
-    const d = Math.hypot(wx - mine.x, wy - mine.y) || 1, k = Math.min(1, range / d), px = mine.x + (wx - mine.x) * k, py = mine.y + (wy - mine.y) * k;
-    ctx.strokeStyle = '#ffffff55'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), range * scale, 0, 7); ctx.stroke();
-    ctx.fillStyle = '#8fd0ff33'; ctx.strokeStyle = '#dff2ff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx(px), sy(py), (def.radius + 90 * mine.ch) * scale, 0, 7); ctx.fill(); ctx.stroke();
+  if (barrage) {   // barrage: range ring, and where the next shot would land
+    const def = myDef.abilities[3], [wx, wy] = toWorld(mouse.x, mouse.y), d = Math.hypot(wx - mine.x, wy - mine.y) || 1, k = Math.min(1, barrage / d);
+    ctx.strokeStyle = '#8fd0ff66'; ctx.lineWidth = 2; ctx.setLineDash([14, 10]); ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), barrage * scale, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = '#8fd0ff22'; ctx.strokeStyle = '#dff2ff'; ctx.beginPath(); ctx.arc(sx(mine.x + (wx - mine.x) * k), sy(mine.y + (wy - mine.y) * k), def.radius * scale, 0, 7); ctx.fill(); ctx.stroke();
+  }
+  if (mine && mine.hl > 0 && myDef) {   // charge preview: the beam's current reach inside its maximum reach
+    const c = myDef.abilities.find(a => a.charge).charge, [wx, wy] = toWorld(mouse.x, mouse.y), an = Math.atan2(wy - mine.y, wx - mine.x);
+    const len = c.min + (c.max - c.min) * mine.ch;
+    ctx.save(); ctx.translate(sx(mine.x), sy(mine.y)); ctx.rotate(an); ctx.scale(scale, scale);
+    ctx.strokeStyle = '#ffffff55'; ctx.lineWidth = 2; ctx.setLineDash([12, 10]); ctx.strokeRect(0, -c.width / 2, c.max, c.width); ctx.setLineDash([]);
+    ctx.fillStyle = mine.hl > 0.8 ? '#ff8a6a44' : '#8fd0ff44'; ctx.strokeStyle = '#dff2ff'; ctx.lineWidth = 3; ctx.fillRect(0, -c.width / 2, len, c.width); ctx.strokeRect(0, -c.width / 2, len, c.width);
+    ctx.restore();
   }
   if (mine && pendingA && me) { ctx.strokeStyle = '#ffffffaa'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), (me.range + 55) * scale, 0, 7); ctx.stroke(); }
   ctx.restore();
@@ -280,6 +293,8 @@ function frame() {
   for (const u of live) { ctx.fillStyle = TEAM[u.t]; const r = u.k === 'h' ? 5 : u.k === 't' ? 6 : 2;
     ctx.fillRect(mx + u.x / M.w * mw - r / 2, myy + 4 + (u.y - M.top) / (M.bot - M.top) * (mh - 8) - r / 2, r, r); }
   ctx.strokeStyle = '#fff8'; ctx.strokeRect(mx + (cam.x - halfW) / M.w * mw, myy, Math.min(mw, halfW * 2 / M.w * mw), mh);
+  if (barrage) { ctx.fillStyle = '#dff2ff'; ctx.font = 'bold 20px system-ui'; ctx.textAlign = 'center'; ctx.lineWidth = 4; ctx.strokeStyle = '#000c';
+    const txt = `${mine.bg} shot${mine.bg > 1 ? 's' : ''} left · ${me.bt.toFixed(1)}s · R to fire, S to end`; ctx.strokeText(txt, W / 2, H * 0.2); ctx.fillText(txt, W / 2, H * 0.2); }
   // death overlay
   if (meUnit && meUnit.d) { ctx.fillStyle = '#0009'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = '#fff'; ctx.font = 'bold 34px system-ui'; ctx.textAlign = 'center';
     ctx.fillText(`Respawning in ${meUnit.d}`, W / 2, H * 0.3); }

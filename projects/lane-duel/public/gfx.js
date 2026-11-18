@@ -1,7 +1,7 @@
 'use strict';
 // Procedural art, animation state and particles. Everything is drawn in code.
 // Uses globals defined in client.js at call time: ctx, scale, sx, sy, hello, W, H.
-const GFX = { parts: [], floaters: [], anim: new Map(), trails: new Map(), shake: 0, scenery: null };
+const GFX = { parts: [], floaters: [], beams: [], anim: new Map(), trails: new Map(), shake: 0, scenery: null };
 const TAU = Math.PI * 2, OUT = '#10141a';
 const clamp01 = v => Math.max(0, Math.min(1, v));
 const ease = t => t * t * (3 - 2 * t);
@@ -68,6 +68,15 @@ function drawPartLayer(dt, ground) {
 }
 function drawParts(dt, now) {
   drawPartLayer(dt, false);
+  GFX.beams = GFX.beams.filter(b => now - b.t0 < 0.35);
+  for (const b of GFX.beams) {   // a resolved line strike: a bright streak that thins out
+    const k = 1 - (now - b.t0) / 0.35;
+    ctx.save(); ctx.translate(sx(b.x), sy(b.y)); ctx.rotate(b.a); ctx.scale(scale, scale); ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.55 * k; ctx.fillStyle = b.c; ctx.fillRect(0, -b.w / 2, b.l, b.w);
+    ctx.globalAlpha = k; ctx.fillStyle = '#ffffff'; ctx.fillRect(0, -b.w * 0.22 * k, b.l, b.w * 0.44 * k);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   GFX.floaters = GFX.floaters.filter(f => now - f.t0 < f.dur);
   ctx.textAlign = 'center';
   for (const f of GFX.floaters) {
@@ -173,9 +182,11 @@ function drawHero(u, a, now, teamCol, isMe) {
   ctx.globalAlpha = 1;
   ctx.rotate(-f);
   // status effects
-  if (u.sg) { ctx.setLineDash([18, 12]); ctx.lineDashOffset = -now * 40; ell(0, 0, 92, 92, null, col, 4); ctx.setLineDash([]);
-    for (let i = 0; i < 3; i++) { const an = i * TAU / 3 + 0.5; seg(Math.cos(an) * 58, Math.sin(an) * 58, Math.cos(an) * 96, Math.sin(an) * 96, '#aab3bd', 7); } }
-  if (u.ch) { ctx.strokeStyle = u.ch >= 1 ? '#ffffff' : col; ctx.lineWidth = 7; ctx.lineCap = 'butt'; ctx.beginPath(); ctx.arc(0, 0, 74, -1.57, -1.57 + TAU * u.ch); ctx.stroke(); glow(0, 0, 60 + 50 * u.ch, col, 0.25 + 0.4 * u.ch); }
+  if (u.bg) { ctx.setLineDash([18, 12]); ctx.lineDashOffset = -now * 40; ell(0, 0, 92, 92, null, col, 4); ctx.setLineDash([]);
+    for (let i = 0; i < 3; i++) { const an = i * TAU / 3 + 0.5; seg(Math.cos(an) * 58, Math.sin(an) * 58, Math.cos(an) * 96, Math.sin(an) * 96, '#aab3bd', 7); }
+    for (let i = 0; i < u.bg; i++) ell((i - (u.bg - 1) / 2) * 26, 112, 9, 9, '#dff2ff', OUT, 2.5); }
+  if (u.hl) { ctx.strokeStyle = u.hl > 0.8 ? '#ff8a6a' : u.ch >= 1 ? '#ffffff' : col; ctx.lineWidth = 7; ctx.lineCap = 'butt'; ctx.beginPath(); ctx.arc(0, 0, 74, -1.57, -1.57 + TAU * Math.max(0.02, u.ch)); ctx.stroke(); glow(0, 0, 60 + 50 * u.ch, col, 0.25 + 0.4 * u.ch); }
+  if (u.pr) { const pu = 0.5 + 0.5 * Math.sin(now * 6); for (let i = 0; i < 3; i++) { const an = now * 2.4 + i * TAU / 3; ell(Math.cos(an) * 66, Math.sin(an) * 66, 6 + pu * 2, 6 + pu * 2, '#7fb8ff', OUT, 2); } }
   if (u.sh) { const pu = 1 + Math.sin(now * 8) * 0.03; ell(0, 0, 72 * pu, 72 * pu, 'rgba(190,225,255,.18)', 'rgba(230,245,255,.9)', 3); }
   if (u.sl) { ctx.setLineDash([10, 12]); ell(0, 8, 58, 40, null, '#9fe0ff', 4); ctx.setLineDash([]); }
   if (u.rt) for (let i = 0; i < 8; i++) { const an = i / 8 * TAU; poly([Math.cos(an) * 46, Math.sin(an) * 46, Math.cos(an + 0.25) * 70, Math.sin(an + 0.25) * 70, Math.cos(an + 0.5) * 46, Math.sin(an + 0.5) * 46], '#7a4bd0', OUT, 2); }
@@ -266,6 +277,14 @@ function drawShot(s, now, teamCol) {
 function drawZone(z, now, mine) {
   const col = z.c || (mine ? '#6fb8ff' : '#ff6b6b'), edge = mine ? '#bfe0ff' : '#ff7a6a';
   ctx.save(); ctx.translate(sx(z.x), sy(z.y)); ctx.scale(scale, scale);
+  if (z.l) {   // line strike: a strip that fills from the caster outwards
+    ctx.rotate(z.a); ctx.fillStyle = col;
+    ctx.globalAlpha = 0.18 + 0.12 * z.p; ctx.fillRect(0, -z.w / 2, z.l, z.w);
+    ctx.globalAlpha = 0.4; ctx.fillRect(0, -z.w / 2 * ease(z.p), z.l, z.w * ease(z.p));
+    ctx.globalAlpha = 0.9; ctx.strokeStyle = edge; ctx.lineWidth = 4; ctx.setLineDash([26, 16]); ctx.lineDashOffset = now * 80; ctx.strokeRect(0, -z.w / 2, z.l, z.w); ctx.setLineDash([]);
+    ctx.globalAlpha = 1; ctx.restore(); return;
+  }
+  if (z.i) { ctx.globalAlpha = 0.3 + 0.2 * z.p; ell(0, 0, z.i, z.i, col, edge, 3); }
   ctx.globalAlpha = 0.16 + 0.1 * z.p; ell(0, 0, z.r, z.r, col);
   ctx.globalAlpha = 0.35; ell(0, 0, z.r * ease(z.p), z.r * ease(z.p), col);
   ctx.globalAlpha = 0.9; ctx.setLineDash([26, 16]); ctx.lineDashOffset = now * 80; ell(0, 0, z.r, z.r, null, edge, 4); ctx.setLineDash([]);
@@ -380,7 +399,11 @@ function gfxEvent(e, now, myId) {
   } else if (e.e === 'burst') {
     burstParts(e.x, e.y, Math.round(e.r / 9), { color: e.c || '#fff', speed: 160, life: 0.5, size: 8, glow: true, ring: e.r * 0.85 });
     burstParts(e.x, e.y, Math.round(e.r / 14), { color: '#ffffff', speed: e.r * 1.6, life: 0.35, size: 6, glow: true });
-  } else if (e.e === 'blink') burstParts(e.x, e.y, 22, { color: '#bfe6ff', speed: 260, life: 0.45, size: 7, glow: true });
+  } else if (e.e === 'beam') {
+    GFX.beams.push({ ...e, c: e.c || '#fff', t0: now }); GFX.shake = Math.min(10, GFX.shake + 3);
+    for (let d = 40; d < e.l; d += 70) burstParts(e.x + Math.cos(e.a) * d, e.y + Math.sin(e.a) * d, 3, { color: e.c || '#fff', speed: 150, life: 0.45, size: 7, glow: true });
+  } else if (e.e === 'mana') { floater(e.x, e.y - 20, '+' + e.n + ' mana', '#7fb8ff', 14); burstParts(e.x, e.y, 8, { color: '#7fb8ff', speed: 110, life: 0.5, size: 5, glow: true, vy: -70 }); }
+  else if (e.e === 'blink') burstParts(e.x, e.y, 22, { color: '#bfe6ff', speed: 260, life: 0.45, size: 7, glow: true });
   else if (e.e === 'gold') { floater(e.x, e.y - 20, '+' + e.n + 'g', '#ffd24a', 15); burstParts(e.x, e.y, 6, { color: '#ffd24a', speed: 120, life: 0.5, size: 5, glow: true, vy: -80 }); }
 }
 function gfxCleanup(now) {

@@ -3,6 +3,7 @@
 // aim = { x, y, dx, dy, target } (x,y already clamped to ability range).
 
 const R = (arr, r) => arr[Math.min(r, arr.length - 1)];
+const lerp = (a, b, t) => a + (b - a) * Math.max(0, Math.min(1, t));
 
 export const HEROES = {
   vesk: {
@@ -34,7 +35,7 @@ export const HEROES = {
         desc: 'Arrows rain on an area for 3s, dealing 40/65/90 + 25% AD every 0.5s and slowing by 30%.',
         cast(g, h, r, aim) {
           const dmg = R([40, 65, 90], r) + 0.25 * h.ad;
-          g.zone(h, { x: aim.x, y: aim.y, r: 300, delay: 0.8, ticks: 6, interval: 0.5, color: '#ffe27a',
+          g.strike(h, { x: aim.x, y: aim.y, r: 300, delay: 0.8, ticks: 6, interval: 0.5, color: '#ffe27a',
             onHit(t) { g.damage(h, t, dmg, 'phys'); g.addBuff(t, 'slow', 0.3, 1); } });
         } },
     ],
@@ -58,7 +59,7 @@ export const HEROES = {
         desc: 'After 0.75s an area erupts for 70/115/160/205/250 + 60% AP.',
         cast(g, h, r, aim) {
           const dmg = R([70, 115, 160, 205, 250], r) + 0.6 * h.ap;
-          g.zone(h, { x: aim.x, y: aim.y, r: 220, delay: 0.75, color: '#ff9a4a',
+          g.strike(h, { x: aim.x, y: aim.y, r: 220, delay: 0.75, color: '#ff9a4a',
             onHit(t) { g.damage(h, t, dmg, 'magic'); } });
         } },
       { key: 'E', name: 'Snare Spark', kind: 'line', range: 950, width: 70, castTime: 0.25,
@@ -75,7 +76,7 @@ export const HEROES = {
         desc: 'After 1.1s a large area detonates for 250/375/500 + 90% AP.',
         cast(g, h, r, aim) {
           const dmg = R([250, 375, 500], r) + 0.9 * h.ap;
-          g.zone(h, { x: aim.x, y: aim.y, r: 350, delay: 1.1, color: '#ffd24a',
+          g.strike(h, { x: aim.x, y: aim.y, r: 350, delay: 1.1, color: '#ffd24a',
             onHit(t) { g.damage(h, t, dmg, 'magic'); } });
         } },
     ],
@@ -146,38 +147,70 @@ export const HEROES = {
   },
 };
 
+// Kessa is built from two shared pieces in sim.js: g.strike (telegraph -> delay -> resolve) and the ability
+// state machine (g.enter / g.leave). Each ability below is one of those, or both, with different numbers.
 HEROES.kessa = {
   name: 'Kessa', role: 'Artillery', color: '#6fb6e8',
   hp: 540, hpPer: 88, mana: 440, manaPer: 32, ad: 52, adPer: 3, as: 0.62, asPer: 1.4,
   armor: 20, armorPer: 4, mr: 30, mrPer: 1.3, ms: 325, range: 525, melee: false,
   projSpeed: 1500, shot: 'orb', windup: 0.24, hpRegen: 0.7, manaRegen: 2.3,
+  // Event hooks: sim.js calls onAttack when her basic attack lands and onKill when she kills anything.
+  passive: { name: 'Recycler', every: 12, perKill: 2,
+    desc: 'Every 12s your next attack restores 30 + 4 per level mana, doubled against heroes. Each enemy you kill shortens the wait by 2s.',
+    wait: (g, h) => (h.surgeAt || 0) - g.time,
+    onAttack(g, h, t) {
+      if (this.wait(g, h) > 0) return;
+      const n = (30 + 4 * h.lvl) * (t.type === 'hero' ? 2 : 1);
+      g.restoreMana(h, n); h.surgeAt = g.time + this.every; g.fx({ e: 'mana', x: Math.round(h.x), y: Math.round(h.y), n, p: h.pid });
+    },
+    onKill(g, h) { if (this.wait(g, h) > 0) h.surgeAt -= this.perKill; } },
   abilities: [
-    { key: 'Q', name: 'Arc Shell', kind: 'point', range: 1050, radius: 150, charge: { max: 1.2 },
-      cd: [6, 5.5, 5, 4.5, 4], cost: [50, 55, 60, 65, 70],
-      rangeOf: (g, h) => (h.siegeUntil > g.time ? 1500 : 1050), cdMult: (g, h) => (h.siegeUntil > g.time ? 0.5 : 1),
-      desc: 'Hold to charge for up to 1.2s, release to lob a shell that lands after a delay (longer at range) for 60/95/130/165/200 + 55% AP. A full charge deals 50% more damage in a much wider blast. Landing on your Beacon it is wider still and slows by 35%.',
+    // IDLE -> CHARGING (hold) -> FIRING (release). The charge itself lives in sim.js (startCharge / cast).
+    { key: 'Q', name: 'Rail Lance', kind: 'line', range: 1400,
+      charge: { full: 1.5, hold: 3, min: 700, max: 1400, width: 130, slow: 0.5 },
+      cd: [9, 8, 7, 6, 5], cost: [60, 65, 70, 75, 80],
+      desc: 'Hold to charge: range grows from 700 to 1400 over 1.5s while you move 50% slower. Release to fire a beam that hits every enemy in a line for 70/110/150/190/230 + 75% AP. Holding for more than 3s cancels it.',
       cast(g, h, r, aim) {
-        const p = aim.power || 0, dmg = (R([60, 95, 130, 165, 200], r) + 0.55 * h.ap) * (1 + 0.5 * p), b = h.beacon;
-        const lit = b && b.until > g.time && Math.hypot(aim.x - b.x, aim.y - b.y) <= b.r;
-        g.zone(h, { x: aim.x, y: aim.y, r: 150 + 90 * p + (lit ? 70 : 0), delay: 0.45 + Math.hypot(aim.x - h.x, aim.y - h.y) / 2200, color: '#8fd0ff',
-          onHit(t) { g.damage(h, t, dmg, 'magic'); if (lit) g.addBuff(t, 'slow', 0.35, 1.5); } });
+        const c = this.charge, len = lerp(c.min, c.max, aim.power), dmg = R([70, 110, 150, 190, 230], r) + 0.75 * h.ap;
+        g.strike(h, { shape: 'line', x: h.x, y: h.y, dx: aim.dx, dy: aim.dy, len, w: c.width, delay: 0.3, color: '#8fd0ff',
+          onHit(t) { g.damage(h, t, dmg, 'magic'); } });
+        g.enter(h, 0, 'firing', 0.3, { lock: true });
       } },
-    { key: 'W', name: 'Beacon', kind: 'point', range: 900, radius: 300, cd: [16, 15, 14, 13, 12], cost: [60],
-      desc: 'Mark an area for 6s. Arc Shells that land inside it hit a wider area and slow.',
+    { key: 'W', name: 'Ground Zero', kind: 'point', range: 1000, radius: 260, inner: 120, castTime: 0.2,
+      cd: [14, 13, 12, 11, 10], cost: [70, 80, 90, 100, 110],
+      desc: 'Mark an area that blows up after 0.7s for 60/95/130/165/200 + 60% AP and a 25% slow for 2.5s. Enemies in the centre take 50% more damage and are slowed by 60% instead.',
       cast(g, h, r, aim) {
-        h.beacon = { x: aim.x, y: aim.y, r: 300, until: g.time + 6 };
-        g.zone(h, { x: aim.x, y: aim.y, r: 300, delay: 6, color: '#ffe9a0', quiet: true, onHit() {} });
+        const dmg = R([60, 95, 130, 165, 200], r) + 0.6 * h.ap;
+        g.strike(h, { x: aim.x, y: aim.y, r: this.radius, inner: this.inner, delay: 0.7, color: '#ffe9a0', onHit(t, centre) {
+          if (centre) { g.damage(h, t, dmg * 1.5, 'magic'); g.addBuff(t, 'slow', 0.6, 2.5); }
+          else { g.damage(h, t, dmg, 'magic'); g.addBuff(t, 'slow', 0.25, 2.5); }
+        } });
       } },
-    { key: 'E', name: 'Repulse', kind: 'self', radius: 320, cd: [18, 17, 16, 15, 14], cost: [70],
-      desc: 'Blast enemies within 320 away from you, dealing 50/80/110/140/170 + 30% AP and stunning them for 0.75s.',
+    { key: 'E', name: 'Concussion Shell', kind: 'line', range: 1050, width: 70, castTime: 0.25,
+      cd: [13, 12.5, 12, 11.5, 11], cost: [60, 65, 70, 75, 80],
+      desc: 'Fire a shell that hits the first enemy for 80/110/140/170/200 + 45% AP and stuns it for 0.5s to 2s, longer the farther the shell flew.',
+      cast(g, h, r, aim) {
+        const dmg = R([80, 110, 140, 170, 200], r) + 0.45 * h.ap, range = this.range;
+        g.line(h, aim, { speed: 1400, range, width: this.width, color: '#dff2ff', onHit(t, shot) {
+          g.damage(h, t, dmg, 'magic'); g.stun(t, lerp(0.5, 2, shot.dist / range));
+        } });
+      } },
+    // IDLE -> BARRAGE. Each recast while in the state is one more W-style strike; the state ends when the
+    // shots or the time run out, when she is stunned, or on Stop.
+    { key: 'R', name: 'Fire Mission', kind: 'self', range: [1800, 2100, 2400], radius: 200, cd: [120, 105, 90], cost: [100],
+      desc: 'Root yourself for up to 10s and gain 3/4/5 long-range shots (range 1800/2100/2400). Press R again to drop each one at the cursor: after 0.6s it hits an area for 150/200/250 + 40% AP. Press S to end early.',
       cast(g, h, r) {
-        const dmg = R([50, 80, 110, 140, 170], r) + 0.3 * h.ap;
-        g.burst(h, h.x, h.y, 320, '#8fd0ff', t => { g.damage(h, t, dmg, 'magic'); g.knock(t, h.x, h.y, 380); g.stun(t, 0.75); });
+        g.enter(h, 3, 'barrage', 10, { lock: true, stopEnds: true, shots: 3 + r, next: g.time + 0.4, range: R(this.range, r) });
+      },
+      recast(g, h, r, aim, st) {
+        if (g.time < st.next) return;
+        const d = Math.min(st.range, Math.hypot(aim.x - h.x, aim.y - h.y)), dmg = R([150, 200, 250], r) + 0.4 * h.ap;
+        g.strike(h, { x: h.x + aim.dx * d, y: h.y + aim.dy * d, r: this.radius, delay: 0.6, color: '#8fd0ff',
+          onHit(t) { g.damage(h, t, dmg, 'magic'); } });
+        h.face = Math.atan2(aim.dy, aim.dx); h.revealUntil = g.time + 1.5; g.fx({ e: 'cast', id: h.id, s: 3, d: 0 });
+        st.next = g.time + 0.6;
+        if (--st.shots <= 0) g.leave(h, 'done');
       } },
-    { key: 'R', name: 'Siege Stance', kind: 'self', cd: [110, 95, 80], cost: [100],
-      desc: 'Plant yourself for 6/7/8s: you cannot move, but Arc Shell reaches 1500 range and recharges twice as fast. Press again to end early.',
-      toggle(g, h) { if (!(h.siegeUntil > g.time)) return false; h.siegeUntil = 0; h.rootUntil = Math.min(h.rootUntil, g.time); return true; },
-      cast(g, h, r) { const d = 6 + r; h.siegeUntil = g.time + d; h.rootUntil = Math.max(h.rootUntil, g.time + d); h.order = { type: 'hold' }; h.cds[0] = Math.min(h.cds[0], g.time + 0.5); } },
   ],
 };
 
