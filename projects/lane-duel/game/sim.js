@@ -20,7 +20,7 @@ const ITEM = Object.fromEntries(ITEMS.map(i => [i.id, i]));
 
 export class Game {
   constructor(players) {
-    this.time = 0; this.nextId = 1; this.units = new Map(); this.shots = []; this.zones = [];
+    this.time = 0; this.nextId = 1; this.units = new Map(); this.shots = []; this.zones = []; this.pickups = [];
     this.events = []; this.over = null; this.nextWave = RULES.firstWave; this.heroes = new Map();
     for (const team of ['blue', 'red']) {
       const p = MAP.tower[team];
@@ -33,7 +33,7 @@ export class Game {
   // ---------- setup ----------
   add(u) {
     u.id = this.nextId++; u.buffs = []; u.nextAttack = 0; u.windup = null; u.dead = false;
-    u.stunUntil = 0; u.rootUntil = 0; u.shieldAmt = 0; u.shieldUntil = 0; u.face = u.team === 'blue' ? 0 : Math.PI;
+    u.stunUntil = 0; u.rootUntil = 0; u.silenceUntil = 0; u.airUntil = 0; u.shieldAmt = 0; u.shieldUntil = 0; u.face = u.team === 'blue' ? 0 : Math.PI;
     this.units.set(u.id, u); return u;
   }
   addHero(p) {
@@ -62,7 +62,32 @@ export class Game {
   buffMax(u, k) { let s = 0; for (const b of u.buffs) if (b.k === k && b.v > s) s = b.v; return s; }
   speed(u) { return (u.baseMs || u.ms) * (1 - this.buffMax(u, 'slow')) * (1 + this.buffSum(u, 'haste')) * (1 - ((u.state && u.state.slow) || 0)); }
   atkSpeed(u) { return Math.min(2.5, u.as * (1 + this.buffSum(u, 'as') / 100)); }
-  addBuff(u, k, v, dur) { if (!u.dead) u.buffs.push({ k, v, until: this.time + dur }); }
+  // Timed buff. o.tag: replaces any earlier buff with the same tag (for stacks that refresh).
+  // o.onEnd: runs when the buff runs out, which is how one buff chains into the next.
+  addBuff(u, k, v, dur, o = {}) {
+    if (u.dead) return;
+    if (o.tag) u.buffs = u.buffs.filter(b => b.tag !== o.tag);
+    u.buffs.push({ k, v, until: this.time + dur, tag: o.tag, onEnd: o.onEnd });
+  }
+  silence(u, dur) { u.silenceUntil = Math.max(u.silenceUntil, this.time + dur); this.leave(u, 'cancel'); }
+  knockUp(u, dur) { if (u.type === 'tower') return; this.stun(u, dur); u.airUntil = this.time + dur; }
+  // A mark is a tag one ability leaves on a target: t.mark = { by, until, pop(t) }. Anything else the
+  // marker lands on that target calls popMark, which removes the tag and runs its effect.
+  popMark(h, t) {
+    const m = t.mark; if (!m || m.by !== h.id || m.until <= this.time || t.dead) return false;
+    t.mark = null; m.pop(t); return true;
+  }
+  // Chain targeting: starting from `first`, repeatedly hop to the nearest enemy not already in the chain.
+  chain(h, first, count, hop) {
+    const out = [first];
+    while (out.length < count) {
+      const last = out[out.length - 1];
+      const n = this.enemiesIn(h.team, last.x, last.y, hop).filter(u => !out.includes(u) && this.targetable(h, u))
+        .sort((a, b) => this.dist(a, last) - this.dist(b, last))[0];
+      if (!n) break; out.push(n);
+    }
+    return out;
+  }
   stun(u, dur) { u.stunUntil = Math.max(u.stunUntil, this.time + dur); u.windup = null; u.casting = null; u.recall = null; this.leave(u, 'cancel'); }
   root(u, dur) { u.rootUntil = Math.max(u.rootUntil, this.time + dur); }
   shield(u, amt, dur) { u.shieldAmt = amt; u.shieldUntil = this.time + dur; }
@@ -91,7 +116,7 @@ export class Game {
   // ---------- ability primitives ----------
   line(h, aim, o) {
     this.shots.push({ id: this.nextId++, kind: 'line', x: h.x, y: h.y, dx: aim.dx, dy: aim.dy, left: o.range, range: o.range, dist: 0, team: h.team,
-      speed: o.speed, w: o.width, color: o.color, onHit: o.onHit, pierce: o.pierce, hit: new Set(), style: o.style || 'orb' });
+      speed: o.speed, w: o.width, color: o.color, onHit: o.onHit, pierce: o.pierce, hit: new Set(), style: o.style || 'orb', own: o.tether ? h.id : 0 });
   }
   homing(src, x, y, target, speed, color, onHit, style) {
     this.shots.push({ id: this.nextId++, kind: 'home', x, y, target, speed, team: src.team, color, onHit, w: 24,
@@ -122,12 +147,32 @@ export class Game {
     for (const t of this.enemiesIn(h.team, x, y, r)) onHit(t);
   }
   dash(h, o) { h.dashing = o; h.windup = null; }
-  // Shove a unit directly away from a point over a quarter of a second.
-  knock(t, fromX, fromY, dist) {
+  // Forced movement: the unit is carried at a fixed velocity and stunned (its own controls are
+  // overridden) until it arrives. Towers cannot be moved.
+  shove(t, vx, vy, dur, extraStun = 0) {
     if (t.type === 'tower' || t.dead) return;
-    let dx = t.x - fromX, dy = t.y - fromY; const d = Math.hypot(dx, dy) || 1;
-    t.push = { vx: dx / d * dist / 0.25, vy: dy / d * dist / 0.25, until: this.time + 0.25 };
-    t.dashing = null; this.stun(t, 0.25);
+    t.push = { vx, vy, until: this.time + dur }; t.dashing = null; this.stun(t, dur + extraStun);
+  }
+  pull(t, to, speed) {
+    const dx = to.x - t.x, dy = to.y - t.y, d = Math.hypot(dx, dy), go = d - to.radius - t.radius;
+    if (go > 0) this.shove(t, dx / d * speed, dy / d * speed, go / speed, 0.2);
+  }
+  // Pickups are objects lying in the world. One becomes live `delay` seconds after it is dropped, stays
+  // for o.life seconds, and runs o.onTake when its owner walks within o.r of it.
+  drop(h, x, y, delay, o) {
+    const b = { id: this.nextId++, kind: o.kind, owner: h, team: h.team, x, y, r: o.r, born: this.time, at: this.time + delay,
+      until: this.time + delay + o.life, onTake: o.onTake };
+    this.clampPos(b); this.pickups.push(b); return b;
+  }
+  take(h, b) {
+    const i = this.pickups.indexOf(b); if (i < 0) return;
+    this.pickups.splice(i, 1); this.fx({ e: 'take', x: b.x | 0, y: b.y | 0 }); b.onTake(b);
+  }
+  stepPickups() {
+    for (const b of [...this.pickups]) {
+      if (this.time >= b.until) this.pickups.splice(this.pickups.indexOf(b), 1);
+      else if (this.time >= b.at && !b.owner.dead && this.dist(b.owner, b) <= b.r) this.take(b.owner, b);
+    }
   }
   blink(h, x, y) {
     this.fx({ e: 'blink', x: h.x, y: h.y }); h.x = x; h.y = y; this.clampPos(h); this.fx({ e: 'blink', x: h.x, y: h.y });
@@ -142,7 +187,7 @@ export class Game {
   enter(h, s, name, dur, flags) {
     this.leave(h, 'cancel');
     if (h.windup) { h.windup = null; h.nextAttack = this.time; }
-    h.state = { name, s, t0: this.time, until: this.time + dur, ...flags };
+    h.state = { name, s, t0: this.time, until: this.time + dur, tickAt: this.time, ...flags };
   }
   leave(h, why) {
     const st = h.state; if (!st) return;
@@ -177,6 +222,7 @@ export class Game {
     }
     if (src && src.type === 'hero') src.revealUntil = this.time + 1.5;
     if (t.hp <= 0) this.kill(src, t);
+    else if (t.type === 'hero' && t.def.passive && t.def.passive.onDamaged) t.def.passive.onDamaged(this, t);
   }
   kill(src, t) {
     t.dead = true; t.hp = 0; t.windup = null; t.buffs = []; this.leave(t, 'cancel');
@@ -249,7 +295,7 @@ export class Game {
     if (range && (def.kind === 'point' || def.kind === 'dash')) {
       const r = Math.min(d, range); x = h.x + dx * r; y = h.y + dy * r;
     }
-    return { x, y, dx, dy, target: this.units.get(c.id) };
+    return { x, y, dx, dy };
   }
   canAct(h) { return !h.dead && h.stunUntil <= this.time && !h.casting && !h.dashing; }
   // Charged abilities: pressing the key enters CHARGING, releasing it casts with aim.power = 0..1.
@@ -263,7 +309,7 @@ export class Game {
   }
   cast(h, s, c) {
     const def = h.def.abilities[s], r = h.ranks[s] - 1, st = h.state;
-    if (!def || r < 0 || !this.canAct(h)) return;
+    if (!def || r < 0 || !this.canAct(h) || h.silenceUntil > this.time) return;
     if (st && st.s !== s) return;                                   // busy with another ability
     if (st && st.name !== 'charging') { if (def.recast) def.recast(this, h, r, this.aimFor(h, def, c), st); return; }
     if (def.charge && !st) return;                                  // charged abilities only fire from CHARGING
@@ -274,11 +320,8 @@ export class Game {
     const aim = this.aimFor(h, def, c);
     aim.power = st ? Math.max(0, Math.min(1, (this.time - st.t0) / st.full)) : 0;
     if (st) this.leave(h, 'done');
-    if (def.kind === 'unit') {
-      const t = aim.target;
-      if (!this.targetable(h, t) || t.type !== 'hero' || this.dist(h, t) > def.range + t.radius) return;
-      if (h.rootUntil > this.time) return;
-    }
+    // Target validation: an ability with `pick` chooses what it is aimed at; no valid target, no cast.
+    if (def.pick) { aim.target = def.pick(this, h, aim); if (!aim.target) { this.fx({ e: 'say', p: h.pid, m: 'No target there' }); return; } }
     h.mp -= cost; h.cds[s] = this.time + def.cd[Math.min(r, def.cd.length - 1)];
     h.recall = null; h.revealUntil = this.time + 1.5;
     if (h.windup) { h.windup = null; h.nextAttack = this.time; }
@@ -300,7 +343,10 @@ export class Game {
     this.time += DT;
     if (this.time >= this.nextWave) { this.spawnWave(); this.nextWave += RULES.waveEvery; }
     for (const u of [...this.units.values()]) {
-      if (u.buffs.length) u.buffs = u.buffs.filter(b => b.until > this.time);
+      if (u.buffs.length) {
+        const done = u.buffs.filter(b => b.until <= this.time);
+        if (done.length) { u.buffs = u.buffs.filter(b => b.until > this.time); for (const b of done) if (b.onEnd && !u.dead) b.onEnd(); }
+      }
       if (u.push) { if (this.time < u.push.until && !u.dead) { u.x += u.push.vx * DT; u.y += u.push.vy * DT; this.clampPos(u); } else u.push = null; }
       if (u.type === 'hero') this.stepHero(u);
       else if (u.dead) continue;
@@ -308,7 +354,7 @@ export class Game {
       else this.stepTower(u);
     }
     this.separate();
-    this.stepShots(); this.stepZones();
+    this.stepShots(); this.stepZones(); this.stepPickups();
     for (const h of this.heroes.values()) {
       if (this.over) break;
       if (h.kills >= RULES.kills) this.over = { winner: h.team, reason: `${RULES.kills} kills` };
@@ -364,9 +410,9 @@ export class Game {
     let dmg = u.ad;
     if (u.type === 'tower' && t.type === 'hero') { dmg *= 1 + 0.4 * u.heat; u.heat = Math.min(3, u.heat + 1); }
     if (u.type === 'hero') {
-      if (u.emp && u.emp.until > this.time) { dmg += u.emp.bonus; this.addBuff(t, 'slow', 0.35, 1.5); u.emp = null; }
-      if (u.chill > this.time) { this.addBuff(t, 'slow', 0.4, 1.5); u.chill = 0; }
-      if (t.mark && t.mark.by === u.id && t.mark.until > this.time) { dmg += t.mark.dmg; t.mark = null; }
+      // Empowered next attack: h.emp = { until, hit(target) -> bonus damage }, used up by one attack.
+      if (u.emp) { const e = u.emp; u.emp = null; if (e.until > this.time) dmg += e.hit(t) || 0; }
+      this.popMark(u, t);
       if (u.def.passive && u.def.passive.onAttack) u.def.passive.onAttack(this, u, t);
     }
     this.damage(u, t, dmg, 'phys', true);
@@ -394,7 +440,10 @@ export class Game {
     const es = MAP.spawn[other(h.team)];
     if (this.dist(h, es) < MAP.fountainR) this.damage(null, h, 400 * DT, 'true');
     if (h.dead || T < h.stunUntil) return;
+    for (let s = 0; s < 4; s++) { const d = h.def.abilities[s]; if (d.tick && h.ranks[s] > 0) d.tick(this, h, h.ranks[s] - 1); }   // always-on effects
     if (h.state && T >= h.state.until) this.leave(h, 'timeout');
+    // Channels: a state with `every` calls its ability's onTick on that interval until the state ends.
+    if (h.state && h.state.every && T >= h.state.tickAt) { const st = h.state; st.tickAt += st.every; h.def.abilities[st.s].onTick(this, h, st); }
     if (h.dashing) return this.stepDash(h);
     if (h.casting) { if (T >= h.casting.at) { const f = h.casting.fire; h.casting = null; f(); } return; }
     if (h.recall) {
@@ -519,7 +568,10 @@ export class Game {
         sl: this.buffMax(u, 'slow') > 0 ? 1 : 0, sh: u.shieldUntil > T ? r(u.shieldAmt) : 0,
         rc: u.recall ? +(1 - (u.recall.at - T) / 8).toFixed(2) : 0, br: this.brushOf(u) >= 0 ? 1 : 0,
         mk: u.mark && u.mark.until > T ? 1 : 0, kl: u.kills, cs: u.cs,
-        pr: u.def.passive && u.def.passive.wait(this, u) <= 0 ? 1 : 0,
+        pr: u.def.passive && u.def.passive.wait && u.def.passive.wait(this, u) <= 0 ? 1 : 0,
+        pn: u.def.passive && u.def.passive.count ? u.def.passive.count(this, u) : 0,
+        si: T < u.silenceUntil ? 1 : 0, ku: T < u.airUntil ? 1 : 0, em: u.emp && u.emp.until > T ? 1 : 0,
+        cn: u.state && u.state.name === 'channel' ? 1 : 0,
         // ability state: ch = charge 0..1 (hl = fraction of the hold limit used), bg = barrage shots left
         ch: u.state && u.state.name === 'charging' ? +Math.min(1, (T - u.state.t0) / u.state.full).toFixed(2) : 0,
         hl: u.state && u.state.name === 'charging' ? +((T - u.state.t0) / (u.state.until - u.state.t0)).toFixed(2) : 0,
@@ -528,15 +580,18 @@ export class Game {
     }
     const snap = { t: 'snap', time: +T.toFixed(3), units,
       shots: this.shots.map(s => ({ id: s.id, x: r(s.x), y: r(s.y), w: s.w, t: s.team[0], c: s.color, s: s.style,
+        ...(s.own ? { o: s.own } : {}),
         a: +(s.kind === 'home' ? Math.atan2(s.target.y - s.y, s.target.x - s.x) : Math.atan2(s.dy, s.dx)).toFixed(2) })),
       zones: this.zones.map(z => ({ id: z.id, x: z.x | 0, y: z.y | 0, r: z.r, t: z.team[0], c: z.color,
         ...(z.inner ? { i: z.inner } : {}), ...(z.shape === 'line' ? { l: z.len | 0, w: z.w, a: +Math.atan2(z.dy, z.dx).toFixed(3) } : {}),
         p: +Math.min(1, (T - z.born) / Math.max(0.01, z.at - z.born)).toFixed(2) })),
+      pk: this.pickups.map(b => ({ id: b.id, x: b.x | 0, y: b.y | 0, r: b.r, t: b.team[0], k: b.kind,
+        p: +Math.min(1, (T - b.born) / Math.max(0.01, b.at - b.born)).toFixed(2), l: +Math.max(0, b.until - T).toFixed(1) })),
       ev: this.events.filter(e => e.p === undefined || e.p === pid), over: this.over };
     if (me) snap.me = { id: me.id, gold: Math.floor(me.gold), xp: r(me.xp), xpn: xpToNext(me.lvl), pts: me.points, ranks: me.ranks,
       cds: me.cds.map(c => Math.max(0, +(c - T).toFixed(1))), sd: Math.max(0, r(me.spellCds.d - T)), sf: Math.max(0, r(me.spellCds.f - T)),
       items: me.items, ad: r(me.ad), ap: r(me.ap), ar: r(me.armor), mr: r(me.mr), ms: r(this.speed(me)), as: +this.atkSpeed(me).toFixed(2),
-      range: me.range, pv: me.def.passive ? Math.max(0, +me.def.passive.wait(this, me).toFixed(1)) : 0,
+      range: me.range, pv: me.def.passive && me.def.passive.wait ? Math.max(0, +me.def.passive.wait(this, me).toFixed(1)) : 0,
       bt: me.state && me.state.name === 'barrage' ? Math.max(0, +(me.state.until - T).toFixed(1)) : 0, shop: me.dead || this.dist(me, MAP.spawn[me.team]) <= MAP.fountainR };
     return snap;
   }

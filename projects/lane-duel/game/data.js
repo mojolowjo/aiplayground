@@ -1,45 +1,14 @@
 // Hero, item and spell definitions. All kits are original.
 // Ability `cast(g, h, r, aim)`: g = Game, h = hero, r = rank index (0-based),
-// aim = { x, y, dx, dy, target } (x,y already clamped to ability range).
+// aim = { x, y, dx, dy, power, target } (x,y already clamped to ability range).
+// Optional ability hooks: pick (choose a target, or refuse the cast), tick (runs every step once learned),
+// recast / onTick / onLeave (for abilities that put the hero into a state).
+// Optional hero `passive` hooks: onAttack, onKill, onDamaged, plus wait / count for the HUD.
 
 const R = (arr, r) => arr[Math.min(r, arr.length - 1)];
 const lerp = (a, b, t) => a + (b - a) * Math.max(0, Math.min(1, t));
 
 export const HEROES = {
-  vesk: {
-    name: 'Vesk', role: 'Marksman', color: '#e8c14a',
-    hp: 600, hpPer: 95, mana: 300, manaPer: 35, ad: 58, adPer: 3, as: 0.66, asPer: 3,
-    armor: 26, armorPer: 4, mr: 30, mrPer: 1.3, ms: 325, range: 575, melee: false,
-    projSpeed: 2200, shot: 'arrow', windup: 0.2, hpRegen: 0.8, manaRegen: 1.6,
-    abilities: [
-      { key: 'Q', name: 'Rapid Fire', kind: 'self', cd: [16, 15, 14, 13, 12], cost: [50],
-        desc: 'Gain 30/40/50/60/70% attack speed for 4s.',
-        cast(g, h, r) { g.addBuff(h, 'as', R([30, 40, 50, 60, 70], r), 4); } },
-      { key: 'W', name: 'Ricochet Bolt', kind: 'line', range: 1000, width: 60, castTime: 0.2,
-        cd: [9, 8.5, 8, 7.5, 7], cost: [60],
-        desc: 'Fire a bolt that hits the first enemy (60/95/130/165/200 + 50% AD) and bounces to another nearby enemy for 60%.',
-        cast(g, h, r, aim) {
-          const dmg = R([60, 95, 130, 165, 200], r) + 0.5 * h.ad;
-          g.line(h, aim, { speed: 1800, range: 1000, width: 60, color: '#ffe27a', style: 'arrow', onHit(t) {
-            g.damage(h, t, dmg, 'phys');
-            const n = g.enemiesIn(h.team, t.x, t.y, 450).filter(u => u !== t && !u.dead)
-              .sort((a, b) => g.dist(a, t) - g.dist(b, t))[0];
-            if (n) g.homing(h, t.x, t.y, n, 1600, '#ffe27a', () => g.damage(h, n, dmg * 0.6, 'phys'), 'arrow');
-          } });
-        } },
-      { key: 'E', name: 'Backstep', kind: 'dash', range: 350, cd: [18, 16, 14, 12, 10], cost: [40],
-        desc: 'Dash a short distance. Your next attack within 4s slows by 40% for 1.5s.',
-        cast(g, h, r, aim) { g.dash(h, { x: aim.x, y: aim.y, speed: 1500 }); h.chill = g.time + 4; } },
-      { key: 'R', name: 'Skyfall', kind: 'point', range: 1200, radius: 300, castTime: 0.25,
-        cd: [100, 85, 70], cost: [100],
-        desc: 'Arrows rain on an area for 3s, dealing 40/65/90 + 25% AD every 0.5s and slowing by 30%.',
-        cast(g, h, r, aim) {
-          const dmg = R([40, 65, 90], r) + 0.25 * h.ad;
-          g.strike(h, { x: aim.x, y: aim.y, r: 300, delay: 0.8, ticks: 6, interval: 0.5, color: '#ffe27a',
-            onHit(t) { g.damage(h, t, dmg, 'phys'); g.addBuff(t, 'slow', 0.3, 1); } });
-        } },
-    ],
-  },
   oriel: {
     name: 'Oriel', role: 'Mage', color: '#c58bff',
     hp: 560, hpPer: 90, mana: 420, manaPer: 30, ad: 52, adPer: 3, as: 0.63, asPer: 1.5,
@@ -81,70 +50,193 @@ export const HEROES = {
         } },
     ],
   },
-  brakk: {
-    name: 'Brakk', role: 'Bruiser', color: '#d9824a',
-    hp: 660, hpPer: 105, mana: 280, manaPer: 40, ad: 64, adPer: 3.5, as: 0.65, asPer: 2.5,
-    armor: 36, armorPer: 4.5, mr: 32, mrPer: 2, ms: 340, range: 150, melee: true,
-    windup: 0.25, hpRegen: 1.6, manaRegen: 1.5,
-    abilities: [
-      { key: 'Q', name: 'Hammer Blow', kind: 'self', cd: [8, 7.5, 7, 6.5, 6], cost: [30],
-        desc: 'Resets your attack. Your next attack within 5s deals 30/50/70/90/110 + 40% AD bonus damage and slows by 35% for 1.5s.',
-        cast(g, h, r) {
-          h.emp = { until: g.time + 5, bonus: R([30, 50, 70, 90, 110], r) + 0.4 * h.ad };
-          h.nextAttack = g.time;
-        } },
-      { key: 'W', name: 'Iron Hide', kind: 'self', cd: [16, 15, 14, 13, 12], cost: [50],
-        desc: 'Gain a shield of 70/110/150/190/230 + 8% max health for 3s.',
-        cast(g, h, r) { g.shield(h, R([70, 110, 150, 190, 230], r) + 0.08 * h.mhp, 3); } },
-      { key: 'E', name: 'Charge', kind: 'dash', range: 500, cd: [14, 13, 12, 11, 10], cost: [50],
-        desc: 'Charge forward. The first enemy hero hit takes 60/90/120/150/180 + 50% AD and is stunned for 0.75s.',
-        cast(g, h, r, aim) {
-          const dmg = R([60, 90, 120, 150, 180], r) + 0.5 * h.ad;
-          g.dash(h, { x: aim.x, y: aim.y, speed: 1400, full: true,
-            onHero(t) { g.damage(h, t, dmg, 'phys'); g.stun(t, 0.75); } });
-        } },
-      { key: 'R', name: 'Quake', kind: 'self', radius: 400, castTime: 0.4, cd: [100, 90, 80], cost: [100],
-        desc: 'Slam the ground: enemies within 400 take 150/250/350 + 80% AD and are slowed by 50% for 2.5s.',
-        cast(g, h, r) {
-          const dmg = R([150, 250, 350], r) + 0.8 * h.ad;
-          g.burst(h, h.x, h.y, 400, '#d9824a', t => { g.damage(h, t, dmg, 'phys'); g.addBuff(t, 'slow', 0.5, 2.5); });
-        } },
-    ],
-  },
-  sliv: {
-    name: 'Sliv', role: 'Assassin', color: '#58d6b0',
-    hp: 620, hpPer: 98, mana: 300, manaPer: 30, ad: 62, adPer: 3.2, as: 0.68, asPer: 2.8,
-    armor: 30, armorPer: 4, mr: 32, mrPer: 1.5, ms: 345, range: 130, melee: true,
-    windup: 0.2, hpRegen: 1.3, manaRegen: 1.6,
-    abilities: [
-      { key: 'Q', name: 'Thrown Blade', kind: 'line', range: 850, width: 60, castTime: 0.2,
-        cd: [8, 7.5, 7, 6.5, 6], cost: [45],
-        desc: 'Skillshot dealing 65/100/135/170/205 + 60% AD and marking the target for 4s. Your next attack on a marked target deals 30/45/60/75/90 bonus damage.',
-        cast(g, h, r, aim) {
-          const dmg = R([65, 100, 135, 170, 205], r) + 0.6 * h.ad;
-          g.line(h, aim, { speed: 2000, range: 850, width: 60, color: '#8affd9', style: 'blade', onHit(t) {
-            g.damage(h, t, dmg, 'phys'); t.mark = { by: h.id, until: g.time + 4, dmg: 30 + 15 * r };
-          } });
-        } },
-      { key: 'W', name: 'Shadowstep', kind: 'dash', range: 450, cd: [20, 18, 16, 14, 12], cost: [50],
-        desc: 'Instantly blink to a nearby location.',
-        cast(g, h, r, aim) { g.blink(h, aim.x, aim.y); } },
-      { key: 'E', name: 'Flurry', kind: 'self', radius: 300, cd: [9, 8, 7, 6, 5], cost: [40],
-        desc: 'Slash all enemies within 300 for 60/90/120/150/180 + 50% AD.',
-        cast(g, h, r) {
-          const dmg = R([60, 90, 120, 150, 180], r) + 0.5 * h.ad;
-          g.burst(h, h.x, h.y, 300, '#58d6b0', t => g.damage(h, t, dmg, 'phys'));
-        } },
-      { key: 'R', name: 'Final Cut', kind: 'unit', range: 600, cd: [90, 75, 60], cost: [80],
-        desc: 'Dash to an enemy hero and strike for 120/200/280 + 80% AD, increased by up to 60% against low-health targets.',
-        cast(g, h, r, aim) {
-          const base = R([120, 200, 280], r) + 0.8 * h.ad, t = aim.target;
-          g.dash(h, { follow: t, speed: 2200, onEnd() {
-            if (!t.dead) g.damage(h, t, base * (1 + 0.6 * (1 - t.hp / t.mhp)), 'phys');
-          } });
-        } },
-    ],
-  },
+};
+
+// ---------------------------------------------------------------------------------------------
+// Gorrum, the Salvage Hulk: a grab tank. Forced movement, an empowered attack, and one ability
+// with a passive mode and an active mode.
+HEROES.gorrum = {
+  name: 'Gorrum', role: 'Grab tank', color: '#c9973f',
+  hp: 650, hpPer: 105, mana: 270, manaPer: 40, ad: 62, adPer: 3.5, as: 0.63, asPer: 1.5,
+  armor: 40, armorPer: 4.5, mr: 32, mrPer: 2, ms: 325, range: 150, melee: true,
+  windup: 0.25, hpRegen: 1.7, manaRegen: 1.7,
+  // Threshold trigger with a cooldown: checked every time he takes damage.
+  passive: { name: 'Ballast Plating', every: 75,
+    desc: 'When damage drops Gorrum below 20% health he gains a shield of 100 + 12% of his max health for 8s. Can happen once every 75s.',
+    wait: (g, h) => (h.ballastAt || 0) - g.time,
+    onDamaged(g, h) {
+      if (h.hp >= h.mhp * 0.2 || this.wait(g, h) > 0) return;
+      g.shield(h, 100 + 0.12 * h.mhp, 8); h.ballastAt = g.time + this.every;
+    } },
+  abilities: [
+    { key: 'Q', name: 'Harpoon Line', kind: 'line', range: 950, width: 110, castTime: 0.25,
+      cd: [18, 17, 16, 15, 14], cost: [80],
+      desc: 'Fire a harpoon. The first enemy it hits takes 90/140/190/240/290 + 60% AP and is dragged back to Gorrum.',
+      cast(g, h, r, aim) {
+        const dmg = R([90, 140, 190, 240, 290], r) + 0.6 * h.ap;
+        g.line(h, aim, { speed: 1800, range: this.range, width: this.width, color: '#9fe8d2', style: 'harpoon', tether: true,
+          onHit(t) { g.damage(h, t, dmg, 'magic'); g.pull(t, h, 1700); } });
+      } },
+    // Chained timed buffs: when the speed buff runs out, its onEnd applies the slow.
+    { key: 'W', name: 'Boiler Vent', kind: 'self', cd: [15], cost: [60],
+      desc: 'Gain 50/55/60/65/70% move speed and 30/38/46/54/62% attack speed for 4s. When it ends you are slowed by 30% for 1.5s.',
+      cast(g, h, r) {
+        g.addBuff(h, 'as', R([30, 38, 46, 54, 62], r), 4);
+        g.addBuff(h, 'haste', R([0.5, 0.55, 0.6, 0.65, 0.7], r), 4, { onEnd: () => g.addBuff(h, 'slow', 0.3, 1.5) });
+      } },
+    { key: 'E', name: 'Anchor Fist', kind: 'self', cd: [9, 8, 7, 6, 5], cost: [30],
+      desc: 'Resets your attack. Your next attack within 5s deals 20/35/50/65/80 + 80% AD bonus damage and knocks the enemy into the air for 1s.',
+      cast(g, h, r) {
+        const bonus = R([20, 35, 50, 65, 80], r) + 0.8 * h.ad;
+        h.emp = { until: g.time + 5, hit(t) { g.knockUp(t, 1); return bonus; } };
+        h.nextAttack = g.time;
+      } },
+    // Passive mode (tick) runs only while the ability is off cooldown, so casting it switches the zaps off.
+    { key: 'R', name: 'Pressure Pulse', kind: 'self', radius: 550, castTime: 0.25, cd: [60, 45, 30], cost: [100],
+      zapRange: 450, zapEvery: 2.5,
+      desc: 'While this is ready, a random enemy within 450 is zapped every 2.5s for 40/70/100 + 20% AP. Activate to pulse: enemies within 550 take 200/325/450 + 80% AP and are silenced for 0.75s. The zaps stop until this is ready again.',
+      tick(g, h, r) {
+        if (h.cds[3] > g.time || g.time < (h.zapAt || 0) || h.dead) return;
+        const near = g.enemiesIn(h.team, h.x, h.y, this.zapRange).filter(u => g.targetable(h, u));
+        if (!near.length) return;
+        const t = near[Math.random() * near.length | 0];
+        g.fx({ e: 'zap', x: h.x | 0, y: h.y | 0, x2: t.x | 0, y2: t.y | 0 });
+        g.damage(h, t, R([40, 70, 100], r) + 0.2 * h.ap, 'magic'); h.zapAt = g.time + this.zapEvery;
+      },
+      cast(g, h, r) {
+        const dmg = R([200, 325, 450], r) + 0.8 * h.ap;
+        g.burst(h, h.x, h.y, this.radius, '#9fe8d2', t => { g.damage(h, t, dmg, 'magic'); g.silence(t, 0.75); });
+      } },
+  ],
+};
+
+// ---------------------------------------------------------------------------------------------
+// Wren Ashby, the Wayfinder: a skillshot marksman. Cooldown refunds, mark and detonate, stacking buffs.
+// Every ability hit goes through `landed`, which adds a passive stack and pops her Waymark if it is there.
+const landed = (g, h, t, pop = true) => { HEROES.wren.passive.gain(g, h); if (pop) g.popMark(h, t); };
+HEROES.wren = {
+  name: 'Wren Ashby', role: 'Marksman', color: '#f0c05a',
+  hp: 560, hpPer: 92, mana: 380, manaPer: 40, ad: 58, adPer: 2.8, as: 0.65, asPer: 2.5,
+  armor: 24, armorPer: 4, mr: 30, mrPer: 1.3, ms: 325, range: 550, melee: false,
+  projSpeed: 2000, shot: 'light', windup: 0.2, hpRegen: 0.8, manaRegen: 1.9,
+  // Stacking buff with a cap and a decay timer: one tagged buff that is replaced on every new stack.
+  passive: { name: 'Trailblazer', max: 5, per: 10, lasts: 6,
+    desc: 'Each ability you land gives a stack of 10% attack speed for 6s, up to 5 stacks. Landing another refreshes them all; if the timer runs out they are all lost.',
+    count: (g, h) => (h.trail && h.trail.until > g.time ? h.trail.n : 0),
+    gain(g, h) {
+      const n = Math.min(this.max, this.count(g, h) + 1);
+      h.trail = { n, until: g.time + this.lasts };
+      g.addBuff(h, 'as', n * this.per, this.lasts, { tag: 'trail' });
+    } },
+  abilities: [
+    // Cooldown refund: on a hit, every other ability's remaining cooldown shrinks.
+    { key: 'Q', name: 'Compass Bolt', kind: 'line', range: 1100, width: 60, castTime: 0.2,
+      cd: [5.5, 5.25, 5, 4.75, 4.5], cost: [28, 29, 30, 31, 32], refund: 1.5,
+      desc: 'A fast bolt that hits the first enemy for 20/45/70/95/120 + 110% AD + 30% AP. If it hits, your other abilities come back 1.5s sooner.',
+      cast(g, h, r, aim) {
+        const dmg = R([20, 45, 70, 95, 120], r) + 1.1 * h.ad + 0.3 * h.ap, refund = this.refund;
+        g.line(h, aim, { speed: 2200, range: this.range, width: this.width, color: '#fff2c0', style: 'light', onHit(t) {
+          g.damage(h, t, dmg, 'phys'); landed(g, h, t);
+          for (const s of [1, 2, 3]) h.cds[s] -= refund;
+        } });
+      } },
+    // Mark and detonate: this only applies the tag; the burst lives in the tag and anything else she lands pops it.
+    { key: 'W', name: 'Waymark', kind: 'line', range: 1000, width: 80, castTime: 0.2,
+      cd: [12, 11, 10, 9, 8], cost: [50],
+      desc: 'An orb that marks the first enemy it hits for 4s. Hitting the marked enemy with an attack or another ability bursts the mark for 80/135/190/245/300 + 60% AD + 70% AP and restores 60 mana.',
+      cast(g, h, r, aim) {
+        const dmg = R([80, 135, 190, 245, 300], r) + 0.6 * h.ad + 0.7 * h.ap;
+        g.line(h, aim, { speed: 1500, range: this.range, width: this.width, color: '#ffe9a0', onHit(t) {
+          landed(g, h, t, false);
+          t.mark = { by: h.id, until: g.time + 4, pop(u) { g.fx({ e: 'burst', x: u.x, y: u.y, r: 110, c: '#ffe9a0' }); g.damage(h, u, dmg, 'magic'); g.restoreMana(h, 60); } };
+        } });
+      } },
+    // Teleport, then auto-target: search for the nearest enemy from the new position.
+    { key: 'E', name: 'Fold Step', kind: 'dash', range: 450, cd: [22, 20, 18, 16, 14], cost: [70], seek: 700,
+      desc: 'Blink a short distance, then fire a bolt at the nearest enemy within 700 for 80/130/180/230/280 + 50% AD + 75% AP.',
+      cast(g, h, r, aim) {
+        g.blink(h, aim.x, aim.y);
+        const t = g.nearestEnemy(h, this.seek), dmg = R([80, 130, 180, 230, 280], r) + 0.5 * h.ad + 0.75 * h.ap;
+        if (t) g.homing(h, h.x, h.y, t, 2000, '#fff2c0', () => { g.damage(h, t, dmg, 'magic'); landed(g, h, t); }, 'light');
+      } },
+    // Map-length piercing projectile; damage depends on what it hits.
+    { key: 'R', name: 'Meridian', kind: 'line', width: 300, castTime: 1, cd: [110, 95, 80], cost: [100],
+      desc: 'After 1s, send a wave of light across the whole map. It passes through everything, dealing 300/450/600 + 100% AD + 90% AP to heroes and half that to minions.',
+      cast(g, h, r, aim) {
+        const dmg = R([300, 450, 600], r) + h.ad + 0.9 * h.ap;
+        g.line(h, aim, { speed: 2000, range: 9000, width: this.width, color: '#fff2c0', style: 'wave', pierce: true, onHit(t) {
+          g.damage(h, t, t.type === 'hero' ? dmg : dmg * 0.5, 'magic'); landed(g, h, t);
+        } });
+      } },
+  ],
+};
+
+// ---------------------------------------------------------------------------------------------
+// Sable Venn, the Glass Dancer: a reset assassin. Objects in the world, chain targeting, a channel.
+// Her blades are pickups: every way of dropping one goes through dropBlade, and touching one slashes.
+const BLADE = { r: 150, life: 5, slash: 340 };
+const slash = (g, h) => {
+  const dmg = 45 + 10 * h.lvl + 0.35 * h.ad + 0.45 * h.ap;
+  g.burst(h, h.x, h.y, BLADE.slash, '#dfe9ff', t => g.damage(h, t, dmg, 'magic'));
+};
+const dropBlade = (g, h, x, y, delay) => g.drop(h, x, y, delay, { kind: 'blade', r: BLADE.r, life: BLADE.life, onTake: () => slash(g, h) });
+HEROES.sable = {
+  name: 'Sable Venn', role: 'Assassin', color: '#b9c8ec',
+  hp: 620, hpPer: 98, mana: 300, manaPer: 30, ad: 60, adPer: 3.2, as: 0.68, asPer: 2.8,
+  armor: 30, armorPer: 4, mr: 32, mrPer: 1.5, ms: 340, range: 130, melee: true,
+  windup: 0.2, hpRegen: 1.3, manaRegen: 1.8,
+  // Kill-event hook. (The slash on picking up a blade lives with the blades, above.)
+  passive: { name: 'Encore', refund: 15,
+    desc: 'Killing an enemy hero takes 15s off all your cooldowns. Walking over one of your dropped blades picks it up and slashes enemies within 340 for 45 + 10 per level + 35% AD + 45% AP.',
+    onKill(g, h, t) { if (t.type === 'hero') for (let s = 0; s < 4; s++) h.cds[s] -= this.refund; } },
+  abilities: [
+    { key: 'Q', name: 'Ricochet Crescent', kind: 'pick', range: 650, cd: [10, 9.5, 9, 8.5, 8], cost: [40],
+      desc: 'Throw a blade at the enemy nearest the cursor. It bounces to up to 2 more nearby enemies for 75/105/135/165/195 + 20% AD + 30% AP each, then lands on the ground behind the first target.',
+      pick(g, h, aim) {
+        return [...g.units.values()].filter(u => u.type !== 'tower' && g.targetable(h, u) && g.dist(h, u) <= this.range + u.radius && Math.hypot(u.x - aim.x, u.y - aim.y) <= 260)
+          .sort((a, b) => Math.hypot(a.x - aim.x, a.y - aim.y) - Math.hypot(b.x - aim.x, b.y - aim.y))[0];
+      },
+      cast(g, h, r, aim) {
+        const first = aim.target, dmg = R([75, 105, 135, 165, 195], r) + 0.2 * h.ad + 0.3 * h.ap;
+        const targets = g.chain(h, first, 3, 500);
+        const fly = (from, i) => g.homing(h, from.x, from.y, targets[i], 1500, '#dfe9ff', () => {
+          g.damage(h, targets[i], dmg, 'magic'); if (i + 1 < targets.length) fly(targets[i], i + 1);
+        }, 'blade');
+        fly(h, 0);
+        const dx = first.x - h.x, dy = first.y - h.y, d = Math.hypot(dx, dy) || 1;
+        dropBlade(g, h, first.x + dx / d * 300, first.y + dy / d * 300, 0.9);
+      } },
+    // Delayed spawn: the blade exists from now but only becomes live when its timer runs out.
+    { key: 'W', name: 'Toss & Twirl', kind: 'self', cd: [14, 13, 12, 11, 10], cost: [30],
+      desc: 'Toss a blade straight up and gain 50/55/60/65/70% move speed for 1.25s. The blade lands where you were standing.',
+      cast(g, h, r) { g.addBuff(h, 'haste', R([0.5, 0.55, 0.6, 0.65, 0.7], r), 1.25); dropBlade(g, h, h.x, h.y, 1.25); } },
+    // Target validation: allowed targets are her own landed blades and any other unit; the result differs by type.
+    { key: 'E', name: 'Moonstep', kind: 'dash', range: 700, cd: [12, 11, 10, 9, 8], cost: [35],
+      desc: 'Blink to a unit or one of your dropped blades near the cursor. Arriving at an enemy deals 25/40/55/70/85 + 40% AD + 25% AP. Arriving at a blade picks it up and slashes at once.',
+      pick(g, h, aim) {
+        const near = o => Math.hypot(o.x - aim.x, o.y - aim.y), ok = o => near(o) <= 260 && g.dist(h, o) <= this.range + 150;
+        const blade = g.pickups.filter(b => b.owner === h && b.kind === 'blade' && g.time >= b.at && ok(b)).sort((a, b) => near(a) - near(b))[0];
+        if (blade) return blade;
+        return [...g.units.values()].filter(u => u !== h && !u.dead && (u.team === h.team || g.targetable(h, u)) && ok(u)).sort((a, b) => near(a) - near(b))[0];
+      },
+      cast(g, h, r, aim) {
+        const t = aim.target;
+        if (t.kind === 'blade') { g.blink(h, t.x, t.y); g.take(h, t); return; }
+        const dx = h.x - t.x, dy = h.y - t.y, d = Math.hypot(dx, dy) || 1, gap = t.radius + h.radius * 0.6;
+        g.blink(h, t.x + dx / d * gap, t.y + dy / d * gap);
+        if (t.team !== h.team) { g.damage(h, t, R([25, 40, 55, 70, 85], r) + 0.4 * h.ad + 0.25 * h.ap, 'magic'); h.order = { type: 'atk', id: t.id }; }
+      } },
+    // Channel: a locked state that ticks on a timer. A stun or knock-up ends the state, and so the channel.
+    { key: 'R', name: 'Glass Storm', kind: 'self', radius: 550, cd: [90, 75, 60], cost: [80],
+      desc: 'Channel for 2.5s, unable to move or attack, throwing a blade at each of the 3 nearest enemies within 550 every 0.2s for 22/32/42 + 12% AD + 15% AP. Being stunned or knocked up cancels it; press S to end early.',
+      cast(g, h) { g.enter(h, 3, 'channel', 2.5, { lock: true, stopEnds: true, every: 0.2 }); },
+      onTick(g, h) {
+        const r = h.ranks[3] - 1, dmg = R([22, 32, 42], r) + 0.12 * h.ad + 0.15 * h.ap;
+        const near = g.enemiesIn(h.team, h.x, h.y, this.radius).filter(u => g.targetable(h, u))
+          .sort((a, b) => (b.type === 'hero') - (a.type === 'hero') || g.dist(a, h) - g.dist(b, h)).slice(0, 3);
+        for (const t of near) g.homing(h, h.x, h.y, t, 1700, '#dfe9ff', () => g.damage(h, t, dmg, 'magic'), 'blade');
+      } },
+  ],
 };
 
 // Kessa is built from two shared pieces in sim.js: g.strike (telegraph -> delay -> resolve) and the ability

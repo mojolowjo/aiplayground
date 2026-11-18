@@ -61,6 +61,14 @@ a separate room.
 - `game/data.js` — characters, abilities, items. Tune numbers here.
   Kessa's kit shows the two shared building blocks: `g.strike` (telegraph, delay,
   resolve) and the ability state machine (`g.enter` / `g.leave`), both in `sim.js`.
+  Each character is written to show a few techniques, with the shared helpers in `sim.js`:
+
+  | Character | Shows |
+  |---|---|
+  | Kessa | Delayed strikes, charging, an ability state machine |
+  | Gorrum | Forced movement, an empowered attack, an ability with a passive and an active mode |
+  | Wren Ashby | Cooldown refunds, mark and detonate, stacking buffs |
+  | Sable Venn | Objects in the world, chain targeting, an interruptible channel |
 - `public/client.js` — networking, input, HUD and the frame loop.
 - `public/gfx.js` — all art, drawn in code: characters, animations, particles, map.
 - `public/icons.js` — ability, spell and item icons as inline SVG.

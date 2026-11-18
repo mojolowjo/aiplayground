@@ -97,7 +97,7 @@ function updateHud() {
   setBar('hpb', meUnit.hp, meUnit.mhp, true); setBar('mpb', meUnit.mp, meUnit.mmp, true); setBar('xpb', me.xp, me.xpn);
   for (const { d, a, sweep, cdEl, pips } of slotEls) {
     if (a.pv) {   // passive: shows the wait until it is ready again
-      cdEl.textContent = me.pv > 0 ? Math.ceil(me.pv) : ''; d.classList.toggle('off', me.pv > 0);
+      cdEl.textContent = me.pv > 0 ? Math.ceil(me.pv) : meUnit.pn || ''; d.classList.toggle('off', me.pv > 0);
       sweep.style.background = me.pv > 0 ? `conic-gradient(rgba(0,0,0,0) ${100 - Math.min(100, 100 * me.pv / a.every)}%, rgba(4,8,12,.72) 0)` : 'none';
       continue;
     }
@@ -154,7 +154,7 @@ function interp() {
   const B = snaps[b], A = snaps[b - 1] || B, k = B.time > A.time ? Math.max(0, Math.min(1, (rt - A.time) / (B.time - A.time))) : 1;
   const lerp = (la, lb) => { const m = new Map(la.map(u => [u.id, u]));
     return lb.map(u => { const a = m.get(u.id); return a && Math.abs(a.x - u.x) + Math.abs(a.y - u.y) < 400 ? { ...u, x: a.x + (u.x - a.x) * k, y: a.y + (u.y - a.y) * k } : u; }); };
-  return { units: lerp(A.units, B.units), shots: lerp(A.shots, B.shots), zones: B.zones };
+  return { units: lerp(A.units, B.units), shots: lerp(A.shots, B.shots), zones: B.zones, pk: B.pk || [] };
 }
 
 // ---------- input ----------
@@ -220,7 +220,9 @@ function blocked(i) {
   const a = myDef.abilities[i], rank = me.ranks[i];
   if (!rank) return `${a.name} not learned — Shift+${a.key}`;
   if (meUnit.bg) return i === 3 ? '' : 'Busy firing — S to end';
+  if (meUnit.cn) return 'Channelling — S to end';
   if (meUnit.st) return 'Stunned';
+  if (meUnit.si) return 'Silenced';
   if (me.cds[i] > 0) return `${a.name} on cooldown`;
   if (meUnit.mp < a.cost[Math.min(rank - 1, a.cost.length - 1)]) return 'Not enough mana';
   return '';
@@ -254,6 +256,7 @@ function frame() {
   ctx.save(); if (GFX.shake > 0.3) ctx.translate((Math.random() - 0.5) * GFX.shake, (Math.random() - 0.5) * GFX.shake);
   drawGround(M, now, cam.x, halfW);
   for (const z of st.zones) drawZone(z, now, z.t === my);
+  for (const b of st.pk) drawPickup(b, now, b.t === my);
   // click markers sit on the ground
   fx = fx.filter(f => now - f.t0 < f.dur);
   for (const f of fx) {
@@ -276,7 +279,8 @@ function frame() {
     } else if (u.k === 'm') drawMinion(u, a, now, col);
     else drawHero(u, a, now, col, u.id === (me && me.id));
   }
-  for (const s of st.shots) drawShot(s, now, TEAM[s.t]);
+  const byId = new Map(st.units.map(u => [u.id, u]));
+  for (const s of st.shots) drawShot(s, now, TEAM[s.t], byId);
   drawTrees(M, now, cam.x, halfW);
   drawParts(dt, now);
   for (const u of live) {
