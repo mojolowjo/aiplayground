@@ -61,4 +61,5 @@ a separate room.
 - `game/data.js` — characters, abilities, items. Tune numbers here.
 - `public/client.js` — networking, input, HUD and the frame loop.
 - `public/gfx.js` — all art, drawn in code: characters, animations, particles, map.
+- `public/icons.js` — ability, spell and item icons as inline SVG.
 - `test/smoke.js` — rules check without a network: `npm test`.

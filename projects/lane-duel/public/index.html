@@ -24,18 +24,24 @@
   .bar i { position: absolute; left: 0; top: 0; bottom: 0; } .bar span { position: absolute; width: 100%; text-align: center; font-size: 11px; line-height: 16px; }
   #hpb i { background: #2f9e4f; } #mpb i { background: #2f6fbe; } #xpb { height: 5px; } #xpb i { background: #a070e0; }
   #slots { display: flex; gap: 6px; align-items: flex-end; }
-  .slot { width: 54px; height: 54px; border: 2px solid #4a6276; border-radius: 6px; background: #17232b; position: relative; text-align: center; }
-  .slot.small { width: 42px; height: 42px; } .slot .k { position: absolute; left: 3px; top: 1px; font-size: 11px; color: #9fb2bf; }
-  .slot .cd { font-size: 20px; font-weight: 700; line-height: 54px; } .slot.small .cd { line-height: 42px; font-size: 15px; }
-  .slot.off { opacity: .45; } .slot.nomana { border-color: #2f6fbe; } .slot.up { border-color: #ffd24a; box-shadow: 0 0 8px #ffd24a; }
-  .slot .pips { position: absolute; bottom: 1px; left: 0; right: 0; font-size: 8px; letter-spacing: 1px; color: #ffd24a; }
+  .slot { width: 56px; height: 56px; border: 2px solid #4a6276; border-radius: 6px; background: #17232b; position: relative; text-align: center; overflow: hidden; cursor: pointer; }
+  .slot .ic, .slot .sweep, .slot .cd { position: absolute; inset: 0; } .slot svg, .ii svg, .bag svg { width: 100%; height: 100%; display: block; }
+  .slot.off .ic { filter: grayscale(.85) brightness(.45); }
+  .slot.small { width: 44px; height: 44px; } .slot .k { position: absolute; left: 3px; top: 1px; font-size: 11px; font-weight: 700; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .slot .cd { font-size: 20px; font-weight: 700; line-height: 56px; text-shadow: 0 0 4px #000, 0 0 4px #000; } .slot.small .cd { line-height: 44px; font-size: 15px; }
+  .slot.nomana { border-color: #2f6fbe; } .slot.up { border-color: #ffd24a; box-shadow: 0 0 8px #ffd24a; }
+  .slot .pips { position: absolute; bottom: 1px; text-shadow: 0 0 2px #000; left: 0; right: 0; font-size: 8px; letter-spacing: 1px; color: #ffd24a; }
   #stats { margin-left: 10px; font-size: 12px; color: #b8c7d1; line-height: 1.45; white-space: nowrap; }
   #tip { display: none; max-width: 300px; pointer-events: none; padding: 8px 10px; font-size: 13px; z-index: 5; }
   #top { top: 8px; left: 50%; transform: translateX(-50%); padding: 6px 14px; display: none; font-size: 15px; white-space: nowrap; }
-  #shop { top: 60px; right: 10px; width: 250px; display: none; padding: 10px; }
+  #shop { top: 60px; right: 10px; width: 280px; display: none; padding: 10px; }
   .item { display: flex; justify-content: space-between; padding: 5px 6px; border-radius: 4px; cursor: pointer; }
   .item:hover { background: #22323d; } .item.no { opacity: .4; } .item small { color: #9fb2bf; display: block; }
   #inv { margin-top: 8px; color: #b8c7d1; font-size: 12px; }
+  .item > span:first-of-type { flex: 1; margin-left: 8px; } .ii { width: 36px; height: 36px; border: 1px solid #4a6276; border-radius: 5px; overflow: hidden; flex: none; }
+  .item b { align-self: center; }
+  #bag { display: grid; grid-template-columns: repeat(3, 30px); gap: 3px; margin-left: 10px; }
+  .bag { width: 30px; height: 30px; border: 1px solid #3a4c5a; border-radius: 4px; background: #101a20; overflow: hidden; }
   #over { top: 35%; left: 50%; transform: translate(-50%, -50%); text-align: center; display: none; padding: 24px 40px; }
   #over h1 { margin: 0 0 8px; font-size: 40px; }
   #feed { position: fixed; top: 60px; left: 12px; font-size: 14px; pointer-events: none; }
@@ -68,6 +74,7 @@
 <div id="shop" class="panel"><b>Shop</b> <small style="color:#9fb2bf">(P) — buy at your base</small><div id="items"></div><div id="inv"></div></div>
 <div id="over" class="panel"><h1 id="ot"></h1><div id="or"></div><p><button id="rematch">Back to lobby</button></p></div>
 <div id="help">Right-click move/attack · A + click attack-move · S stop · Q W E R abilities (Shift+key or click the icon to level up) · D F spells · B recall · P shop · Y camera lock · Space centre</div>
+<script src="icons.js"></script>
 <script src="gfx.js"></script>
 <script src="client.js"></script>
 </body>

@@ -54,7 +54,7 @@ function renderLobby() {
   $('start').disabled = !ready;
   $('start').textContent = ps.length === 1 ? 'Practice vs dummy' : 'Start';
   $('hint').textContent = ps.length === 1 ? 'Waiting for a second player — send them this page\'s link.' : ready ? '' : 'Both players must pick.';
-  if (inGame && mine) { myDef = hello.heroes[mine.hero]; buildSlots(); buildShop(); cam.locked = true; cam.x = hello.map.spawn[mine.team].x; }
+  if (inGame && mine) { myDef = hello.heroes[mine.hero]; myHero = mine.hero; buildSlots(); buildShop(); cam.locked = true; cam.x = hello.map.spawn[mine.team].x; }
 }
 const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 $('start').onclick = () => send({ t: 'start' });
@@ -62,28 +62,29 @@ $('rematch').onclick = () => send({ t: 'rematch' });
 $('name').onchange = () => { localStorage.ldName = $('name').value; };
 
 // ---------- HUD ----------
-let slotEls = [];
+let slotEls = [], myHero = '', bagKey = null;
 function buildSlots() {
   const el = $('slots'); el.innerHTML = ''; slotEls = [];
   const defs = [...myDef.abilities.map((a, i) => ({ ...a, i })), { ...hello.spells.d, sp: 'd' }, { ...hello.spells.f, sp: 'f' }];
   for (const a of defs) {
     const d = document.createElement('div'); d.className = 'slot' + (a.sp ? ' small' : '');
-    d.innerHTML = `<span class="k">${a.key}</span><div class="cd"></div><div class="pips"></div>`;
+    d.innerHTML = `<div class="ic">${ICON(a.sp ? 'spell_' + a.sp : myHero + a.i)}</div><div class="sweep"></div><span class="k">${a.key}</span><div class="cd"></div><div class="pips"></div>`;
     d.onmouseenter = () => { const t = $('tip'); t.style.display = 'block';
       const cds = Array.isArray(a.cd) ? a.cd.join('/') : a.cd;
       t.innerHTML = `<b>${a.name}</b> (${a.key})<br>${a.desc}<br><small style="color:#9fb2bf">Cooldown ${cds}s${a.cost ? ' · Mana ' + a.cost.join('/') : ''}${a.range ? ' · Range ' + a.range : ''}</small>`;
       const r = d.getBoundingClientRect(); t.style.left = r.left + 'px'; t.style.bottom = (innerHeight - r.top + 8) + 'px'; };
     d.onmouseleave = () => { $('tip').style.display = 'none'; };
     if (!a.sp) d.onclick = () => cmd({ c: 'lvl', s: a.i });
-    el.appendChild(d); slotEls.push({ d, a });
+    el.appendChild(d); slotEls.push({ d, a, sweep: d.children[1], cdEl: d.children[3], pips: d.children[4] });
   }
   const s = document.createElement('div'); s.id = 'stats'; el.appendChild(s);
+  const b = document.createElement('div'); b.id = 'bag'; el.appendChild(b); bagKey = null;
 }
 function buildShop() {
   $('items').innerHTML = '';
   for (const it of hello.items) {
     const d = document.createElement('div'); d.className = 'item'; d.dataset.id = it.id;
-    d.innerHTML = `<span>${it.name}<small>${it.desc}</small></span><b style="color:#ffd24a">${it.cost}</b>`;
+    d.innerHTML = `<div class="ii">${ICON(it.id)}</div><span>${it.name}<small>${it.desc}</small></span><b style="color:#ffd24a">${it.cost}</b>`;
     d.onclick = () => cmd({ c: 'buy', item: it.id });
     $('items').appendChild(d);
   }
@@ -92,19 +93,26 @@ function setBar(id, v, m, text) { const b = $(id); b.firstChild.style.width = (m
 function updateHud() {
   if (!me || !meUnit) return;
   setBar('hpb', meUnit.hp, meUnit.mhp, true); setBar('mpb', meUnit.mp, meUnit.mmp, true); setBar('xpb', me.xp, me.xpn);
-  for (const { d, a } of slotEls) {
+  for (const { d, a, sweep, cdEl, pips } of slotEls) {
     const cd = a.sp ? (a.sp === 'd' ? me.sd : me.sf) : me.cds[a.i], rank = a.sp ? 1 : me.ranks[a.i];
-    d.children[1].textContent = cd > 0 ? (cd < 10 && !a.sp ? cd.toFixed(1) : Math.ceil(cd)) : '';
+    cdEl.textContent = cd > 0 ? (cd < 10 && !a.sp ? cd.toFixed(1) : Math.ceil(cd)) : '';
+    const full = a.sp ? a.cd : a.cd[Math.min(Math.max(rank - 1, 0), a.cd.length - 1)], pct = Math.min(100, 100 * cd / full);
+    sweep.style.background = cd > 0 ? `conic-gradient(rgba(0,0,0,0) ${100 - pct}%, rgba(4,8,12,.72) 0)` : 'none';
     d.classList.toggle('off', rank === 0 || cd > 0);
     if (!a.sp) {
       const cost = a.cost[Math.min(Math.max(rank - 1, 0), a.cost.length - 1)];
       d.classList.toggle('nomana', rank > 0 && meUnit.mp < cost);
       const max = a.i === 3 ? (meUnit.lvl >= 16 ? 3 : meUnit.lvl >= 11 ? 2 : meUnit.lvl >= 6 ? 1 : 0) : Math.min(5, Math.ceil(meUnit.lvl / 2));
       d.classList.toggle('up', me.pts > 0 && rank < max);
-      d.children[2].textContent = '●'.repeat(rank);
+      pips.textContent = '●'.repeat(rank);
     }
   }
   $('stats').innerHTML = `Lv ${meUnit.lvl} · <b style="color:#ffd24a">${me.gold}g</b><br>AD ${me.ad} · AP ${me.ap} · AS ${me.as}<br>Armor ${me.ar} · MR ${me.mr} · MS ${me.ms}`;
+  if (bagKey !== me.items.join()) {
+    bagKey = me.items.join();
+    $('bag').innerHTML = Array.from({ length: 6 }, (_, i) => { const it = hello.items.find(x => x.id === me.items[i]);
+      return `<div class="bag" title="${it ? it.name + ': ' + it.desc : ''}">${it ? ICON(it.id) : ''}</div>`; }).join('');
+  }
   const cur = snaps[snaps.length - 1], hs = cur.units.filter(u => u.k === 'h');
   const sc = t => { const h = hs.find(u => u.t === t); return h ? `<span style="color:${TEAM[t]}">${esc(h.n)} ${h.kl}K ${h.cs}CS</span>` : `<span style="color:${TEAM[t]}">?</span>`; };
   const tm = cur.time | 0;
@@ -112,7 +120,7 @@ function updateHud() {
   $('shop').style.display = shopOpen ? 'block' : 'none';
   if (shopOpen) {
     document.querySelectorAll('.item').forEach(d => { const it = hello.items.find(i => i.id === d.dataset.id); d.classList.toggle('no', !me.shop || me.gold < it.cost); });
-    $('inv').textContent = 'Items: ' + (me.items.map(i => hello.items.find(x => x.id === i).name).join(', ') || 'none') + (me.shop ? '' : ' — return to base to buy');
+    $('inv').textContent = me.shop ? `Gold: ${me.gold} · ${6 - me.items.length} slots free` : 'Return to base to buy';
   }
 }
 function feed(text) {
