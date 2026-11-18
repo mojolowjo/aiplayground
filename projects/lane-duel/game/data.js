@@ -245,7 +245,7 @@ HEROES.sable = {
 HEROES.kessa = {
   name: 'Kessa', botBuild: ['boots', 'tome', 'crystal', 'staff', 'staff', 'staff'], role: 'Artillery', color: '#6fb6e8',
   hp: 540, hpPer: 88, mana: 440, manaPer: 32, ad: 52, adPer: 3, as: 0.62, asPer: 1.4,
-  armor: 20, armorPer: 4, mr: 30, mrPer: 1.3, ms: 325, range: 525, melee: false,
+  armor: 20, armorPer: 4, mr: 30, mrPer: 1.3, ms: 325, range: 368, melee: false,
   projSpeed: 1500, shot: 'orb', windup: 0.24, hpRegen: 0.7, manaRegen: 3,
   // Event hooks: sim.js calls onAttack when her basic attack lands and onKill when she kills anything.
   passive: { name: 'Recycler', every: 12, perKill: 2,
