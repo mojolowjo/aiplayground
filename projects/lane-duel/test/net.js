@@ -8,7 +8,8 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { LIMITS, RateLimiter, PerIp, plainIp, isThisMachine, staticFiles } from '../net/guard.js';
-import { discover, gateway, PortMapping, isPublicAddress } from '../net/upnp.js';
+import { discover, gateway, PortMapping, isPublicAddress, parseFields, isIpv4 } from '../net/upnp.js';
+import { publicIp } from '../net/publicip.js';
 import { duckName, updateDuck, startDuck } from '../net/duckdns.js';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -33,8 +34,9 @@ const rejects = async (p, re) => { try { await p; } catch (e) { assert(re.test(e
 }
 
 // A stand-in router: answers the SSDP search, serves a description, and records the SOAP calls it gets.
-async function fakeRouter({ externalIp = '203.0.113.7', permanentOnly = false, refuse = 0 } = {}) {
-  const calls = [];
+// externalReply(ip, n): overrides the body of the n-th GetExternalIPAddress reply; return { status, body } to answer with an error.
+async function fakeRouter({ externalIp = '203.0.113.7', permanentOnly = false, refuse = 0, externalReply = null } = {}) {
+  const calls = []; let asked = 0;
   const web = http.createServer((req, res) => {
     let body = ''; req.on('data', c => { body += c; }); req.on('end', () => {
       if (req.url === '/desc.xml') return res.end(`<?xml version="1.0"?><root><device><deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType><serviceList>
@@ -46,6 +48,8 @@ async function fakeRouter({ externalIp = '203.0.113.7', permanentOnly = false, r
       const fail = (code, text) => { res.statusCode = 500; res.end(`<s:Envelope><s:Body><s:Fault><detail><UPnPError><errorCode>${code}</errorCode><errorDescription>${text}</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>`); };
       if (action === 'AddPortMapping' && refuse) return fail(refuse, 'ConflictInMappingEntry');
       if (action === 'AddPortMapping' && permanentOnly && args.NewLeaseDuration !== '0') return fail(725, 'OnlyPermanentLeasesSupported');
+      calls.at(-1).headers = req.headers; calls.at(-1).body = body;
+      if (action === 'GetExternalIPAddress' && externalReply) { const r = externalReply(externalIp, ++asked); if (r) { if (r.status) res.statusCode = r.status; return res.end(r.body); } }
       res.end(`<s:Envelope><s:Body><u:${action}Response>${action === 'GetExternalIPAddress' ? `<NewExternalIPAddress>${externalIp}</NewExternalIPAddress>` : ''}</u:${action}Response></s:Body></s:Envelope>`);
     });
   });
@@ -66,10 +70,10 @@ async function fakeRouter({ externalIp = '203.0.113.7', permanentOnly = false, r
   const logs = [], m = new PortMapping({ port: 3000, lease: 0.4, log: s => logs.push(s), find: () => discover({ to: r.to }) });
   const res = await m.open();
   assert.deepEqual(res, { externalIp: '203.0.113.7', localAddress: '127.0.0.1', lease: 0.4 });
-  assert.deepEqual(r.calls[0], { action: 'AddPortMapping', args: { NewRemoteHost: '', NewExternalPort: '3000', NewProtocol: 'TCP', NewInternalPort: '3000', NewInternalClient: '127.0.0.1',
+  assert.deepEqual({ action: r.calls[0].action, args: r.calls[0].args }, { action: 'AddPortMapping', args: { NewRemoteHost: '', NewExternalPort: '3000', NewProtocol: 'TCP', NewInternalPort: '3000', NewInternalClient: '127.0.0.1',
     NewEnabled: '1', NewPortMappingDescription: 'Lane Duel', NewLeaseDuration: '0.4' } }, 'TCP 3000 -> this PC:3000, described as "Lane Duel", with a lease');
   await until(() => r.count('AddPortMapping') >= 3); assert(true, 'the lease is renewed at half time, again and again');
-  assert.equal(await m.close(), true); assert.deepEqual(r.calls.at(-1), { action: 'DeletePortMapping', args: { NewRemoteHost: '', NewExternalPort: '3000', NewProtocol: 'TCP' } }, 'closing removes the mapping');
+  assert.equal(await m.close(), true); assert.deepEqual({ action: r.calls.at(-1).action, args: r.calls.at(-1).args }, { action: 'DeletePortMapping', args: { NewRemoteHost: '', NewExternalPort: '3000', NewProtocol: 'TCP' } }, 'closing removes the mapping');
   const n = r.count('AddPortMapping'); await sleep(500); assert.equal(r.count('AddPortMapping'), n, 'and stops renewing'); assert.equal(await m.close(), false);
   r.close();
 
@@ -83,6 +87,46 @@ async function fakeRouter({ externalIp = '203.0.113.7', permanentOnly = false, r
   const quiet = dgram.createSocket('udp4'); await new Promise(r2 => quiet.bind(0, '127.0.0.1', r2));
   await rejects(discover({ to: { address: '127.0.0.1', port: quiet.address().port }, timeout: 300 }), /no UPnP router answered/); quiet.close();
   await rejects(new PortMapping({ port: 3000, find: async () => 'http://127.0.0.1:9/desc.xml' }).open(), /ECONNREFUSED|connect/);
+
+  // The request is written the way miniupnpc writes it.
+  { const q = await fakeRouter(), mq = new PortMapping({ port: 3000, find: async () => q.location }); await mq.open(); const c = q.calls.find(x => x.action === 'GetExternalIPAddress');
+    const svc = 'urn:schemas-upnp-org:service:WANIPConnection:1';
+    assert.equal(c.headers.soapaction, `"${svc}#GetExternalIPAddress"`); assert.equal(c.headers['content-type'], 'text/xml; charset="utf-8"'); assert.equal(c.headers.connection, 'close'); assert(c.headers['user-agent'] && c.headers.host.startsWith('127.0.0.1:'));
+    assert.equal(c.body, `<?xml version="1.0"?>\r\n<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:GetExternalIPAddress xmlns:u="${svc}"></u:GetExternalIPAddress></s:Body></s:Envelope>\r\n`);
+    assert.equal(+c.headers['content-length'], Buffer.byteLength(c.body)); await mq.close(); q.close(); }
+
+  // Replies come in many shapes: namespace prefixes, attributes on the tag, whitespace, either letter case.
+  assert.deepEqual(parseFields('<NewExternalIPAddress>1.2.3.4</NewExternalIPAddress>'), { NewExternalIPAddress: '1.2.3.4' });
+  assert.deepEqual(parseFields('<u:NewExternalIPAddress>1.2.3.4</u:NewExternalIPAddress>'), { NewExternalIPAddress: '1.2.3.4' });
+  assert.deepEqual(parseFields('<NewExternalIPAddress xmlns:dt="urn:schemas-microsoft-com:datatypes" dt:dt="string">\r\n   1.2.3.4\n </NewExternalIPAddress >'), { NewExternalIPAddress: '1.2.3.4' });
+  assert.deepEqual(parseFields('<m:NewExternalIPAddress\n  dt:dt="string">1.2.3.4</m:NewExternalIPAddress><NewLeaseDuration>0</NewLeaseDuration><NewPortMappingDescription>a &amp; b</NewPortMappingDescription>'),
+    { NewExternalIPAddress: '1.2.3.4', NewLeaseDuration: '0', NewPortMappingDescription: 'a & b' });
+  assert.deepEqual(parseFields('<NewExternalIPAddress></NewExternalIPAddress>'), { NewExternalIPAddress: '' }); assert.deepEqual(parseFields('<Other>1</Other>'), {});
+  assert.deepEqual(['1.2.3.4', ' 1.2.3.4 ', '0.0.0.0', '', '1.2.3', '999.1.1.1', 'abc'].map(isIpv4), [true, true, false, false, false, false, false]);
+  const wrap = inner => `<?xml version="1.0"?>\r\n<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetExternalIPAddressResponse xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">${inner}</u:GetExternalIPAddressResponse></s:Body></s:Envelope>`;
+  { const q = await fakeRouter({ externalReply: ip => ({ body: wrap(`\r\n<u:NewExternalIPAddress xmlns:dt="urn:schemas-microsoft-com:datatypes" dt:dt="string">\r\n  ${ip}\r\n</u:NewExternalIPAddress>\r\n`) }) });
+    const lg = [], mq = new PortMapping({ port: 3000, log: s => lg.push(s), find: async () => q.location });
+    assert.equal((await mq.open()).externalIp, '203.0.113.7', 'a namespaced tag with attributes and whitespace is read'); assert.equal(lg.length, 0); assert.equal(q.count('GetExternalIPAddress'), 1); await mq.close(); q.close(); }
+  // An error the first time, an answer the second: one retry, and the failure is logged with the router's raw reply.
+  { const q = await fakeRouter({ externalReply: (ip, n) => (n === 1 ? { status: 500, body: '<s:Envelope><s:Body><s:Fault><detail><UPnPError xmlns="urn:schemas-upnp-org:control-1-0"><errorCode>501</errorCode><errorDescription>Action Failed</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>' } : null) });
+    const lg = [], mq = new PortMapping({ port: 3000, askAgainAfter: 0.05, log: s => lg.push(s), find: async () => q.location }), t0 = Date.now();
+    assert.equal((await mq.open()).externalIp, '203.0.113.7', 'it asks again and gets the address'); assert(q.count('GetExternalIPAddress') === 2 && Date.now() - t0 >= 45);
+    assert(lg.length === 1 && /GetExternalIPAddress failed: the router refused GetExternalIPAddress \(error 501: Action Failed\)/.test(lg[0]) && /reply was:[\s\S]*<errorCode>501<\/errorCode>/.test(lg[0]), 'the error and the raw reply are logged:\n' + lg[0]);
+    assert.equal(new PortMapping({ port: 1 }).askAgainAfter, 1, 'the real wait before asking again is 1 second'); await mq.close(); q.close(); }
+  // Never an address: asked twice, both replies logged (cut to 500 characters), the mapping still stands.
+  { const junk = wrap('<NewExternalIPAddress></NewExternalIPAddress>' + '<!-- padding -->'.repeat(60)), q = await fakeRouter({ externalReply: () => ({ body: junk }) });
+    const lg = [], mq = new PortMapping({ port: 3000, askAgainAfter: 0.05, log: s => lg.push(s), find: async () => q.location }), got = await mq.open();
+    assert(got.externalIp === null && got.lease === 3600 && mq.active && q.count('GetExternalIPAddress') === 2, 'no address, but the port is open');
+    assert(lg.length === 2 && lg.every(l => /without a usable address/.test(l) && /Envelope/.test(l) && l.length < 700 && l.includes('…')), 'both replies are logged, shortened');
+    const zero = await fakeRouter({ externalIp: '0.0.0.0' }), mz = new PortMapping({ port: 3000, askAgainAfter: 0.01, log: s => lg.push(s), find: async () => zero.location });
+    assert.equal((await mz.open()).externalIp, null, '0.0.0.0 is not an address'); assert(/"0\.0\.0\.0"/.test(lg.at(-1))); await mz.close(); zero.close(); await mq.close(); q.close(); }
+  // UPNP_DEBUG output: every request and every raw reply.
+  { const q = await fakeRouter(), dbg = [], mq = new PortMapping({ port: 3000, debug: s => dbg.push(s), find: async () => q.location }); await mq.open(); await mq.close(); q.close(); const all = dbg.join('\n');
+    assert(/control URL http:\/\/127\.0\.0\.1:\d+\/ctl\/ip/.test(all) && ['AddPortMapping', 'GetExternalIPAddress', 'DeletePortMapping'].every(a => all.includes(`#${a}"`) && all.includes(`<< HTTP 200 for ${a}`)) && /<NewExternalIPAddress>203\.0\.113\.7</.test(all) && /<u:AddPortMapping xmlns:u=/.test(all), 'debug shows requests and raw replies'); }
+  // The "what is my IP" fallback
+  { const ok = async url => ({ ok: true, status: 200, text: async () => ' 198.51.100.9\n' }); assert.deepEqual(await publicIp({ fetchImpl: ok }), { ip: '198.51.100.9', source: 'api.ipify.org' });
+    await rejects(publicIp({ fetchImpl: async () => ({ ok: true, status: 200, text: async () => '<html>captive portal</html>' }) }), /did not answer with an address/);
+    await rejects(publicIp({ fetchImpl: async () => ({ ok: false, status: 503, text: async () => '' }) }), /HTTP 503/); }
 
   // a renewal that fails is logged and retried, not thrown
   const f = await fakeRouter(), m4 = new PortMapping({ port: 3000, lease: 0.2, retry: 0.1, log: s => logs.push(s), find: async () => f.location });
@@ -124,7 +168,8 @@ const connect = port => new Promise((res, rej) => { const ws = new WebSocket(`ws
 {
   const r = await fakeRouter(), s = await startServer({ UPNP_GATEWAY: r.location });
   await until(() => /Friends join at/.test(s.text()));
-  assert(s.text().includes(`Friends join at: http://203.0.113.7:${s.port}`) && /router now forwards TCP port/.test(s.text()), 'the public join address is printed:\n' + s.text());
+  assert(s.text().includes(`Friends join at: http://203.0.113.7:${s.port}`) && /router now forwards TCP port/.test(s.text()) && s.text().includes('Public address: 203.0.113.7 (from your router).'), 'the public join address and where it came from are printed:\n' + s.text());
+  assert(!/UPnP >>/.test(s.text()), 'no debug output unless asked for');
   assert.deepEqual([r.calls[0].action, r.calls[0].args.NewExternalPort, r.calls[0].args.NewLeaseDuration, r.calls[0].args.NewPortMappingDescription], ['AddPortMapping', String(s.port), '3600', 'Lane Duel']);
 
   // only the game's own files
@@ -175,7 +220,22 @@ const connect = port => new Promise((res, rej) => { const ws = new WebSocket(`ws
   assert.equal(await dead.stop(), 0);
 
   const nat = await fakeRouter({ externalIp: '192.168.0.2' }), behind = await startServer({ UPNP_GATEWAY: nat.location }); await until(() => /WARNING/.test(behind.text()));
-  assert(/is not a public one/.test(behind.text()) && !/Friends join at/.test(behind.text()), 'a router behind another router is called out'); await behind.stop(); nat.close();
+  assert(/is not a public one/.test(behind.text()) && !/Friends join at/.test(behind.text()) && !/only reachable on your local network/.test(behind.text()), 'a router behind another router is called out'); await behind.stop(); nat.close();
+
+  // The router opens the port but never gives an address: the "what is my IP" service is used instead...
+  const ipService = http.createServer((req, res) => res.end('198.51.100.9\n')); await new Promise(r2 => ipService.listen(0, '127.0.0.1', r2)); const ipUrl = `http://127.0.0.1:${ipService.address().port}/`;
+  const mute = () => fakeRouter({ externalReply: () => ({ status: 500, body: '<s:Envelope><s:Body><s:Fault><detail><UPnPError><errorCode>501</errorCode><errorDescription>Action Failed</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>' }) });
+  const m1 = await mute(), fb = await startServer({ UPNP_GATEWAY: m1.location, PUBLIC_IP_URL: ipUrl, UPNP_DEBUG: '1' }); await until(() => /Friends join at/.test(fb.text()), 8000);
+  assert(fb.text().includes(`Friends join at: http://198.51.100.9:${fb.port}`) && fb.text().includes(`Public address: 198.51.100.9 (from 127.0.0.1:${ipService.address().port}).`), 'the fallback address is used and its source logged:\n' + fb.text());
+  assert(/GetExternalIPAddress failed: .*error 501/.test(fb.text()) && /reply was:\s+<s:Envelope>/.test(fb.text()) && m1.count('GetExternalIPAddress') === 2, 'after the router was asked twice and its replies logged');
+  assert(/UPnP >> POST http/.test(fb.text()) && /UPnP << HTTP 500 for GetExternalIPAddress/.test(fb.text()) && /UPnP << HTTP 200 for AddPortMapping/.test(fb.text()), 'UPNP_DEBUG=1 prints the SOAP traffic');
+  assert(!/only reachable on your local network/.test(fb.text())); await fb.stop(); m1.close(); ipService.close();
+  // ...and if that fails too, the message says the port is open and how to finish by hand.
+  const m2 = await mute(), lost = await startServer({ UPNP_GATEWAY: m2.location, PUBLIC_IP_URL: 'http://127.0.0.1:9/' }); await until(() => /Couldn't find your public address/.test(lost.text()), 8000);
+  assert(lost.text().includes(`Port ${lost.port} is open on the router. Couldn't find your public address automatically; look it up and give friends http://<that address>:${lost.port}.`), lost.text());
+  assert(!/only reachable on your local network/.test(lost.text()) && !/Friends join at/.test(lost.text()) && /router now forwards TCP port/.test(lost.text()), 'never "local network only" once the mapping succeeded');
+  const wl = await connect(lost.port); wl.send(JSON.stringify({ t: 'join' })); await until(() => wl.msgs.some(m => m.t === 'lobby'));
+  const jl = wl.msgs.find(m => m.t === 'lobby').join; assert(jl.url === null && /Port \d+ is open on the router/.test(jl.note), 'the lobby shows the same message'); await lost.stop(); m2.close();
 
   const off = await startServer({ UPNP: 'off' }); await until(() => /UPnP is off/.test(off.text())); assert(!/Friends join at/.test(off.text())); assert.equal(await off.stop(), 0);
 

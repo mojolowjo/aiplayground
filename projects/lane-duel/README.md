@@ -82,6 +82,7 @@ the address to give your friends:
 ```
 Lane Duel running: http://localhost:3000
 UPnP: router now forwards TCP port 3000 to this PC (192.168.1.20), lease 60 min, renewed automatically.
+Public address: 203.0.113.7 (from your router).
 Friends join at: http://203.0.113.7:3000
 ```
 
@@ -90,8 +91,14 @@ button, to you only (whoever is on the PC running the server).
 
 - The port mapping is named "Lane Duel", has a one-hour lease that is renewed every half hour
   while the server runs, and is removed when you stop the server with Ctrl+C.
+- The public address comes from the router. If the router opens the port but will not say what
+  its address is (it is asked twice, and its replies are printed), the server asks
+  https://api.ipify.org instead and says so. If that fails too, it tells you the port is open and
+  to look the address up yourself.
 - If UPnP does not work (no router answered, or it refused), the server keeps running, prints a
   warning and tells you the game is only reachable on your local network. Use the tunnel below.
+- If something about UPnP looks wrong, start with `UPNP_DEBUG=1`: every request to the router and
+  every raw reply is printed.
 - If your router's own address is not a public one (it sits behind another router, or your
   provider shares one address between customers), the server says so. A port mapping cannot fix
   that; use the tunnel.
@@ -103,6 +110,7 @@ Settings are environment variables:
 |---|---|---|
 | `PORT` | `3000` | Port the game listens on, and the port opened on the router |
 | `UPNP` | `on` | `off` leaves the router alone (forward the port yourself) |
+| `UPNP_DEBUG` | not set | `1` prints every UPnP request and the router's raw replies |
 | `DUCKDNS_DOMAIN` | not set | A [DuckDNS](https://www.duckdns.org) name, e.g. `mygame`. The join address becomes `http://mygame.duckdns.org:3000` |
 | `DUCKDNS_TOKEN` | not set | With the domain: the name is pointed at your network on start and every 5 minutes, so it follows your IP if it changes. The token is never printed |
 

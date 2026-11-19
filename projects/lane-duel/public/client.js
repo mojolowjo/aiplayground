@@ -57,7 +57,7 @@ function renderLobby() {
   if (mine) hello.team = mine.team;                       // the team can change in the lobby
   // The join address is only sent to the host (whoever is on the PC running the server).
   const j = lobbyState.join; $('joinRow').style.display = j ? 'block' : 'none';
-  if (j) { $('joinLabel').textContent = j.public ? 'Friends join at:' : j.url ? 'On your network:' : ''; $('joinUrl').textContent = j.url || ''; $('joinUrl').style.display = $('joinCopy').style.display = j.url ? 'inline' : 'none'; $('joinNote').textContent = j.note || ''; }
+  if (j) { $('joinLabel').textContent = !j.url ? '' : j.public ? 'Friends join at:' : 'On your network:'; $('joinUrl').textContent = j.url || ''; $('joinUrl').style.display = $('joinCopy').style.display = j.url ? 'inline' : 'none'; $('joinNote').textContent = j.note || ''; }
   $('mode').value = lobbyState.mode; $('modeName').textContent = lobbyState.mode;
   $('rk').textContent = lobbyState.goal.kills; $('rc').textContent = lobbyState.goal.cs; $('teamNote').textContent = lobbyState.size > 1 ? ' (team totals)' : '';
   $('team').textContent = `Switch to ${other}`; $('team').disabled = ps.filter(p => p.team === other).length >= lobbyState.size;

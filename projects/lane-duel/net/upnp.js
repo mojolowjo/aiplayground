@@ -77,27 +77,50 @@ export async function gateway(location) {
 
 const esc = s => String(s).replace(/[<>&'"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
 
-// Step 3. One SOAP call. Resolves with the reply's fields; rejects with the router's error code and text.
-export async function soap(gw, action, args = {}) {
-  const body = `<?xml version="1.0"?>\r\n<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">` +
-    `<s:Body><u:${action} xmlns:u="${gw.serviceType}">${Object.entries(args).map(([k, v]) => `<${k}>${esc(v)}</${k}>`).join('')}</u:${action}></s:Body></s:Envelope>`;
-  const res = await request(gw.controlUrl, { method: 'POST', body,
-    headers: { 'Content-Type': 'text/xml; charset="utf-8"', 'Content-Length': Buffer.byteLength(body), SOAPAction: `"${gw.serviceType}#${action}"`, Connection: 'close' } });
-  if (res.status !== 200) {
-    const code = +(/<errorCode>\s*(\d+)\s*<\/errorCode>/i.exec(res.body) || [])[1] || 0, text = (/<errorDescription>\s*([^<]*?)\s*<\/errorDescription>/i.exec(res.body) || [])[1];
-    const err = new Error(`the router refused ${action}` + (code ? ` (error ${code}${text ? ': ' + text : ''})` : ` (HTTP ${res.status})`));
-    err.code = code; throw err;
-  }
-  const out = {};
-  for (const m of res.body.matchAll(/<(New\w+)>([^<]*)<\/\1>/g)) out[m[1]] = m[2];
+// Pull the <New...> fields out of a SOAP reply. Routers differ in how they write them, so this accepts a
+// namespace prefix (<u:NewExternalIPAddress>), attributes on the tag (dt:dt="string"), whitespace around
+// the value and either letter case in the tag name. Keys are returned without the prefix.
+export function parseFields(xml) {
+  const out = {}, unescape = v => v.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  for (const m of String(xml).matchAll(/<(?:[\w.-]+:)?(New\w+)(?:\s[^>]*)?>([^<]*)<\/(?:[\w.-]+:)?\1\s*>/gi)) out[m[1]] = unescape(m[2].trim());
   return out;
 }
+
+// Step 3. One SOAP call, written the way miniupnpc writes it (the client routers are most often tested
+// against; checked against soapPostSubmit and simpleUPnPcommand in its source): the same headers in the same
+// order, the same envelope with the action element in the service's namespace, and a final CRLF.
+// Resolves with the reply's fields; rejects with the router's error code and text. The raw reply is kept on
+// the result (`.raw`, not listed among the fields) and on the error, so a caller can show it.
+// `debug`, if given, is called with every request and every raw reply.
+export async function soap(gw, action, args = {}, debug) {
+  const body = `<?xml version="1.0"?>\r\n<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">` +
+    `<s:Body><u:${action} xmlns:u="${gw.serviceType}">${Object.entries(args).map(([k, v]) => `<${k}>${esc(v)}</${k}>`).join('')}</u:${action}></s:Body></s:Envelope>\r\n`;
+  const u = new URL(gw.controlUrl);
+  const headers = { Host: u.hostname + (u.port && u.port !== '80' ? ':' + u.port : ''), 'User-Agent': 'LaneDuel/1.0 UPnP/1.1', 'Content-Length': Buffer.byteLength(body),
+    'Content-Type': 'text/xml; charset="utf-8"', SOAPAction: `"${gw.serviceType}#${action}"`, Connection: 'close' };
+  if (debug) debug(`UPnP >> POST ${gw.controlUrl}\n${Object.entries(headers).map(([k, v]) => `   ${k}: ${v}`).join('\n')}\n   ${body.trim()}`);
+  let res;
+  try { res = await request(gw.controlUrl, { method: 'POST', body, headers }); }
+  catch (e) { if (debug) debug(`UPnP << no reply to ${action}: ${e.message}`); throw e; }
+  if (debug) debug(`UPnP << HTTP ${res.status} for ${action}\n   ${res.body.trim() || '(empty reply)'}`);
+  if (res.status !== 200) {
+    const code = +(/<(?:[\w.-]+:)?errorCode[^>]*>\s*(\d+)\s*</i.exec(res.body) || [])[1] || 0, text = (/<(?:[\w.-]+:)?errorDescription[^>]*>\s*([^<]*?)\s*</i.exec(res.body) || [])[1];
+    const err = new Error(`the router refused ${action}` + (code ? ` (error ${code}${text ? ': ' + text : ''})` : ` (HTTP ${res.status})`));
+    err.code = code; err.raw = res.body; throw err;
+  }
+  const out = parseFields(res.body);
+  Object.defineProperty(out, 'raw', { value: res.body, enumerable: false });
+  return out;
+}
+
+const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+export const isIpv4 = ip => { const m = IPV4.exec(String(ip || '').trim()); return !!m && m.slice(1).every(n => +n <= 255) && String(ip).trim() !== '0.0.0.0'; };
 
 // Is this address one the public internet can reach? A router whose own "external" address is private is
 // sitting behind another router or a carrier's shared address, and a mapping on it will not help.
 export function isPublicAddress(ip) {
-  const p = String(ip).split('.').map(Number);
-  if (p.length !== 4 || p.some(n => !(n >= 0 && n <= 255))) return false;
+  if (!isIpv4(ip)) return false;
+  const p = String(ip).trim().split('.').map(Number);
   const [a, b] = p;
   return !(a === 10 || a === 127 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127) || a >= 224);
 }
@@ -105,25 +128,40 @@ export function isPublicAddress(ip) {
 // A port mapping that keeps itself alive: open() creates it, a timer renews it at half its lease, and
 // close() removes it. `find` is how the router is located (replaced in tests).
 export class PortMapping {
-  constructor({ port, description = 'Lane Duel', lease = 3600, retry = 60, log = () => {}, find = () => discover() }) {
-    Object.assign(this, { port, description, lease, retry, log, find, gw: null, timer: null, active: false });
+  constructor({ port, description = 'Lane Duel', lease = 3600, retry = 60, askAgainAfter = 1, log = () => {}, debug = null, find = () => discover() }) {
+    Object.assign(this, { port, description, lease, retry, askAgainAfter, log, debug, find, gw: null, timer: null, active: false });
   }
   async add() {
     const args = lease => ({ NewRemoteHost: '', NewExternalPort: this.port, NewProtocol: 'TCP', NewInternalPort: this.port, NewInternalClient: this.gw.localAddress,
       NewEnabled: 1, NewPortMappingDescription: this.description, NewLeaseDuration: lease });
-    try { await soap(this.gw, 'AddPortMapping', args(this.lease)); return this.lease; }
+    try { await soap(this.gw, 'AddPortMapping', args(this.lease), this.debug); return this.lease; }
     catch (e) {
       if (e.code !== 725) throw e;                     // 725 = this router only does permanent mappings
-      await soap(this.gw, 'AddPortMapping', args(0)); return 0;
+      await soap(this.gw, 'AddPortMapping', args(0), this.debug); return 0;
     }
   }
-  // Resolves with { externalIp, localAddress, lease } (lease 0 = permanent). Rejects if the router cannot be found or says no.
+  // Ask the router for its public address. Every failure is logged with what the router actually sent back.
+  // Resolves with the address, or null if the router would not give one.
+  async askExternalIp() {
+    const shown = raw => { const t = String(raw ?? '').trim(); return t ? t.slice(0, 500) + (t.length > 500 ? ' …' : '') : '(empty reply)'; };
+    try {
+      const res = await soap(this.gw, 'GetExternalIPAddress', {}, this.debug), ip = (res.NewExternalIPAddress || '').trim();
+      if (isIpv4(ip)) return ip;
+      this.log(`UPnP: the router answered GetExternalIPAddress without a usable address${ip ? ` ("${ip}")` : ''}. Its reply was:\n   ${shown(res.raw)}`);
+    } catch (e) {
+      this.log(`UPnP: GetExternalIPAddress failed: ${e.message}.` + (e.raw !== undefined ? ` The router's reply was:\n   ${shown(e.raw)}` : ''));
+    }
+    return null;
+  }
+  // Resolves with { externalIp, localAddress, lease } (lease 0 = permanent; externalIp null if the router would
+  // not say, after asking twice). Rejects if the router cannot be found or refuses the mapping.
   async open() {
     this.gw = await gateway(await this.find());
+    if (this.debug) this.debug(`UPnP: control URL ${this.gw.controlUrl}, service ${this.gw.serviceType}, this PC is ${this.gw.localAddress}`);
     const lease = await this.add(); this.active = true;
-    let externalIp = null;
-    try { externalIp = (await soap(this.gw, 'GetExternalIPAddress')).NewExternalIPAddress || null; } catch { /* the mapping still stands */ }
     if (lease > 0) this.schedule(lease / 2);
+    let externalIp = await this.askExternalIp();
+    if (!externalIp) { await new Promise(r => setTimeout(r, this.askAgainAfter * 1000)); externalIp = await this.askExternalIp(); }
     return { externalIp, localAddress: this.gw.localAddress, lease };
   }
   schedule(seconds) {
@@ -139,7 +177,7 @@ export class PortMapping {
     clearTimeout(this.timer);
     if (!this.active) return false;
     this.active = false;
-    await soap(this.gw, 'DeletePortMapping', { NewRemoteHost: '', NewExternalPort: this.port, NewProtocol: 'TCP' });
+    await soap(this.gw, 'DeletePortMapping', { NewRemoteHost: '', NewExternalPort: this.port, NewProtocol: 'TCP' }, this.debug);
     return true;
   }
 }

@@ -5,7 +5,9 @@
 //   UPNP            "off" to leave the router alone                    default on
 //   DUCKDNS_DOMAIN  a DuckDNS name to show as the join address         optional
 //   DUCKDNS_TOKEN   with the domain: keep that name pointed at this network   optional
+//   UPNP_DEBUG      "1" prints every UPnP request and the router's raw replies     optional
 //   UPNP_GATEWAY    the router's UPnP description URL, to skip the search     optional, rarely needed
+//   PUBLIC_IP_URL   the "what is my IP" service used if the router will not say     default https://api.ipify.org
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,6 +17,7 @@ import { Game, TICK, MAP, RULES } from './game/sim.js';
 import { HEROES, SPELLS, ITEMS } from './game/data.js';
 import { PortMapping, isPublicAddress } from './net/upnp.js';
 import { duckName, startDuck } from './net/duckdns.js';
+import { publicIp, PUBLIC_IP_SERVICE } from './net/publicip.js';
 import { LIMITS, RateLimiter, PerIp, plainIp, isThisMachine, lanAddress, staticFiles } from './net/guard.js';
 
 const PORT = +process.env.PORT || 3000;
@@ -137,7 +140,8 @@ wss.on('connection', (ws, req) => {
 // ---------- going public: UPnP port mapping, the join address, DuckDNS ----------
 const duck = duckName(process.env.DUCKDNS_DOMAIN), duckToken = process.env.DUCKDNS_TOKEN || '';
 const duckUrl = duck ? `http://${duck}.duckdns.org:${PORT}` : null;
-const mapping = new PortMapping({ port: PORT, description: 'Lane Duel', lease: UPNP_LEASE, log: m => console.log(m),
+const UPNP_DEBUG = ['1', 'on', 'true', 'yes'].includes(String(process.env.UPNP_DEBUG || '').trim().toLowerCase());
+const mapping = new PortMapping({ port: PORT, description: 'Lane Duel', lease: UPNP_LEASE, log: m => console.log(m), debug: UPNP_DEBUG ? m => console.log(m) : null,
   ...(process.env.UPNP_GATEWAY ? { find: async () => process.env.UPNP_GATEWAY } : {}) });
 let duckJob = null;
 
@@ -156,10 +160,23 @@ async function goPublic() {
   try { res = await mapping.open(); }
   catch (e) { return localOnly(`UPnP could not open port ${PORT} on your router (${e.message}).`); }
   console.log(`UPnP: router now forwards TCP port ${PORT} to this PC (${res.localAddress}), ` + (res.lease ? `lease ${Math.round(res.lease / 60)} min, renewed automatically.` : 'as a permanent mapping (this router does not do leases).'));
-  if (res.externalIp && !isPublicAddress(res.externalIp))
-    return localOnly(`the router's own address (${res.externalIp}) is not a public one, so it sits behind another router or a shared address from your provider. Friends cannot reach it; use the tunnel instead (see README).`);
-  const url = duckUrl || (res.externalIp ? `http://${res.externalIp}:${PORT}` : null);
-  if (!url) return localOnly('the port is open, but the router would not say what its public address is. Look it up (search "what is my IP") and give friends http://<that address>:' + PORT);
+  // From here on the port IS open on the router; what is left is finding the address to hand out.
+  let ip = res.externalIp, source = 'your router';
+  if (ip && !isPublicAddress(ip)) {
+    console.log(`WARNING: Port ${PORT} is open on this router, but the router's own address (${ip}) is not a public one, so it sits behind another router or a shared\n         address from your provider. Friends probably cannot get through; if they cannot, use the tunnel instead (see README).`);
+    return setJoin({ url: lanUrl, public: false, note: `The router's own address (${ip}) is not public; friends outside your network probably cannot connect. See the tunnel in the README.` });
+  }
+  if (!ip) {
+    // The router would not say (its replies are logged above). Ask a "what is my IP" service instead.
+    try { const found = await publicIp({ url: process.env.PUBLIC_IP_URL || PUBLIC_IP_SERVICE }); ip = found.ip; source = found.source; }
+    catch (e) { console.log(`Public address: could not get one from ${new URL(process.env.PUBLIC_IP_URL || PUBLIC_IP_SERVICE).host} either (${e.message}).`); }
+  }
+  if (ip) console.log(`Public address: ${ip} (from ${source}).`);
+  const url = duckUrl || (ip ? `http://${ip}:${PORT}` : null);
+  if (!url) {
+    const msg = `Port ${PORT} is open on the router. Couldn't find your public address automatically; look it up and give friends http://<that address>:${PORT}.`;
+    console.log(msg); return setJoin({ url: null, public: true, note: msg });
+  }
   console.log(`Friends join at: ${url}`);
   setJoin({ url, public: true, note: '' });
 }
