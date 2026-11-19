@@ -85,7 +85,7 @@ wss.on('connection', (ws, req) => {
   ws.on('error', () => {});                             // e.g. an oversized message: ws closes the connection itself
   if (!perIp.add(ip)) return ws.close(1013, 'too many connections from this address');
   const limiter = new RateLimiter();
-  let room = null, me = null;
+  let room = null, me = null, dropped = false;
   const handle = m => {
     if (m.t === 'ping') return send(ws, { t: 'pong', c: Number.isFinite(m.c) ? m.c : 0 });
     if (m.t === 'join' && !me) {
@@ -118,8 +118,9 @@ wss.on('connection', (ws, req) => {
     } else if (m.t === 'cmd' && room.game) room.game.command(me.id, m);
   };
   ws.on('message', raw => {
-    // Too many messages: this is not a player, drop the connection.
-    if (!limiter.allow()) { ws.close(1008, 'too many messages'); return ws.terminate(); }
+    // Too many messages: this is not a player. Stop listening to it, say why, and cut it off if it lingers.
+    if (dropped) return;
+    if (!limiter.allow()) { dropped = true; ws.close(1008, 'too many messages'); setTimeout(() => ws.terminate(), 1000).unref(); return; }
     let m; try { m = JSON.parse(raw); } catch { return; }             // not JSON: ignore
     if (!m || typeof m !== 'object' || Array.isArray(m) || typeof m.t !== 'string') return;   // not a message: ignore
     try { handle(m); } catch (e) { console.error('Ignored a message that caused an error:', e.message); }
