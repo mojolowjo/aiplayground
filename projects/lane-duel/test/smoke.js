@@ -2,6 +2,7 @@
 import assert from 'node:assert';
 import { Game, TICK, MAP, WAVES, MINION, RULES } from '../game/sim.js';
 import { HEROES } from '../game/data.js';
+import fs from 'node:fs';
 
 const run = (g, secs) => { for (let i = 0; i < secs * TICK; i++) g.step(); };
 // Most checks stage their scene on open ground on blue's side of the lane, which is where the blue inner
@@ -217,7 +218,10 @@ const duel = (a, b = 'oriel') => {
   for (let i = 0; i < 0.9 * TICK; i++) { g.step(); off = Math.max(off, Math.abs(h.y - 800)); } assert(off < 1 && h.x > 3300, 'and she passes through minions for those 1.25s'); for (const u of wall) g.units.delete(u.id);
   reset(600); const by = minion(3200, 900, 5000); g.command(1, { c: 'cast', s: 3 }); assert(!(h.cds[3] > g.time) && !h.state, 'Glass Storm needs an enemy hero within 500');
   reset(300); g.command(1, { c: 'cast', s: 3 }); g.command(1, { c: 'move', x: 2000, y: 800 }); run(g, 2.4); assert(h.x === 3000 && h.state, 'rooted while channelling'); g.command(1, { c: 'stop' }); run(g, 0.4);
-  const storm = 5000 - e.hp, blades = storm / (25 * mr); assert(by.hp === 5000 && blades > 13.5 && blades < 16.5, `Glass Storm: rooted, heroes only, about 15 blades: ${blades.toFixed(1)}`);
+  const storm = 5000 - e.hp, blades = storm / (25 * mr); assert(by.hp === 5000 && near(blades, 15, 1e-6), `Glass Storm: heroes only, exactly 15 blades: ${blades.toFixed(3)}`);
+  { reset(300); let thrown = 0, last = 0; const seen = new Set(); g.command(1, { c: 'cast', s: 3 }); const t0 = g.time;      // count the blades as they leave her hand
+    for (let i = 0; i < 3 * TICK; i++) { g.step(); for (const sh of g.shots) if (sh.kind === 'home' && !seen.has(sh.id)) { seen.add(sh.id); thrown++; last = g.time - t0; } }
+    assert(thrown === 15 && near(last, 14 * 0.166, 0.03) && !h.state, `15 blades thrown, the last at ${last.toFixed(2)}s of the 2.5s channel`); }
   h.items = ['greatblade']; g.refresh(h); reset(300); g.command(1, { c: 'cast', s: 3 }); run(g, 2.4); g.command(1, { c: 'stop' }); run(g, 0.4); const phys = 40 * (0.16 + 0.5 * (g.atkSpeed(h) / HEROES.sable.as - 1)) * ar;
   assert(near((5000 - e.hp) / storm, (25 * mr + phys) / (25 * mr), 0.03), 'bonus AD adds a physical part to each blade'); h.items = []; g.refresh(h);
   reset(300); g.command(1, { c: 'cast', s: 3 }); run(g, 1); g.stun(h, 0.2); assert(!h.state, 'a stun cancels the channel'); run(g, 0.6); const hpS = e.hp; run(g, 1); assert(e.hp >= hpS, 'and the blades stop');
@@ -369,6 +373,32 @@ const duel = (a, b = 'oriel') => {
     const d = g.heroes.get(-1); assert(Math.abs(d.x - MAP.tower.red.x) < 500 && d.cs === 0, 'the stationary dummy still just stands by its tower'); }
   assert.deepEqual(['easy', 'normal', 'hard'].map(k => RULES.bot[k].aimErr > 0 && RULES.bot[k].react > 0), [true, true, true]);
   assert(RULES.bot.easy.aimErr > RULES.bot.normal.aimErr && RULES.bot.normal.aimErr > RULES.bot.hard.aimErr && RULES.bot.easy.trade < RULES.bot.hard.trade);
+  // The whole kit. A level-11 hard bot against a low player who stands still for 30s, then runs.
+  const scene = (hero, ai = 'hard', mine = 'oriel') => { const g = new Game([{ id: 1, team: 'blue', hero: mine, name: 'A' }, { id: -1, team: 'red', hero, name: 'Bot', bot: true, ai }]);
+    const me = g.heroes.get(1), b = g.heroes.get(-1); g.nextWave = Infinity; b.lvl = 11; b.points = 10; g.refresh(b); b.hp = b.mhp; b.mp = b.mmp; b.x = 9600; b.y = 800;
+    me.x = 9000; me.y = 800; me.hpRegen = 0; me.order = { type: 'hold' }; return { g, me, b }; };
+  for (const hero of ['kessa', 'gorrum', 'wren', 'sable']) {
+    const { g, me, b } = scene(hero); me.mhp = 30000; me.hp = 9000; const used = [0, 0, 0, 0], prev = [0, 0, 0, 0];
+    for (let i = 0; i < 60 * TICK; i++) { if (i === 30 * TICK) g.command(1, { c: 'move', x: 8200, y: 800 }); g.step(); if (me.hp < 3000) me.hp = 3000; b.mp = Math.max(b.mp, 200);
+      assert(b.mp >= 0 && b.cds.every((cd, s) => cd <= prev[s] + 0.01 || prev[s] <= g.time + 0.05), `${hero} never casts an ability that is on cooldown`);
+      for (let s = 0; s < 4; s++) { if (b.cds[s] > prev[s] + 0.5) used[s]++; prev[s] = b.cds[s]; } }
+    assert(used.every(n => n > 0), `the ${hero} bot uses all four abilities: Q/W/E/R cast ${used.join('/')} times`);
+  }
+  // No hidden information: with the player out of sight in brush, no hero's bot casts anything at it.
+  for (const hero of Object.keys(HEROES)) { const { g, me, b } = scene(hero); const br = MAP.brush[0]; me.x = br.x + br.w / 2; me.y = br.y + 100; me.hp = 1; me.mhp = 9000; b.x = me.x + 500; run(g, 20);
+    assert(b.cds.every(cd => !(cd > 0)) && me.hp === 1, `${hero} bot does nothing to a player it cannot see`); }
+  // Gorrum only hooks with a clear line; Kessa only lets her beam go once it reaches.
+  { const { g, me, b } = scene('gorrum'); me.mhp = me.hp = 30000; const wall = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 }); Object.assign(wall, { x: 9300, y: 800, ms: 0, ad: 0, hp: 1e6, mhp: 1e6, lookAt: Infinity });
+    for (let i = 0; i < 20 * TICK; i++) { g.step(); b.x = 9600; b.y = 800; } assert(!(b.cds[0] > 0), 'no hook while a minion stands in the way');
+    g.units.delete(wall.id); let hooked = false; for (let i = 0; i < 20 * TICK && !hooked; i++) { g.step(); hooked = b.cds[0] > g.time; } assert(hooked, 'the hook comes out once the line is clear'); }
+  { const { g, me, b } = scene('kessa'); me.mhp = me.hp = 30000; me.x = 8400; let beams = 0;
+    for (let i = 0; i < 40 * TICK; i++) { const n = g.zones.length; g.step(); b.x = 9600; b.y = 800; for (const z of g.zones.slice(n)) if (z.shape === 'line') { beams++; assert(z.len >= g.dist(b, me) - me.radius - 80, `the beam (${z.len | 0}) was released long enough to reach (${g.dist(b, me) | 0})`); } }
+    assert(beams >= 2 && me.hp < 30000, 'Kessa charges and releases her beam at the player'); }
+  // Hard sidesteps a skillshot it can see; easy stands in it.
+  const dodged = ai => { let hit = 0; for (let k = 0; k < 12; k++) { const { g, me, b } = scene('wren', ai); me.mhp = me.hp = 30000; me.x = 9150 + k * 10; b.hp = b.mhp = 30000; b.hpRegen = 0; b.x = 10050; b.y = 940; run(g, 2);     // the bot is standing at its post
+      g.command(1, { c: 'lvl', s: 0 }); b.mp = 0; b.manaRegen = 0; const hp = b.hp; g.command(1, { c: 'cast', s: 0, x: b.x, y: b.y }); run(g, 1.5); if (b.hp < hp - 1) hit++; } return hit; };   // no mana: it can only move
+  const hardHit = dodged('hard'), easyHit = dodged('easy');
+  assert(hardHit <= 3 && easyHit >= 10, `skillshots that landed out of 12: ${hardHit} on hard (it dodges), ${easyHit} on easy`);
   Math.random = realRandom;
   console.log('bot ok');
 }
@@ -447,5 +477,44 @@ const duel = (a, b = 'oriel') => {
   k.x = MAP.spawn.blue.x; k.hp = 100; k.hpRegen = 0; k.gold = 50; g3.command(1, { c: 'buy', item: 'potion' }); k.x = 3000; run(g3, 15.2);
   assert(near(k.hp, 220, 0.01), 'a potion restores 120 health over 15s: ' + k.hp.toFixed(1));
   console.log('shared systems ok');
+}
+// 15. Client-side prediction (public/predict.js) follows the server's own movement rules
+{
+  const Predict = new Function(fs.readFileSync(new URL('../public/predict.js', import.meta.url), 'utf8') + '; return Predict;')();
+  Predict.configure(RULES.predict);
+  const setup = wallX => { const g = mk('wren', 'gorrum'), h = g.heroes.get(1); g.nextWave = Infinity; h.x = 3000; h.y = 800; h.face = 0;
+    const ms = [740, 800, 860].map(y => { const m = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 }); return Object.assign(m, { x: wallX, y, laneY: y, ms: 0, lookAt: Infinity }); });
+    const env = () => ({ now: g.time, speed: g.speed(h), canMove: true, ghosted: false, odd: h.id % 2 === 1, minions: ms, map: MAP, coll: RULES.collision });
+    return { g, h, ms, env }; };
+  // (a) Same orders, same world, same steps: the prediction lands where the server does, on open ground and around a wave.
+  for (const wallX of [9000, 3300]) { const { g, h, env } = setup(wallX), p = Predict.create(); let worst = 0, steps = 0;
+    Predict.moveTo(p, 3600, 800, { x: h.x, y: h.y, f: h.face }, g.time); g.command(1, { c: 'move', x: 3600, y: 800 });
+    while (h.order && steps++ < 300) { g.step(); Predict.step(p, 1 / TICK, env()); worst = Math.max(worst, Math.hypot(p.x - h.x, p.y - h.y)); }
+    assert(!h.order && !p.order && worst < 0.01, `prediction matches the server step for step ${wallX < 9000 ? 'around a wave' : 'on open ground'}: worst gap ${worst.toFixed(4)} over ${steps} steps`); }
+  // (b) With 100ms of round trip the hero moves at once on the client, stays one round trip ahead, and snapshots agree with it.
+  { const { g, h, env } = setup(3300), p = Predict.create(), rtt = 0.1, toServer = [], toClient = []; let worst = 0, late = 0, lead = 0, moved = 0;
+    Predict.moveTo(p, 3600, 800, { x: h.x, y: h.y, f: h.face }, g.time); toServer.push({ at: g.time + rtt / 2, c: { c: 'move', x: 3600, y: 800 } });
+    for (let i = 0; i < 3 * TICK; i++) {
+      while (toServer.length && g.time + 1 / TICK >= toServer[0].at - 1e-9) g.command(1, toServer.shift().c);   // a tick includes every order that arrived before it ran
+      g.step(); toClient.push({ at: g.time + rtt / 2, x: Math.round(h.x), y: Math.round(h.y) });
+      Predict.step(p, 1 / TICK, env()); if (i === 0) moved = p.x - 3000;
+      while (toClient.length && g.time >= toClient[0].at - 1e-9) { const s = toClient.shift(), err = Predict.reconcile(p, s.x, s.y, s.at, rtt); /* handled the moment it arrives */ worst = Math.max(worst, err); if (i > 0.5 * TICK) late = Math.max(late, err); }
+      if (i === 10) lead = p.x - h.x;
+    }
+    assert(moved > 5, 'the hero starts moving on the very first frame, before the server has even heard the order');
+    assert(lead > 0 && lead < 45, `it runs ahead of the server by about the delay the order took to get there: ${lead.toFixed(0)} units`);
+    assert(worst < 20 && late < 2.5 && near(p.x, 3600, 0.002) && near(h.x, 3600, 0.002), `snapshots agree with it: largest disagreement ${worst.toFixed(1)} at the start, ${late.toFixed(1)} once settled (no rubber-banding)`); }
+  // (c) Corrections: a small error is blended away over ~100ms, a large one snaps, and following mode is left alone.
+  { const { g, env } = setup(9000), p = Predict.create(), e0 = env();
+    Predict.moveTo(p, 3000, 800, { x: 3000, y: 800 }, 0); Predict.stop(p); for (let i = 0; i < 10; i++) Predict.step(p, 1 / TICK, { ...e0, now: i / TICK });
+    assert.equal(Predict.reconcile(p, 3001, 800, 0.3, 0), 1); Predict.step(p, 1 / TICK, { ...e0, now: 0.34 }); assert.equal(p.x, 3000, 'rounding-sized errors are ignored');
+    assert.equal(Predict.reconcile(p, 3040, 800, 0.35, 0), 40); Predict.step(p, 0.05, { ...e0, now: 0.4 }); assert(near(p.x, 3020, 0.001), 'half way after 50ms');
+    Predict.step(p, 0.05, { ...e0, now: 0.45 }); assert(near(p.x, 3040, 0.001), 'all the way after 100ms'); assert(Predict.reconcile(p, 3040, 800, 0.46, 0) < 0.1, 'and the next snapshot agrees');
+    Predict.reconcile(p, 3300, 800, 0.5, 0); assert.equal(p.x, 3300, 'an error over 150 units snaps');
+    Predict.release(p); assert(p.mode === 'follow' && Predict.reconcile(p, 5000, 800, 0.6, 0) === 0 && p.x === 3300, 'following mode is not corrected'); }
+  // The server marks when the hero cannot walk or is being moved, so the client can hold or hand over.
+  { const g = mk('wren', 'gorrum'), h = g.heroes.get(1), flags = () => { const u = g.snapshot(1).units.find(u => u.id === h.id); return [u.nm, u.fm, u.gh]; };
+    assert.deepEqual(flags(), [0, 0, 0]); g.stun(h, 1); assert.deepEqual(flags(), [1, 0, 0]); h.stunUntil = 0; g.shove(h, 100, 0, 0.5); assert.deepEqual(flags(), [1, 1, 0]); }
+  console.log('prediction ok');
 }
 console.log('all checks passed');

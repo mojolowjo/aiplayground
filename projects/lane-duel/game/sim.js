@@ -31,6 +31,11 @@ export const RULES = {
   heroRadius: 65, recallTime: 8, revealFor: 1.5,    // revealFor: seconds a hero stays visible in brush after acting
   fountainRegen: 0.1,                               // share of max health and mana restored per second at base
   chargeRefund: 0.5,                                // share of a charged ability's cost returned if the charge is cancelled
+  // Client-side prediction of your own hero's movement (public/predict.js). blend: seconds over which a small
+  // error is smoothed out; snap: an error above this many units is corrected at once; dead: errors this small
+  // are ignored; history: seconds of predicted positions kept; tickLead: a snapshot already holds the movement of
+  // the tick that produced it, which the measured round trip does not cover (about half a tick on average).
+  predict: { blend: 0.1, snap: 150, dead: 1.5, history: 1.5, tickLead: 0.017 },
   // Towers. Outer towers have `hp` in `plates` equal plates, each paying plateGold to the hero who breaks it;
   // inner towers have innerHp and no plates. Range is edge to edge, like every attack range.
   // On minions a shot removes a share of max health (MINION.*.towerShot); `ad` is the fallback for anything else.
@@ -44,15 +49,28 @@ export const RULES = {
   // Collision between heroes and minions: circles of these radii push apart. heroShare is how much of the push
   // the hero takes (1 = minions hold their ground); slide is how strongly a blocked hero is steered around.
   collision: { hero: 34, minion: 18, heroShare: 1, slide: 1, detourFor: 1 },
-  // Practice bot. react = seconds between decisions; hitErr = how far off its judgement of "one attack will
-  // kill it" can be; skip = share of minions it does not try for at all; trade = chance per second of
-  // attacking a player in range; qEvery = seconds between Q casts; aimErr = aim error in radians.
+  // Practice bot. Per difficulty: react = seconds between decisions; hitErr = how far off its judgement of
+  // "one attack will kill it" can be; skip = share of minions it does not try for at all; trade = chance per
+  // second of attacking a player in range; qEvery = seconds between Q pokes; aimErr = aim error in radians;
+  // commit = chance it goes for an ultimate, a chase or an all-in when one is on; castGap = seconds it
+  // leaves between abilities; dodge = whether it sidesteps skillshots it can see.
   bot: {
-    easy:   { react: 0.35, hitErr: 0.30, skip: 0.45, trade: 0.12, qEvery: 10, aimErr: 0.30 },
-    normal: { react: 0.20, hitErr: 0.12, skip: 0.20, trade: 0.35, qEvery: 6.5, aimErr: 0.14 },
-    hard:   { react: 0.10, hitErr: 0.03, skip: 0, trade: 0.70, qEvery: 4.5, aimErr: 0.05 },
+    easy:   { react: 0.35, hitErr: 0.30, skip: 0.45, trade: 0.12, qEvery: 10, aimErr: 0.30, commit: 0.3, castGap: 3, dodge: false },
+    normal: { react: 0.20, hitErr: 0.12, skip: 0.20, trade: 0.35, qEvery: 6.5, aimErr: 0.14, commit: 0.6, castGap: 1.5, dodge: false },
+    hard:   { react: 0.10, hitErr: 0.03, skip: 0, trade: 0.70, qEvery: 4.5, aimErr: 0.05, commit: 1, castGap: 0.6, dodge: true },
+    // Lane habits.
     retreatHp: 0.35, returnHp: 0.9, safeDist: 1300, safeMinions: 650, retreatBehind: 250,
     chase: 600, prepHp: 0.5, standRanged: 350, standMelee: 200, standOff: 140, tradeFor: 1.2, tradeReach: 60, towerMargin: 120,
+    // Using abilities. lowHp / finishHp: enemy health shares it treats as "low" and "nearly dead"; manaReserve:
+    // share of its mana it keeps back from pokes; pokeReach: share of an ability's range it will cast from;
+    // reachMargin: how far inside a range the target must be; forget: seconds it keeps aiming at where it last saw someone.
+    lowHp: 0.4, finishHp: 0.25, manaReserve: 0.25, pokeReach: 0.9, reachMargin: 60, forget: 3,
+    zoneDelay: 0.8, shotSpeed: 1600,                 // lead times assumed for a kit without its own numbers (Oriel)
+    passiveBelow: 0.85,                              // Kessa: only farm the passive's mana when below this share of mana
+    engageSlack: 120, engageFor: 2.5, fleeSpeed: 80, chaseRange: 900,     // Gorrum: following up a hook, chasing a runner
+    boltGap: 100, escapeRange: 700,                  // Wren: bolt last-hits minions at least this far out of attack range; blink away inside this
+    bladeNear: 300, comboAttacks: 2, comboTrust: 0.7, allInMargin: 0.1, allInRetry: 2, allInFor: 4,   // Sable: when a combo should kill, and how long she commits
+    dodgeAhead: 0.8, dodgeMargin: 25, dodgeExtra: 50,                     // sidestepping: how far ahead it looks, and how wide a berth it gives
   },
 };
 // Minions. Times are in seconds of game time.
@@ -782,6 +800,9 @@ export class Game {
         pn: u.def.passive && u.def.passive.count ? u.def.passive.count(this, u) : 0,
         si: T < u.silenceUntil ? 1 : 0, ku: T < u.airUntil ? 1 : 0, em: u.emp && u.emp.until > T ? 1 : 0,
         cn: u.state && u.state.name === 'channel' ? 1 : 0,
+        // for the client's movement prediction: nm = cannot walk right now, fm = being moved by force, gh = ignores unit collision
+        nm: T < u.stunUntil || T < u.rootUntil || (u.state && u.state.lock) || u.casting || u.recall ? 1 : 0,
+        fm: u.push || u.dashing ? 1 : 0, gh: u.ghostUntil > T ? 1 : 0,
         // ability state: ch = charge 0..1 (hl = fraction of the hold limit used), bg = barrage shots left
         ch: u.state && u.state.name === 'charging' ? +Math.min(1, (T - u.state.t0) / u.state.full).toFixed(2) : 0,
         hl: u.state && u.state.name === 'charging' ? +((T - u.state.t0) / (u.state.until - u.state.t0)).toFixed(2) : 0,

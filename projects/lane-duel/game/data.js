@@ -272,12 +272,14 @@ HEROES.sable = {
         if (!t.dead) h.nextAttack = g.time;
       } },
     // Channel: a locked state that ticks on a timer. A stun or knock-up ends the state, and so the channel.
-    { key: 'R', name: 'Glass Storm', kind: 'self', radius: 550, castRange: 500, lasts: 2.5, every: 0.166, targets: 3, cd: [75, 60, 45], cost: [0],
+    { key: 'R', name: 'Glass Storm', kind: 'self', radius: 550, castRange: 500, lasts: 2.5, every: 0.166, blades: 15, targets: 3, cd: [75, 60, 45], cost: [0],
       dmg: [25, 37.5, 50], ap: 0.19, bonusAd: 0.16, bonusAdPerAs: 0.5, bladeSpeed: 1700, noTarget: 'No enemy hero close enough',
-      get desc() { return `Needs an enemy hero within ${this.castRange}. Channel for ${this.lasts}s, unable to move or attack, throwing a blade every ${this.every}s at up to ${this.targets} enemy heroes within ${this.radius}. Each blade deals ${list(this.dmg)} + ${this.ap * 100}% AP magic damage plus ${this.bonusAd * 100}% bonus AD physical damage (that share grows by ${this.bonusAdPerAs * 100}% bonus AD for every 100% bonus attack speed). Being stunned or knocked up cancels it; press S to end early.`; },
+      get desc() { return `Needs an enemy hero within ${this.castRange}. Channel for ${this.lasts}s, unable to move or attack, throwing ${this.blades} blades (one every ${this.every}s) at each of up to ${this.targets} enemy heroes within ${this.radius}. Each blade deals ${list(this.dmg)} + ${this.ap * 100}% AP magic damage plus ${this.bonusAd * 100}% bonus AD physical damage (that share grows by ${this.bonusAdPerAs * 100}% bonus AD for every 100% bonus attack speed). Being stunned or knocked up cancels it; press S to end early.`; },
       pick(g, h) { return [...g.heroes.values()].filter(u => g.targetable(h, u) && g.dist(h, u) <= this.castRange).sort((a, b) => g.dist(a, h) - g.dist(b, h))[0]; },
-      cast(g, h) { g.enter(h, 3, 'channel', this.lasts, { lock: true, stopEnds: true, every: this.every }); },
-      onTick(g, h) {
+      cast(g, h) { g.enter(h, 3, 'channel', this.lasts, { lock: true, stopEnds: true, every: this.every, thrown: 0 }); },
+      onTick(g, h, st) {
+        if (st.thrown >= this.blades) return;          // exactly `blades` volleys per channel: at 0s, then every `every` seconds
+        st.thrown++;
         const r = h.ranks[3] - 1, magic = R(this.dmg, r) + this.ap * h.ap;
         const phys = h.bonusAd * (this.bonusAd + this.bonusAdPerAs * Math.max(0, g.atkSpeed(h) / h.def.as - 1));
         const near = [...g.heroes.values()].filter(u => g.targetable(h, u) && g.dist(h, u) <= this.radius + u.radius)

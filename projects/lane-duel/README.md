@@ -36,10 +36,16 @@ Then open http://localhost:3000.
 With one player in the room the Start button becomes **Practice**, with a choice of opponent:
 
 - **A stationary dummy** stands by its tower and hits whatever comes into range.
-- **A bot (easy / normal / hard)** plays the lane: it last-hits minions, sometimes trades when you
-  walk up, throws its Q at you now and then, backs off below 35% health and recalls when safe.
-  Difficulty changes how accurately it last-hits, how often it trades and how well it aims.
-  It follows the same rules as a player (vision, cooldowns, mana).
+- **A bot (easy / normal / hard)** plays the lane: it last-hits minions, trades when you walk
+  up, backs off below 35% health and recalls when safe, and uses its whole kit with a plan for
+  each character (for example Gorrum only hooks with a clear line and follows up with his
+  knock-up; Kessa charges her beam until you are inside its reach; Sable goes all in when a combo
+  should kill). Difficulty changes how accurately it last-hits, how quickly it reacts, how well it
+  aims, how often it commits and how long it waits between abilities. On hard it also sidesteps
+  skillshots and telegraphed areas it can see coming.
+  It follows the same rules as a player: cooldowns, mana and vision. It only acts on what is
+  drawn on your screen too, never on your cooldowns, mana or orders, and never on a hero hidden
+  in brush.
 
 The stats panel shows your CS and missed CS, and **T** draws each minion's target.
 
@@ -92,6 +98,7 @@ a separate room.
 | P | Shop (buy at base or while dead). Standing at base with it open, click an item in your bag to sell it for 70% of its price |
 | Y / Space | Toggle camera lock / centre on your character |
 | T | Show what each minion is targeting (practice aid) |
+| F8 | Debug: show where the server has your hero, next to where your screen predicts it |
 
 ## Browser shortcuts
 
@@ -122,6 +129,9 @@ too. Hold Esc to leave fullscreen. Firefox and Safari do not support this part.
   | Wren Ashby | Cooldown refunds, mark and detonate, stacking buffs |
   | Sable Venn | Objects in the world, chain targeting, an interruptible channel |
 - `public/client.js` — networking, input, HUD and the frame loop.
+- `public/predict.js` — moves your own hero on your screen the moment you click, using the server's
+  movement rules, then reconciles with each snapshot. Only movement is predicted; the server stays
+  the authority on everything.
 - `public/gfx.js` — all art, drawn in code: characters, animations, particles, map.
 - `public/icons.js` — ability, spell and item icons as inline SVG.
 - `test/smoke.js` — rules check without a network: `npm test`.

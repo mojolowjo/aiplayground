@@ -5,6 +5,8 @@ const TEAM = { b: '#4aa3ff', r: '#ff5a5a' };
 let ws, hello = null, myId = 0, lobbyState = null, inGame = false;
 let snaps = [], offset = null, me = null, meUnit = null, myDef = null;
 let cam = { x: 0, locked: true }, mouse = { x: 0, y: 0, wx: 0, wy: 0, rdown: false, lastMove: 0 };
+const pred = Predict.create();   // movement prediction for your own hero
+let predErr = 0, showGhost = false;
 let pendingA = false, shopOpen = false, showAggro = false, fx = [], ping = 0, W = 0, H = 0, scale = 1;
 
 let zoom = 1; const MIN_ZOOM = 0.45;   // how far the camera may pull back
@@ -24,8 +26,8 @@ function connect() {
     const m = JSON.parse(e.data);
     if (m.t === 'snap') return onSnap(m);
     if (m.t === 'pong') ping = Math.round(performance.now() - m.c);
-    else if (m.t === 'hello') { hello = m; myId = m.id; buildHeroes(); }
-    else if (m.t === 'lobby') { lobbyState = m; inGame = m.inGame; if (!inGame) { snaps = []; offset = null; } renderLobby(); }
+    else if (m.t === 'hello') { hello = m; myId = m.id; Predict.configure(m.rules.predict); buildHeroes(); }
+    else if (m.t === 'lobby') { lobbyState = m; inGame = m.inGame; if (!inGame) { snaps = []; offset = null; Predict.release(pred); lastDrawn = null; } renderLobby(); }
     else if (m.t === 'full') $('status').textContent = 'This room is full.';
     else if (m.t === 'left') feed('The other player left.');
   };
@@ -157,6 +159,8 @@ function onSnap(s) {
   offset = offset === null || Math.abs(o - offset) > 0.5 ? o : offset + (o - offset) * 0.05;
   snaps.push(s); if (snaps.length > 20) snaps.shift();
   me = s.me; meUnit = s.units.find(u => u.id === (me && me.id));
+  // Check the prediction against the server. Forced movement and death hand the hero back to the snapshots.
+  if (meUnit) { if (meUnit.d || meUnit.fm) Predict.release(pred); else predErr = Predict.reconcile(pred, meUnit.x, meUnit.y, now, ping / 1000); }
   for (const e of s.ev) { if (e.e === 'kill') feed(`${e.k} killed ${e.v}`); else gfxEvent(e, now, me ? me.id : 0); }
   if (s.over && $('over').style.display !== 'block') {
     const won = hello.team === s.over.winner;
@@ -186,9 +190,14 @@ function unitAt(wx, wy, heroOnly) {
   }
   return best;
 }
+let lastDrawn = null;                       // your hero as it was last drawn (predicted or interpolated)
+const drawnMe = () => lastDrawn || meUnit;
 function rightClick(shift) {
   const [x, y] = [mouse.wx, mouse.wy], u = unitAt(x, y);
   if (u) cmd({ c: 'atk', id: u.id }); else cmd({ c: shift ? 'amove' : 'move', x, y });
+  // Only a plain move order is predicted; attacking and attack-moving depend on what the server decides.
+  const drawn = drawnMe();
+  if (!u && !shift && drawn && meUnit && !meUnit.d && !meUnit.fm) Predict.moveTo(pred, x, y, drawn, performance.now() / 1000); else Predict.release(pred);
   fx.push({ k: 'click', x, y, c: u || shift ? '#ff5a5a' : '#6fe08a', t0: performance.now() / 1000, dur: 0.35 });
   mouse.lastMove = performance.now();
 }
@@ -232,7 +241,7 @@ addEventListener('mousedown', e => {
   [mouse.wx, mouse.wy] = toWorld(e.clientX, e.clientY);
   if (e.button === 2) { mouse.rdown = true; pendingA = false; rightClick(e.shiftKey); }
   else if (e.button === 0 && pendingA && e.target === cv) {
-    pendingA = false; const u = unitAt(mouse.wx, mouse.wy);
+    pendingA = false; Predict.release(pred); const u = unitAt(mouse.wx, mouse.wy);
     if (u) cmd({ c: 'atk', id: u.id }); else cmd({ c: 'amove', x: mouse.wx, y: mouse.wy });
     fx.push({ k: 'click', x: mouse.wx, y: mouse.wy, c: '#ff5a5a', t0: performance.now() / 1000, dur: 0.35 });
   }
@@ -245,16 +254,18 @@ addEventListener('keydown', e => {
   if (qi >= 0) {
     if (e.shiftKey || e.ctrlKey || e.metaKey) return cmd({ c: 'lvl', s: qi });
     const why = blocked(qi); if (why) return say(why);
+    if (myDef.abilities[qi].castTime && !meUnit.bg) pred.lockUntil = performance.now() / 1000 + myDef.abilities[qi].castTime;   // the hero stands still while casting
     if (myDef.abilities[qi].charge) { held[qi] = true; return cmd({ c: 'charge', s: qi }); }
     const t = unitAt(mouse.wx, mouse.wy, true);
     cmd({ c: 'cast', s: qi, x: mouse.wx, y: mouse.wy, id: t ? t.id : 0 });
   } else if (k === 'KeyD' || k === 'KeyF') cmd({ c: 'spell', s: spellKey()[k], x: mouse.wx, y: mouse.wy });
   else if (k === 'KeyA') pendingA = true;
-  else if (k === 'KeyS') { cmd({ c: 'stop' }); pendingA = false; }
-  else if (k === 'KeyB') cmd({ c: 'recall' });
+  else if (k === 'KeyS') { cmd({ c: 'stop' }); pendingA = false; Predict.stop(pred); }
+  else if (k === 'KeyB') { cmd({ c: 'recall' }); Predict.stop(pred); }
   else if (k === 'KeyP') shopOpen = !shopOpen;
   else if (k === 'KeyY') cam.locked = !cam.locked;
   else if (k === 'KeyT') showAggro = !showAggro;
+  else if (k === 'F8') showGhost = !showGhost;      // hidden debug view: where the server has your hero
   else if (k === 'Space') { e.preventDefault(); if (meUnit) cam.x = meUnit.x; }
   else if (k === 'Escape') { pendingA = false; shopOpen = false; }
 });
@@ -290,7 +301,15 @@ function frame() {
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#0b1410'; ctx.fillRect(0, 0, W, H);
   if (!hello || !inGame) return;
   const st = interp(); if (!st) return;
-  const M = hello.map, my = hello.team[0], mine = st.units.find(u => u.id === (me && me.id));
+  const M = hello.map, my = hello.team[0];
+  // Your own hero is drawn from the prediction; everything else from interpolated snapshots.
+  const mi = st.units.findIndex(u => u.id === (me && me.id));
+  if (mi >= 0 && pred.mode === 'predict' && me && meUnit) {
+    Predict.step(pred, dt, { now, speed: me.ms, canMove: !meUnit.nm && !meUnit.d, ghosted: !!meUnit.gh, odd: me.id % 2 === 1,
+      minions: st.units.filter(u => u.k === 'm'), map: M, coll: hello.rules.collision });
+    st.units[mi] = { ...st.units[mi], x: pred.x, y: pred.y, ...(pred.order ? { f: pred.face } : {}) };
+  }
+  const mine = mi >= 0 ? st.units[mi] : undefined; lastDrawn = mine || null;
   // camera (zooms out during a barrage until the whole range fits on screen)
   const ranges = mine && mine.bg && myDef && me ? myDef.abilities[3].range : null, barrage = ranges ? ranges[Math.min(ranges.length, Math.max(1, me.ranks[3])) - 1] : 0;
   zoom += ((barrage ? Math.max(MIN_ZOOM, Math.min(1, W / 2 / (H / 1250) / (barrage + 250))) : 1) - zoom) * Math.min(1, dt * 5); scale = H / 1250 * zoom;
@@ -371,6 +390,12 @@ function frame() {
   if (barrage) { ctx.fillStyle = '#dff2ff'; ctx.font = 'bold 20px system-ui'; ctx.textAlign = 'center'; ctx.lineWidth = 4; ctx.strokeStyle = '#000c';
     const txt = `${mine.bg} shot${mine.bg > 1 ? 's' : ''} left · ${me.bt.toFixed(1)}s · R to fire, S to end`; ctx.strokeText(txt, W / 2, H * 0.2); ctx.fillText(txt, W / 2, H * 0.2); }
   // death overlay
+  if (showGhost && meUnit && mine) {   // debug: the server's position for your hero, and how far the prediction is from it
+    ctx.strokeStyle = '#ff4fd8'; ctx.lineWidth = 2; ctx.setLineDash([6, 5]); ctx.beginPath(); ctx.arc(sx(meUnit.x), sy(meUnit.y), hello.rules.heroRadius * scale, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(sx(meUnit.x), sy(meUnit.y)); ctx.lineTo(sx(mine.x), sy(mine.y)); ctx.stroke();
+    ctx.fillStyle = '#ff4fd8'; ctx.font = '12px system-ui'; ctx.textAlign = 'left';
+    ctx.fillText(`${pred.mode} · ahead of server ${Math.hypot(mine.x - meUnit.x, mine.y - meUnit.y) | 0} · last error ${predErr.toFixed(1)} · ping ${ping}ms`, sx(meUnit.x) + 70 * scale, sy(meUnit.y) + 90 * scale);
+  }
   if (meUnit && meUnit.d) { ctx.fillStyle = '#0009'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = '#fff'; ctx.font = 'bold 34px system-ui'; ctx.textAlign = 'center';
     ctx.fillText(`Respawning in ${meUnit.d}`, W / 2, H * 0.3); }
   updateHud();
