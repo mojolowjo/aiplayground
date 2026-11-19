@@ -68,21 +68,74 @@ The stats panel shows your CS and missed CS, and **T** draws each minion's targe
 
 ## Play over the internet
 
-The host runs the server, then exposes port 3000 one of these ways:
+### Host from home (the usual way)
 
-- **Tunnel (easiest, no router changes).** Install `cloudflared`, then run
-  the command below. It prints a `https://….trycloudflare.com` address; send
-  that to your friend and open it yourself too.
+Run the server on your own PC and friends connect straight to it. No account, no tunnel.
 
-  ```bash
-  cloudflared tunnel --url http://localhost:3000
-  ```
+```bash
+npm start
+```
 
-- **Port forward.** Forward TCP port 3000 on your router to your machine and
-  send your friend `http://<your public IP>:3000`.
+On start the server asks your router, over UPnP, to forward TCP port 3000 to this PC, and prints
+the address to give your friends:
 
-Both players land in the same room. Add `?room=anything` to the address to use
-a separate room.
+```
+Lane Duel running: http://localhost:3000
+UPnP: router now forwards TCP port 3000 to this PC (192.168.1.20), lease 60 min, renewed automatically.
+Friends join at: http://203.0.113.7:3000
+```
+
+You open http://localhost:3000 yourself. The lobby shows the same join address with a Copy
+button, to you only (whoever is on the PC running the server).
+
+- The port mapping is named "Lane Duel", has a one-hour lease that is renewed every half hour
+  while the server runs, and is removed when you stop the server with Ctrl+C.
+- If UPnP does not work (no router answered, or it refused), the server keeps running, prints a
+  warning and tells you the game is only reachable on your local network. Use the tunnel below.
+- If your router's own address is not a public one (it sits behind another router, or your
+  provider shares one address between customers), the server says so. A port mapping cannot fix
+  that; use the tunnel.
+- Your PC's firewall may ask whether to allow Node.js to accept connections. It has to be allowed.
+
+Settings are environment variables:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `PORT` | `3000` | Port the game listens on, and the port opened on the router |
+| `UPNP` | `on` | `off` leaves the router alone (forward the port yourself) |
+| `DUCKDNS_DOMAIN` | not set | A [DuckDNS](https://www.duckdns.org) name, e.g. `mygame`. The join address becomes `http://mygame.duckdns.org:3000` |
+| `DUCKDNS_TOKEN` | not set | With the domain: the name is pointed at your network on start and every 5 minutes, so it follows your IP if it changes. The token is never printed |
+
+For example, on Linux or macOS:
+
+```bash
+DUCKDNS_DOMAIN=mygame DUCKDNS_TOKEN=your-token npm start
+```
+
+On Windows (PowerShell):
+
+```bash
+$env:DUCKDNS_DOMAIN="mygame"; $env:DUCKDNS_TOKEN="your-token"; npm start
+```
+
+### Fallback: a tunnel
+
+For networks where UPnP does not work. Install `cloudflared`, start the game with `UPNP=off`,
+then run the command below. It prints a `https://….trycloudflare.com` address; send that to your
+friends and open it yourself too.
+
+```bash
+cloudflared tunnel --url http://localhost:3000
+```
+
+### Rooms and limits
+
+Everyone lands in the same room. Add `?room=anything` to the address to use a separate room.
+
+Because the server is reachable from the internet, it limits what one visitor can do: messages
+over 2 KB close the connection, as does sending more than 60 messages a second (after a burst of
+120); one address can hold 8 connections; there can be 50 rooms. Malformed messages are ignored.
+Only the files in `public/` are served. The limits are in `net/guard.js`.
 
 ## Controls
 
@@ -114,6 +167,9 @@ too. Hold Esc to leave fullscreen. Firefox and Safari do not support this part.
 ## Layout
 
 - `server.js` — web server and WebSocket rooms; runs the game at 30 ticks/s.
+- `net/upnp.js` — asks the router to forward the port (SSDP search, then SOAP calls). No dependencies.
+- `net/duckdns.js` — the optional DuckDNS updater.
+- `net/guard.js` — connection and message limits, and the list of files the web server may hand out.
 - `game/sim.js` — all game rules. The server is the only authority. The tunable numbers for the
   map, towers, minions, collision and the bot are at the top, in `MAP`, `RULES`, `WAVES` and `MINION`.
 - `game/bot.js` — the practice bot. It plays through the same commands a player sends.
@@ -134,4 +190,6 @@ too. Hold Esc to leave fullscreen. Firefox and Safari do not support this part.
   the authority on everything.
 - `public/gfx.js` — all art, drawn in code: characters, animations, particles, map.
 - `public/icons.js` — ability, spell and item icons as inline SVG.
-- `test/smoke.js` — rules check without a network: `npm test`.
+- `test/smoke.js` — rules check without a network.
+- `test/net.js` — hosting checks: the limits, the UPnP client against a stand-in router, and the real
+  server started on a spare port. `npm test` runs both; nothing leaves your machine.

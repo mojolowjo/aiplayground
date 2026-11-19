@@ -93,7 +93,7 @@ export const MINION = {
 
 const other = t => (t === 'blue' ? 'red' : 'blue');
 const xpToNext = lvl => 180 + 100 * lvl;
-const ITEM = Object.fromEntries(ITEMS.map(i => [i.id, i]));
+const ITEM = Object.assign(Object.create(null), Object.fromEntries(ITEMS.map(i => [i.id, i])));   // no inherited keys: a made-up item id finds nothing
 
 export class Game {
   constructor(players) {
@@ -468,7 +468,7 @@ export class Game {
     if (def.castTime) h.casting = { at: this.time + def.castTime, fire }; else fire();
   }
   castSpell(h, s, c) {
-    const def = SPELLS[s];
+    const def = Object.hasOwn(SPELLS, s) ? SPELLS[s] : null;
     if (!def || !this.canAct(h) || h.spellCds[s] > this.time || (h.state && h.state.lock)) return;
     h.spellCds[s] = this.time + def.cd; h.recall = null;
     def.cast(this, h, this.aimFor(h, def, c));

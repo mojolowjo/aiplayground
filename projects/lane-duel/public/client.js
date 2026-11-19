@@ -55,6 +55,9 @@ function renderLobby() {
   document.querySelectorAll('.hero').forEach(d => d.classList.toggle('sel', mine && d.dataset.k === mine.hero));
   const ready = ps.every(p => p.hero), seats = lobbyState.size * 2, empty = seats - ps.length, other = mine && mine.team === 'blue' ? 'red' : 'blue';
   if (mine) hello.team = mine.team;                       // the team can change in the lobby
+  // The join address is only sent to the host (whoever is on the PC running the server).
+  const j = lobbyState.join; $('joinRow').style.display = j ? 'block' : 'none';
+  if (j) { $('joinLabel').textContent = j.public ? 'Friends join at:' : j.url ? 'On your network:' : ''; $('joinUrl').textContent = j.url || ''; $('joinUrl').style.display = $('joinCopy').style.display = j.url ? 'inline' : 'none'; $('joinNote').textContent = j.note || ''; }
   $('mode').value = lobbyState.mode; $('modeName').textContent = lobbyState.mode;
   $('rk').textContent = lobbyState.goal.kills; $('rc').textContent = lobbyState.goal.cs; $('teamNote').textContent = lobbyState.size > 1 ? ' (team totals)' : '';
   $('team').textContent = `Switch to ${other}`; $('team').disabled = ps.filter(p => p.team === other).length >= lobbyState.size;
@@ -69,6 +72,15 @@ const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&
 $('start').onclick = () => { localStorage.ldOpp = $('opp').value; send({ t: 'start', opp: $('opp').value }); goFullscreen(); };
 if (localStorage.ldOpp) $('opp').value = localStorage.ldOpp;
 $('mode').onchange = () => send({ t: 'mode', mode: $('mode').value });
+$('joinCopy').onclick = async () => {
+  const text = $('joinUrl').textContent;
+  try { await navigator.clipboard.writeText(text); }
+  catch {   // the clipboard API needs https or localhost; fall back to selecting the text and copying that
+    const r = document.createRange(); r.selectNodeContents($('joinUrl')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    try { document.execCommand('copy'); } catch { /* the address is selected: Ctrl+C works */ }
+  }
+  $('joinCopy').textContent = 'Copied'; setTimeout(() => { $('joinCopy').textContent = 'Copy'; }, 1500);
+};
 $('team').onclick = () => send({ t: 'team' });
 // Blink and Mend can swap keys. spellKey maps the D and F keys to the spell each one casts.
 let swapSpells = localStorage.ldSwap === '1';

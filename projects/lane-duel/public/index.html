@@ -19,7 +19,7 @@
   .bag { cursor: pointer; }
   button:disabled { background: #3a4852; color: #8a979f; cursor: default; }
   input, select { background: #0b1410; color: #e8eee9; border: 1px solid #33485a; border-radius: 4px; padding: 6px 8px; font-size: 14px; }
-  #players { margin: 12px 0; } .blue { color: #5fb0ff; } .red { color: #ff6b6b; }
+  #players { margin: 12px 0; } #joinUrl { background: #0b1410; border: 1px solid #33485a; border-radius: 4px; padding: 3px 7px; user-select: text; } .blue { color: #5fb0ff; } .red { color: #ff6b6b; }
   #hud { bottom: 10px; left: 50%; transform: translateX(-50%); padding: 8px 10px; display: none; }
   #bars { width: 420px; margin-bottom: 6px; }
   .bar { height: 16px; background: #1a252c; border-radius: 3px; position: relative; margin-bottom: 3px; overflow: hidden; }
@@ -61,6 +61,9 @@
   <div>Name <input id="name" maxlength="16" value="Player"> <span id="status" style="margin-left:10px;color:#9fb2bf"></span></div>
   <div style="margin-top:10px">Mode <select id="mode"><option value="1v1">1v1</option><option value="2v2">2v2</option></select>
     <button id="team" class="mini">Switch team</button> <button id="swap" class="mini"></button></div>
+  <div id="joinRow" style="display:none;margin-top:10px">
+    <span id="joinLabel"></span> <code id="joinUrl"></code> <button id="joinCopy" class="mini">Copy</button>
+    <div id="joinNote" style="color:#e0b060;font-size:12px;margin-top:3px"></div></div>
   <div id="players"></div>
   <div class="heroes" id="heroes"></div>
   <p><button id="start" disabled>Start</button>
