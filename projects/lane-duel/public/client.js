@@ -7,7 +7,7 @@ let snaps = [], offset = null, me = null, meUnit = null, myDef = null;
 let cam = { x: 0, locked: true }, mouse = { x: 0, y: 0, wx: 0, wy: 0, rdown: false, lastMove: 0 };
 let pendingA = false, shopOpen = false, showAggro = false, fx = [], ping = 0, W = 0, H = 0, scale = 1;
 
-let zoom = 1;
+let zoom = 1; const MIN_ZOOM = 0.45;   // how far the camera may pull back
 function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; scale = H / 1250 * zoom; }
 addEventListener('resize', resize); resize();
 
@@ -88,7 +88,7 @@ function buildSlots() {
     d.onmouseenter = () => { const t = $('tip'); t.style.display = 'block';
       const cds = Array.isArray(a.cd) ? a.cd.join('/') : a.cd, range = Array.isArray(a.range) ? a.range.join('/') : a.range;
       t.innerHTML = a.pv ? `<b>${a.name}</b> (passive)<br>${a.desc}` :
-        `<b>${a.name}</b> (${a.key})<br>${a.desc}<br><small style="color:#9fb2bf">Cooldown ${cds}s${a.cost ? ' · Mana ' + a.cost.join('/') : ''}${range ? ' · Range ' + range : ''}</small>`;
+        `<b>${a.name}</b> (${a.key})<br>${a.desc}<br><small style="color:#9fb2bf">Cooldown ${cds}s${a.cost && a.cost.some(c => c > 0) ? ' · Mana ' + a.cost.join('/') : ''}${range ? ' · Range ' + range : ''}</small>`;
       const r = d.getBoundingClientRect(); t.style.left = r.left + 'px'; t.style.bottom = (innerHeight - r.top + 8) + 'px'; };
     d.onmouseleave = () => { $('tip').style.display = 'none'; };
     if (!a.sp && !a.pv) d.onclick = () => cmd({ c: 'lvl', s: a.i });
@@ -109,7 +109,7 @@ function buildShop() {
 function setBar(id, v, m, text) { const b = $(id); b.firstChild.style.width = (m ? 100 * v / m : 0) + '%'; if (text && b.children[1]) b.children[1].textContent = `${Math.max(0, v)} / ${m}`; }
 function updateHud() {
   if (!me || !meUnit) return;
-  setBar('hpb', meUnit.hp, meUnit.mhp, true); setBar('mpb', meUnit.mp, meUnit.mmp, true); setBar('xpb', me.xp, me.xpn);
+  setBar('hpb', meUnit.hp, meUnit.mhp, true); $('mpb').style.display = meUnit.mmp ? 'block' : 'none'; setBar('mpb', meUnit.mp, meUnit.mmp, true);   // manaless heroes have no mana bar setBar('xpb', me.xp, me.xpn);
   for (const { d, a, sweep, cdEl, pips } of slotEls) {
     if (a.pv) {   // passive: shows the wait until it is ready again
       cdEl.textContent = me.pv > 0 ? Math.ceil(me.pv) : meUnit.pn || ''; d.classList.toggle('off', me.pv > 0);
@@ -133,7 +133,7 @@ function updateHud() {
   if (bagKey !== me.items.join()) {
     bagKey = me.items.join();
     $('bag').innerHTML = Array.from({ length: 6 }, (_, i) => { const it = hello.items.find(x => x.id === me.items[i]);
-      const sell = it ? ` — standing at base with the shop open (P), click to sell for ${Math.floor(it.cost * hello.rules.sellBack)}g` : '';
+      const sell = it ? ` — standing at base with the shop open (P), click to sell for ${Math.round(it.cost * hello.rules.sellBack)}g` : '';
       return `<div class="bag" data-i="${i}" title="${it ? it.name + ': ' + it.desc + sell : ''}">${it ? ICON(it.id) : ''}</div>`; }).join('');
     $('bag').onclick = e => { const d = e.target.closest('.bag'); if (d && shopOpen && me.sell && me.items[d.dataset.i]) cmd({ c: 'sell', i: +d.dataset.i }); };
   }
@@ -181,7 +181,7 @@ function unitAt(wx, wy, heroOnly) {
   let best = null, bd = 1e9;
   for (const u of cur.units) {
     if (u.t === hello.team[0] || u.d || (heroOnly && u.k !== 'h')) continue;
-    const r = u.k === 't' ? 90 : u.k === 'h' ? 55 : 32, d = Math.hypot(u.x - wx, u.y - wy);
+    const r = u.k === 't' ? 90 : u.k === 'h' ? hello.rules.heroRadius : 32, d = Math.hypot(u.x - wx, u.y - wy);
     if (d <= r + (heroOnly ? 180 : 25) && d < bd) { bd = d; best = u; }
   }
   return best;
@@ -292,11 +292,15 @@ function frame() {
   const st = interp(); if (!st) return;
   const M = hello.map, my = hello.team[0], mine = st.units.find(u => u.id === (me && me.id));
   // camera (zooms out during a barrage until the whole range fits on screen)
-  const barrage = mine && mine.bg && myDef && me ? myDef.abilities[3].range[Math.max(0, me.ranks[3] - 1)] : 0;
-  zoom += ((barrage ? Math.min(1, W / 2 / (H / 1250) / (barrage + 250)) : 1) - zoom) * Math.min(1, dt * 5); scale = H / 1250 * zoom;
+  const ranges = mine && mine.bg && myDef && me ? myDef.abilities[3].range : null, barrage = ranges ? ranges[Math.min(ranges.length, Math.max(1, me.ranks[3])) - 1] : 0;
+  zoom += ((barrage ? Math.max(MIN_ZOOM, Math.min(1, W / 2 / (H / 1250) / (barrage + 250))) : 1) - zoom) * Math.min(1, dt * 5); scale = H / 1250 * zoom;
   const halfW = W / 2 / scale;
-  if (cam.locked && mine && !mine.d) cam.x = mine.x;
-  else if (!cam.locked) { if (mouse.x < 24) cam.x -= 2200 * dt; if (mouse.x > W - 24) cam.x += 2200 * dt; }
+  // During a barrage the range is wider than the screen, so the camera follows the cursor to the screen edges
+  // (within the barrage's reach) and snaps back afterwards.
+  const pan = () => { const v = 2200 / zoom * dt; if (mouse.x < 40) cam.x -= v; if (mouse.x > W - 40) cam.x += v; };
+  if (barrage && mine) { pan(); cam.x = Math.max(mine.x - barrage, Math.min(mine.x + barrage, cam.x)); }
+  else if (cam.locked && mine && !mine.d) cam.x = mine.x;
+  else if (!cam.locked) pan();
   cam.x = halfW * 2 >= M.w ? M.w / 2 : Math.max(halfW, Math.min(M.w - halfW, cam.x));
   GFX.shake *= Math.exp(-dt * 9);
   ctx.save(); if (GFX.shake > 0.3) ctx.translate((Math.random() - 0.5) * GFX.shake, (Math.random() - 0.5) * GFX.shake);
@@ -336,7 +340,9 @@ function frame() {
   drawParts(dt, now);
   for (const u of live) {
     const a = anims.get(u.id), mineTeam = u.t === my;
-    if (u.k === 't') smallBar(u, a, 120, 10, 128, TEAM[u.t]);
+    if (u.k === 't') { smallBar(u, a, 120, 10, 128, TEAM[u.t]);
+      if (u.pl) { ctx.fillStyle = '#0b0e12'; const bx = Math.round(sx(u.x) - 60), by = Math.round(sy(u.y) - 128 * scale - 10); for (let i = 1; i < u.pl; i++) ctx.fillRect(bx + 120 * i / u.pl - 1, by, 2, 10); }   // plate marks
+    }
     else if (u.k === 'm') smallBar(u, a, u.m === 2 ? 62 : 46, u.m === 2 ? 6 : 5, u.m === 2 ? 56 : 44, mineTeam ? '#4aa3ff' : '#ff5a5a');
     else heroBar(u, a, mineTeam ? (u.id === me.id ? '#3fd06a' : '#4aa3ff') : '#ff5a5a', u.id === (me && me.id));
   }
@@ -353,7 +359,7 @@ function frame() {
     ctx.fillStyle = mine.hl > 0.8 ? '#ff8a6a44' : '#8fd0ff44'; ctx.strokeStyle = '#dff2ff'; ctx.lineWidth = 3; ctx.fillRect(0, -c.width / 2, len, c.width); ctx.strokeRect(0, -c.width / 2, len, c.width);
     ctx.restore();
   }
-  if (mine && pendingA && me) { ctx.strokeStyle = '#ffffffaa'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), (me.range + 55) * scale, 0, 7); ctx.stroke(); }
+  if (mine && pendingA && me) { ctx.strokeStyle = '#ffffffaa'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), (me.range + hello.rules.heroRadius) * scale, 0, 7); ctx.stroke(); }
   ctx.restore();
   gfxCleanup(now);
   // minimap strip

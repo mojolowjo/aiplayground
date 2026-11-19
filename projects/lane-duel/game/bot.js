@@ -60,7 +60,7 @@ export function think(g, h) {
   let pick = null, pickAt = Infinity, prep = null;
   for (const m of g.units.values()) {
     if (m.type !== 'minion' || m.team === h.team || m.dead) continue;
-    const gap = g.dist(h, m) - m.radius - h.range;
+    const gap = g.dist(h, m) - m.radius - h.radius - h.range;
     if (gap > B.chase) continue;
     const land = Math.max(0, gap) / g.speed(h) + Math.max(0, h.nextAttack - T) + h.windupFrac / g.atkSpeed(h) + (h.melee ? 0 : g.dist(h, m) / h.projSpeed);
     let dps = 0;                                   // what its other attackers will do to it in the meantime
@@ -80,7 +80,7 @@ export function think(g, h) {
   if (pick) return cmd({ c: 'atk', id: pick.id });
   // Nothing to hit yet: step up to attack range of the lowest minion, so the attack lands sooner when it is time.
   if (prep && !underFoeTower(prep)) {
-    const d = g.dist(h, prep), want = h.range + prep.radius - 30;
+    const d = g.dist(h, prep), want = h.range + prep.radius + h.radius - 30;
     if (d > want + 20) return cmd({ c: 'move', x: prep.x + (h.x - prep.x) / d * want, y: prep.y + (h.y - prep.y) / d * want });
     return h.order && h.order.type === 'hold' ? null : cmd({ c: 'stop' });
   }

@@ -14,7 +14,8 @@ Pick **1v1** or **2v2** in the lobby. Both use the same lane. In 2v2 the targets
 totals and double: 16 kills or 200 minions. Players are put on alternating teams as they join;
 **Switch team** moves you across if there is room, so two friends can play on the same side.
 Any seat nobody takes is filled by the practice opponent chosen next to the Start button.
-Damaging an enemy within 10 seconds of its death counts as an assist (150 gold, half the XP).
+Damaging an enemy within 10 seconds of its death counts as an assist: the assisters share half
+the kill's gold (150 at most between them) and each get half the XP.
 
 ## Run it
 
@@ -45,12 +46,17 @@ The stats panel shows your CS and missed CS, and **T** draws each minion's targe
 ## Lane rules worth knowing
 
 - The first wave spawns at 0:30 and the two waves meet in the middle about 25 seconds later.
-- A tower shot removes 45% of a melee minion's max health and 70% of a caster's, so under your
-  tower a melee minion takes two tower shots and then your last hit. Cannon minions take the
-  tower's normal damage.
-- A tower shot on a hero removes 18% of the hero's max health at level 1, ignoring armor. Each
-  level above 1 reduces that by 3% (so about half as much at level 18), and each shot in a row
-  on the same hero hits 40% harder.
+- A tower shot removes 45% of a melee minion's max health, 70% of a caster's and 14% of a
+  cannon's, so under your tower a melee minion takes two tower shots and then your last hit.
+- A tower shot on a hero deals flat physical damage: 180 at the start of the game, rising to 350
+  by 25:00. Each shot in a row on heroes hits 40% harder (up to +120%); the tower cools off 3
+  seconds after it last hit a hero.
+- Outer towers have 5000 health in five plates; breaking a plate pays 120 gold to the hero who
+  broke it. Inner towers have 4000 health. A tower with no attacking minions near it takes only
+  20% damage.
+- Attack ranges are measured edge to edge, for heroes, minions and towers.
+- Passive gold (2.04 a second) starts at 1:05. The first kill of the game pays 100 extra.
+- Sable Venn has no mana; her abilities cost nothing.
 - Heroes cannot walk through minions; a wave in the way has to be walked around. Blinks and
   dashes pass through.
 
@@ -83,7 +89,7 @@ a separate room.
 | Shift or Ctrl + Q/W/E/R, or click the icon | Spend a skill point |
 | D / F | Blink / Mend (the lobby has a button to swap them; the choice is remembered) |
 | B | Recall to base (8s, cancelled by damage or orders) |
-| P | Shop (buy at base or while dead). Standing at base with it open, click an item in your bag to sell it for 80% of its price |
+| P | Shop (buy at base or while dead). Standing at base with it open, click an item in your bag to sell it for 70% of its price |
 | Y / Space | Toggle camera lock / centre on your character |
 | T | Show what each minion is targeting (practice aid) |
 

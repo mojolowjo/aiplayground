@@ -20,17 +20,27 @@ export const MAP = {
 };
 export const RULES = {
   // kills and cs are per player on a team: a 2v2 team needs twice as many (team totals).
-  kills: 8, cs: 100, firstWave: 30, startGold: 500, goldPerSec: 2,
+  kills: 8, cs: 100, firstWave: 30,
   modes: { '1v1': 1, '2v2': 2 },                    // players per team
-  killGold: 300, assistGold: 150, assistWindow: 10, // an assist = damaged the victim in the last 10s
-  sellBack: 0.8,                                    // share of an item's price returned when it is sold
-  // Tower. Its damage to minions is a share of the minion's max health (MINION.*.towerShot); `ad` is what
-  // cannon minions take. A shot on a hero removes heroShot of the hero's max health, armor ignored. Each hero
-  // level above 1 cuts that by heroResistPerLevel (never below heroResistFloor of it), and each shot in a
-  // row on the same hero adds heatPerShot, up to maxHeat times.
-  tower: { hp: 2500, ad: 150, armor: 40, mr: 40, range: 775, as: 0.83, windupT: 0.15, projSpeed: 1300, radius: 90,
-    heroShot: 0.18, heroResistPerLevel: 0.03, heroResistFloor: 0.4,
-    heatPerShot: 0.4, maxHeat: 3, guardRange: 900, guardedMult: 0.33 },
+  // Gold. Passive income starts at goldFrom seconds. An assist = damaged the victim within assistWindow
+  // seconds; the assisters split assistShare of the kill's gold between them, at most assistMax in total.
+  startGold: 500, goldPerSec: 2.04, goldFrom: 65,
+  killGold: 300, firstBloodGold: 100, assistShare: 0.5, assistMax: 150, assistWindow: 10,
+  sellBack: 0.7,                                    // share of an item's price returned when it is sold
+  respawn: [10, 10, 12, 12, 14, 16, 20, 25, 28, 32.5, 35, 37.5, 40, 42.5, 45, 47.5, 50, 52.5],   // seconds dead, by level 1-18
+  heroRadius: 65, recallTime: 8, revealFor: 1.5,    // revealFor: seconds a hero stays visible in brush after acting
+  fountainRegen: 0.1,                               // share of max health and mana restored per second at base
+  chargeRefund: 0.5,                                // share of a charged ability's cost returned if the charge is cancelled
+  // Towers. Outer towers have `hp` in `plates` equal plates, each paying plateGold to the hero who breaks it;
+  // inner towers have innerHp and no plates. Range is edge to edge, like every attack range.
+  // On minions a shot removes a share of max health (MINION.*.towerShot); `ad` is the fallback for anything else.
+  // On heroes a shot deals flat physical damage: heroAd at 0:00 rising evenly to heroAdLate at heroAdRamp
+  // seconds. Each shot in a row on heroes adds heatPerShot (up to maxHeat times); the warm-up is lost
+  // heatReset seconds after the tower last hit a hero. With no attacking minions within guardRange a tower
+  // takes only guardedMult of the damage dealt to it.
+  tower: { hp: 5000, innerHp: 4000, plates: 5, plateGold: 120, ad: 150, armor: 40, mr: 40, range: 750, as: 0.83, windupT: 0.15,
+    projSpeed: 1300, radius: 90, heroAd: 180, heroAdLate: 350, heroAdRamp: 1500,
+    heatPerShot: 0.4, maxHeat: 3, heatReset: 3, guardRange: 900, guardedMult: 0.2 },
   // Collision between heroes and minions: circles of these radii push apart. heroShare is how much of the push
   // the hero takes (1 = minions hold their ground); slide is how strongly a blocked hero is steered around.
   collision: { hero: 34, minion: 18, heroShare: 1, slide: 1, detourFor: 1 },
@@ -50,16 +60,17 @@ export const WAVES = {
   every: t => (t < 840 ? 30 : t < 1800 ? 25 : 20),                    // gap to the next wave
   cannon: (n, t) => (t < 840 ? n % 3 === 0 : t < 1500 ? n % 2 === 0 : true),   // is wave n a cannon wave?
   stagger: 0.8,                                                       // seconds between minions in a wave
-  upgradeEvery: 90, hpPerUpgrade: 0.045, adPerUpgrade: 0.03,          // newly spawned minions grow over time
+  upgradeEvery: 90,                                                   // newly spawned minions grow this often (amounts are per type, below)
   vsHero: 0.6, vsTower: 0.6,                                          // damage dealt: x0.6 to heroes and to towers (bonus vs minions is per type, below)
   sight: 500, keep: 750, helpRange: 1000, look: 0.5, xpRange: 1500,
 };
+// hpPer / adPer / goldPer: flat amount added per upgrade (every WAVES.upgradeEvery seconds) to newly spawned minions.
 // vsMinionHp: bonus damage to other minions, as a share of the target's CURRENT health.
-// towerShot: share of this minion's MAX health one tower shot removes (0 = the tower's normal damage).
+// towerShot: share of this minion's MAX health one tower shot removes.
 export const MINION = {
-  melee:  { hp: 480, ad: 12, range: 110, as: 1.25, windupT: 0.3, radius: 22, gold: 20, xp: 60, projSpeed: 0, vsMinionHp: 0.02, towerShot: 0.45 },
-  caster: { hp: 290, ad: 23, range: 550, as: 0.67, windupT: 0.4, radius: 22, gold: 14, xp: 30, projSpeed: 650, vsMinionHp: 0.035, towerShot: 0.7 },
-  cannon: { hp: 900, ad: 41, range: 300, as: 1.0, windupT: 0.35, radius: 29, gold: 60, xp: 93, projSpeed: 1200, vsMinionHp: 0.05, towerShot: 0 },
+  melee:  { hp: 465, hpPer: 20, ad: 12, adPer: 0.4, range: 110, as: 1.25, windupT: 0.3, radius: 22, gold: 20, goldPer: 0, xp: 62, projSpeed: 0, vsMinionHp: 0.02, towerShot: 0.45 },
+  caster: { hp: 275, hpPer: 9, ad: 23, adPer: 0.7, range: 550, as: 0.67, windupT: 0.4, radius: 22, gold: 14, goldPer: 0, xp: 31, projSpeed: 650, vsMinionHp: 0.035, towerShot: 0.7 },
+  cannon: { hp: 750, hpPer: 85, ad: 36, adPer: 1.5, range: 300, as: 1.0, windupT: 0.35, radius: 29, gold: 50, goldPer: 1, xp: 75, projSpeed: 1200, vsMinionHp: 0.05, towerShot: 0.14 },
 };
 
 const other = t => (t === 'blue' ? 'red' : 'blue');
@@ -69,12 +80,13 @@ const ITEM = Object.fromEntries(ITEMS.map(i => [i.id, i]));
 export class Game {
   constructor(players) {
     this.time = 0; this.nextId = 1; this.units = new Map(); this.shots = []; this.zones = []; this.pickups = [];
-    this.events = []; this.over = null; this.nextWave = RULES.firstWave; this.waveNo = 0; this.spawnQ = []; this.wavesMet = false; this.heroes = new Map();
+    this.events = []; this.over = null; this.nextWave = RULES.firstWave; this.waveNo = 0; this.spawnQ = []; this.wavesMet = false; this.firstBlood = false; this.heroes = new Map();
     for (const team of ['blue', 'red']) {
       const t = RULES.tower;
       for (const [p, inner] of [[MAP.tower[team], false], [MAP.innerTower[team], true]])
-        this.add({ type: 'tower', team, inner, x: p.x, y: p.y, radius: t.radius, hp: t.hp, mhp: t.hp, ad: t.ad, armor: t.armor, mr: t.mr,
-          range: t.range, as: t.as, windupT: t.windupT, projSpeed: t.projSpeed, melee: false, heat: 0 });
+        this.add({ type: 'tower', team, inner, x: p.x, y: p.y, radius: t.radius, hp: inner ? t.innerHp : t.hp, mhp: inner ? t.innerHp : t.hp,
+          plates: inner ? 0 : t.plates, ad: t.ad, armor: t.armor, mr: t.mr,
+          range: t.range, as: t.as, windupT: t.windupT, projSpeed: t.projSpeed, melee: false, heat: 0, heatAt: -99 });
     }
     this.teamSize = Math.max(1, ...['blue', 'red'].map(t => players.filter(p => p.team === t).length));
     this.goal = { kills: RULES.kills * this.teamSize, cs: RULES.cs * this.teamSize };
@@ -90,18 +102,19 @@ export class Game {
   addHero(p) {
     const d = HEROES[p.hero], s = MAP.spawn[p.team], mates = [...this.heroes.values()].filter(o => o.team === p.team).length;
     const h = this.add({ type: 'hero', team: p.team, pid: p.id, name: p.name, hero: p.hero, def: d, x: s.x, y: s.y + mates * 130 - (this.teamSize - 1) * 65,
-      radius: 55, melee: d.melee, projSpeed: d.projSpeed, lvl: 1, xp: 0, points: 1, ranks: [0, 0, 0, 0],
+      radius: RULES.heroRadius, melee: d.melee, projSpeed: d.projSpeed, lvl: 1, xp: 0, points: 1, ranks: [0, 0, 0, 0],
       cds: [0, 0, 0, 0], spellCds: { d: 0, f: 0 }, gold: RULES.startGold, items: [], kills: 0, deaths: 0, cs: 0, missed: 0,
       order: null, casting: null, dashing: null, recall: null, state: null, respawnAt: 0, revealUntil: 0, bot: !!p.bot, ai: p.ai || null, aiMem: {},
-      potionUntil: 0, hitBy: new Map() });
+      potionUntil: 0, potionRate: 0, hitBy: new Map() });
     this.refresh(h); h.hp = h.mhp; h.mp = h.mmp; this.heroes.set(p.id, h); return h;
   }
   refresh(h) {
     const d = h.def, L = h.lvl - 1, it = { ad: 0, ap: 0, hp: 0, as: 0, armor: 0, mr: 0, ms: 0, mana: 0 };
     for (const id of h.items) for (const [k, v] of Object.entries(ITEM[id].stats || {})) it[k] += v;
     const oldHp = h.mhp || 0, oldMp = h.mmp || 0;
-    h.mhp = d.hp + d.hpPer * L + it.hp; h.mmp = d.mana + d.manaPer * L + it.mana;
-    h.ad = d.ad + d.adPer * L + it.ad; h.ap = it.ap; h.armor = d.armor + d.armorPer * L + it.armor;
+    h.mhp = d.hp + d.hpPer * L + it.hp; h.mmp = d.manaless ? 0 : d.mana + d.manaPer * L + it.mana;   // manaless heroes have no mana at all
+    h.bonusAd = it.ad; h.ad = d.ad + d.adPer * L + it.ad; h.ap = it.ap; h.armor = d.armor + d.armorPer * L + it.armor;
+    h.hpRegen = d.hpRegen + (d.hpRegenPer || 0) * L; h.manaRegen = d.manaless ? 0 : d.manaRegen + (d.manaRegenPer || 0) * L;   // per second
     h.mr = d.mr + d.mrPer * L + it.mr; h.baseMs = d.ms + it.ms; h.range = d.range;
     h.as = d.as * (1 + (d.asPer * L + it.as) / 100); h.windupFrac = d.windup;
     if (oldHp) { h.hp += h.mhp - oldHp; h.mp += h.mmp - oldMp; }
@@ -109,24 +122,40 @@ export class Game {
 
   // ---------- helpers ----------
   dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
-  buffSum(u, k) { let s = 0; for (const b of u.buffs) if (b.k === k) s += b.v; return s; }
-  buffMax(u, k) { let s = 0; for (const b of u.buffs) if (b.k === k && b.v > s) s = b.v; return s; }
-  speed(u) { return (u.baseMs || u.ms) * (1 - this.buffMax(u, 'slow')) * (1 + this.buffSum(u, 'haste')) * (1 - ((u.state && u.state.slow) || 0)); }
+  // A buff's value now. A decaying buff slides evenly from v to `to` over its first `over` seconds, then holds.
+  buffVal(b) { return b.over ? b.v + (b.to - b.v) * Math.min(1, (this.time - b.t0) / b.over) : b.v; }
+  buffSum(u, k) { let s = 0; for (const b of u.buffs) if (b.k === k) s += this.buffVal(b); return s; }
+  buffMax(u, k) { let s = 0; for (const b of u.buffs) if (b.k === k) s = Math.max(s, this.buffVal(b)); return s; }
+  // The move-speed penalty of the hero's ability state: a fixed share, or one that steps up while the state lasts.
+  stateSlow(u) {
+    const s = u.state && u.state.slow; if (!s) return 0;
+    return typeof s === 'number' ? s : Math.min(s.max, s.start + s.step * Math.floor((this.time - u.state.t0) / s.every + 1e-6));
+  }
+  speed(u) { return (u.baseMs || u.ms) * (1 - this.buffMax(u, 'slow')) * (1 + this.buffSum(u, 'haste')) * (1 - this.stateSlow(u)); }
   atkSpeed(u) { return Math.min(2.5, u.as * (1 + this.buffSum(u, 'as') / 100)); }
   // Timed buff. o.tag: replaces any earlier buff with the same tag (for stacks that refresh).
   // o.onEnd: runs when the buff runs out, which is how one buff chains into the next.
+  // o.to + o.over: a decaying buff (see buffVal).
   addBuff(u, k, v, dur, o = {}) {
     if (u.dead) return;
     if (o.tag) u.buffs = u.buffs.filter(b => b.tag !== o.tag);
-    u.buffs.push({ k, v, until: this.time + dur, tag: o.tag, onEnd: o.onEnd });
+    u.buffs.push({ k, v, t0: this.time, until: this.time + dur, tag: o.tag, onEnd: o.onEnd, to: o.to, over: o.over });
   }
   silence(u, dur) { u.silenceUntil = Math.max(u.silenceUntil, this.time + dur); this.leave(u, 'cancel'); }
   knockUp(u, dur) { if (u.type === 'tower') return; this.stun(u, dur); u.airUntil = this.time + dur; }
-  // A mark is a tag one ability leaves on a target: t.mark = { by, until, pop(t) }. Anything else the
-  // marker lands on that target calls popMark, which removes the tag and runs its effect.
-  popMark(h, t) {
+  // A mark is a tag one ability leaves on a target: t.mark = { by, until, pop(t, via) }. Anything else the
+  // marker lands on that target calls popMark, which removes the tag and runs its effect. `via` says what
+  // popped it: { cost } for an ability, nothing for a basic attack.
+  popMark(h, t, via) {
     const m = t.mark; if (!m || m.by !== h.id || m.until <= this.time || t.dead) return false;
-    t.mark = null; m.pop(t); return true;
+    t.mark = null; m.pop(t, via); return true;
+  }
+  // Everything that happens when a hero's attack lands, apart from the damage: marks pop, and the hero's
+  // passive and learned abilities get their on-attack hooks. Abilities that "count as an attack" call this too.
+  applyOnHit(h, t, via) {
+    this.popMark(h, t, via);
+    if (h.def.passive && h.def.passive.onAttack) h.def.passive.onAttack(this, h, t);
+    for (let s = 0; s < 4; s++) { const d = h.def.abilities[s]; if (d.onAttackHit && h.ranks[s] > 0) d.onAttackHit(this, h, h.ranks[s] - 1, t); }
   }
   // Chain targeting: starting from `first`, repeatedly hop to the nearest enemy not already in the chain.
   chain(h, first, count, hop) {
@@ -142,6 +171,7 @@ export class Game {
   stun(u, dur) { u.stunUntil = Math.max(u.stunUntil, this.time + dur); u.windup = null; u.casting = null; u.recall = null; this.leave(u, 'cancel'); }
   root(u, dur) { u.rootUntil = Math.max(u.rootUntil, this.time + dur); }
   shield(u, amt, dur) { u.shieldAmt = amt; u.shieldUntil = this.time + dur; }
+  stripShields(u) { u.shieldAmt = 0; u.floorShield = null; }
   heal(u, amt) { if (!u.dead) u.hp = Math.min(u.mhp, u.hp + amt); }
   restoreMana(u, amt) { if (!u.dead) u.mp = Math.min(u.mmp, u.mp + amt); }
   towers(team) { return [...this.units.values()].filter(u => u.type === 'tower' && u.team === team && !u.dead); }
@@ -155,13 +185,15 @@ export class Game {
     return false;
   }
   targetable(u, t) { return t && !t.dead && t.team !== u.team && this.visible(t, u.team); }
-  inRange(u, t, extra = 0) { return this.dist(u, t) - t.radius <= u.range + extra; }
+  // Attack range is measured edge to edge.
+  inRange(u, t, extra = 0) { return this.dist(u, t) - t.radius - u.radius <= u.range + extra; }
   enemiesIn(team, x, y, r, towers = false) {
     const out = [];
     for (const u of this.units.values())
       if (u.team !== team && !u.dead && (towers || u.type !== 'tower') && Math.hypot(u.x - x, u.y - y) <= r + u.radius) out.push(u);
     return out;
   }
+  get rules() { return RULES; }
   clampPos(u) {
     u.x = Math.max(MAP.edge, Math.min(MAP.w - MAP.edge, u.x)); u.y = Math.max(MAP.top + 30, Math.min(MAP.bot - 30, u.y));
   }
@@ -169,21 +201,23 @@ export class Game {
 
   // ---------- ability primitives ----------
   line(h, aim, o) {
-    this.shots.push({ id: this.nextId++, kind: 'line', x: h.x, y: h.y, dx: aim.dx, dy: aim.dy, left: o.range, range: o.range, dist: 0, team: h.team,
-      speed: o.speed, w: o.width, color: o.color, onHit: o.onHit, pierce: o.pierce, hit: new Set(), style: o.style || 'orb', own: o.tether ? h.id : 0 });
+    const s = { id: this.nextId++, kind: 'line', x: h.x, y: h.y, dx: aim.dx, dy: aim.dy, left: o.range, range: o.range, dist: 0, team: h.team,
+      speed: o.speed, w: o.width, color: o.color, onHit: o.onHit, pierce: o.pierce, hit: new Set(), style: o.style || 'orb', own: o.tether ? h.id : 0 };
+    this.shots.push(s); return s;
   }
   homing(src, x, y, target, speed, color, onHit, style) {
     this.shots.push({ id: this.nextId++, kind: 'home', x, y, target, speed, team: src.team, color, onHit, w: 24,
       style: style || (src.type === 'tower' ? 'bolt' : src.type === 'minion' ? 'mote' : src.def.shot || 'orb') });
   }
   // AreaStrike: telegraph -> delay -> resolve. Everyone sees the shape from the moment it is created; after
-  // `delay` it resolves once (or `ticks` times) against whoever is inside, calling onHit(target, inInner).
+  // `delay` it resolves once (or `ticks` times) against whoever is inside, calling onHit(target, inInner),
+  // after calling o.onLand() if there is one.
   // Shapes: a circle at x,y with radius r (and an optional stronger `inner` radius, measured to the target's
   // centre), or with shape 'line' a strip of length `len` and width `w` starting at x,y along dx,dy.
   strike(h, o) {
     const z = { id: this.nextId++, shape: o.shape || 'circle', x: o.x, y: o.y, r: o.r || 0, inner: o.inner || 0,
       dx: o.dx || 0, dy: o.dy || 0, len: o.len || 0, w: o.w || 0, team: h.team, born: this.time, at: this.time + o.delay,
-      ticks: o.ticks || 1, interval: o.interval || 0, color: o.color, onHit: o.onHit, quiet: !!o.quiet };
+      ticks: o.ticks || 1, interval: o.interval || 0, color: o.color, onHit: o.onHit, onLand: o.onLand, quiet: !!o.quiet };
     this.zones.push(z); return z;
   }
   strikeTargets(z) {
@@ -205,11 +239,13 @@ export class Game {
   // overridden) until it arrives. Towers cannot be moved.
   shove(t, vx, vy, dur, extraStun = 0) {
     if (t.type === 'tower' || t.dead) return;
-    t.push = { vx, vy, until: this.time + dur }; t.dashing = null; this.stun(t, dur + extraStun);
+    t.push = { vx, vy, left: dur }; t.dashing = null; this.stun(t, dur + extraStun);
   }
-  pull(t, to, speed) {
-    const dx = to.x - t.x, dy = to.y - t.y, d = Math.hypot(dx, dy), go = d - to.radius - t.radius;
-    if (go > 0) this.shove(t, dx / d * speed, dy / d * speed, go / speed, 0.2);
+  // Drag t toward `to`, stopping with its centre o.gap beyond `to`'s edge. It is stunned for o.stun seconds,
+  // or for the whole trip if that takes longer.
+  pull(t, to, speed, o) {
+    const dx = to.x - t.x, dy = to.y - t.y, d = Math.hypot(dx, dy), go = Math.max(0, d - to.radius - o.gap), dur = go / speed;
+    if (go > 0) this.shove(t, dx / d * speed, dy / d * speed, dur, Math.max(0, o.stun - dur)); else this.stun(t, o.stun);
   }
   // Pickups are objects lying in the world. One becomes live `delay` seconds after it is dropped, stays
   // for o.life seconds, and runs o.onTake when its owner walks within o.r of it.
@@ -247,6 +283,7 @@ export class Game {
     const st = h.state; if (!st) return;
     h.state = null;
     const def = h.def.abilities[st.s];
+    if (st.name === 'charging' && why !== 'done' && st.paid) this.restoreMana(h, st.paid * RULES.chargeRefund);   // cancelled charge: part of the cost back
     if (def.onLeave) def.onLeave(this, h, st, why);
   }
 
@@ -260,7 +297,16 @@ export class Game {
     }
     if (type !== 'true') amt *= 100 / (100 + (type === 'phys' ? t.armor : t.mr));
     if (t.shieldUntil > this.time && t.shieldAmt > 0) { const a = Math.min(t.shieldAmt, amt); t.shieldAmt -= a; amt -= a; }
+    if (t.type === 'hero' && t.def.passive && t.def.passive.beforeDamage) t.def.passive.beforeDamage(this, t, amt);
+    // A floor shield only soaks the part of a hit that would take its owner below `floor` health.
+    const fs = t.floorShield;
+    if (fs && fs.until > this.time && fs.amt > 0) { const a = Math.min(fs.amt, amt, Math.max(0, fs.floor - (t.hp - amt))); fs.amt -= a; amt -= a; }
+    const hp0 = t.hp;
     t.hp -= amt;
+    if (t.plates) {                                   // tower plates: each one broken pays the hero who broke it
+      const size = t.mhp / t.plates, broke = Math.ceil(hp0 / size - 1e-9) - Math.ceil(Math.max(0, t.hp) / size - 1e-9);
+      if (broke > 0 && src && src.type === 'hero') { src.gold += broke * RULES.tower.plateGold; this.fx({ e: 'gold', x: t.x, y: t.y, n: broke * RULES.tower.plateGold, p: src.pid }); }
+    }
     if (src && amt >= 1) this.fx({ e: 'dmg', id: t.id, x: Math.round(t.x), y: Math.round(t.y), n: Math.round(amt),
       s: src.type === 'hero' ? src.id : 0, k: t.type[0], ty: type[0] });
     if (t.type === 'hero') {
@@ -269,13 +315,12 @@ export class Game {
         t.hitBy.set(src.id, this.time);                            // for kill credit and assists
         for (const u of this.units.values()) {
           if (u.team !== t.team || u.dead) continue;
-          if (u.type === 'tower' && this.inRange(u, src)) { if (u.forced !== src.id) { u.forced = src.id; u.heat = 0; } }
+          if (u.type === 'tower' && this.inRange(u, src)) u.forced = src.id;
         }
       }
     }
-    if (src && src.type === 'hero') src.revealUntil = this.time + 1.5;
+    if (src && src.type === 'hero') src.revealUntil = this.time + RULES.revealFor;
     if (t.hp <= 0) this.kill(src, t);
-    else if (t.type === 'hero' && t.def.passive && t.def.passive.onDamaged) t.def.passive.onDamaged(this, t);
   }
   kill(src, t) {
     t.dead = true; t.hp = 0; t.windup = null; t.buffs = []; this.leave(t, 'cancel');
@@ -288,16 +333,17 @@ export class Game {
       const near = enemy.filter(h => !h.dead && this.dist(h, t) < WAVES.xpRange);
       for (const h of near) { this.giveXp(h, t.xp / near.length); if (h !== src) h.missed++; }   // in range but no last hit = a missed minion
     } else if (t.type === 'hero') {
-      t.deaths++; t.respawnAt = this.time + 5 + 1.5 * t.lvl; t.order = null; t.casting = null; t.dashing = null; t.recall = null;
+      t.deaths++; t.respawnAt = this.time + RULES.respawn[Math.min(t.lvl, RULES.respawn.length) - 1]; t.order = null; t.casting = null; t.dashing = null; t.recall = null;
       // Credit: whoever landed the blow, or else the hero who damaged the victim most recently. Every other
       // hero who damaged it within the assist window gets an assist.
       const recent = [...t.hitBy].filter(([, at]) => this.time - at < RULES.assistWindow).sort((a, b) => b[1] - a[1]).map(([id]) => this.units.get(id)).filter(Boolean);
-      const k = killer || recent[0] || null, xp = 100 + 40 * t.lvl; t.hitBy.clear();
+      const k = killer || recent[0] || null, xp = 100 + 40 * t.lvl, helpers = recent.filter(a => a !== k);
       killer = k;
-      if (k) { k.kills++; k.gold += RULES.killGold; this.giveXp(k, xp); this.fx({ e: 'gold', x: t.x, y: t.y, n: RULES.killGold, p: k.pid }); }
-      for (const a of recent) {
-        if (a === k) continue;
-        a.assists = (a.assists || 0) + 1; a.gold += RULES.assistGold; this.giveXp(a, xp / 2); this.fx({ e: 'gold', x: t.x, y: t.y, n: RULES.assistGold, p: a.pid });
+      const bounty = RULES.killGold + (k && !this.firstBlood ? RULES.firstBloodGold : 0);
+      if (k) { this.firstBlood = true; k.kills++; k.gold += bounty; this.giveXp(k, xp); this.fx({ e: 'gold', x: t.x, y: t.y, n: bounty, p: k.pid }); }
+      const share = helpers.length ? Math.min(RULES.assistMax, bounty * RULES.assistShare) / helpers.length : 0;
+      for (const a of helpers) {
+        a.assists = (a.assists || 0) + 1; a.gold += share; this.giveXp(a, xp / 2); this.fx({ e: 'gold', x: t.x, y: t.y, n: Math.round(share), p: a.pid });
         if (a.def.passive && a.def.passive.onKill) a.def.passive.onKill(this, a, t);
       }
       this.fx({ e: 'kill', k: k ? k.name : 'the lane', v: t.name });
@@ -307,6 +353,7 @@ export class Game {
     }
     const pv = killer && killer.def.passive;
     if (pv && pv.onKill) pv.onKill(this, killer, t);
+    if (t.hitBy) t.hitBy.clear();
   }
   giveXp(h, n) {
     h.xp += n;
@@ -324,13 +371,14 @@ export class Game {
     if (c.c === 'buy') return this.buy(h, c.item);
     if (c.c === 'sell') return this.sell(h, c.i | 0);
     if (h.dead) return;
-    const interrupt = () => { h.windup && (h.nextAttack = this.time); h.windup = null; h.recall = null; };
+    // A new order cancels an attack that is still winding up, unless that windup is locked in.
+    const interrupt = () => { if (h.windup && !h.windup.locked) { h.nextAttack = this.time; h.windup = null; } h.recall = null; };
     switch (c.c) {
       case 'move': interrupt(); h.order = { type: 'move', x: num(c.x), y: num(c.y) }; break;
       case 'amove': h.recall = null; h.order = { type: 'amove', x: num(c.x), y: num(c.y) }; break;
       case 'atk': { const t = this.units.get(c.id); if (this.targetable(h, t)) { h.recall = null; h.order = { type: 'atk', id: t.id }; } break; }
       case 'stop': interrupt(); h.order = { type: 'hold' }; if (h.state && h.state.stopEnds) this.leave(h, 'cancel'); break;
-      case 'recall': if (!h.casting && !h.dashing && !h.state) { interrupt(); h.order = { type: 'hold' }; h.recall = { at: this.time + 8 }; } break;
+      case 'recall': if (!h.casting && !h.dashing && !h.state) { interrupt(); h.order = { type: 'hold' }; h.recall = { at: this.time + RULES.recallTime }; } break;
       case 'charge': this.startCharge(h, c.s | 0); break;
       case 'cast': this.cast(h, c.s | 0, c); break;
       case 'spell': this.castSpell(h, c.s, c); break;
@@ -345,7 +393,7 @@ export class Game {
   buy(h, id) {
     const it = ITEM[id], s = MAP.spawn[h.team];
     if (!it || h.gold < it.cost || (this.dist(h, s) > MAP.fountainR && !h.dead)) return;
-    if (it.potion) { h.gold -= it.cost; h.potionUntil = Math.max(this.time, h.potionUntil) + 10; return; }
+    if (it.potion) { h.gold -= it.cost; h.potionUntil = Math.max(this.time, h.potionUntil) + it.potion.over; h.potionRate = it.potion.heal / it.potion.over; return; }
     if (h.items.length >= 6 || (it.unique && h.items.includes(id))) return;
     h.gold -= it.cost; h.items.push(id); this.refresh(h);
   }
@@ -353,7 +401,7 @@ export class Game {
   sell(h, i) {
     const it = ITEM[h.items[i]];
     if (!it || h.dead || this.dist(h, MAP.spawn[h.team]) > MAP.fountainR) return;
-    h.items.splice(i, 1); h.gold += Math.floor(it.cost * RULES.sellBack); this.refresh(h);
+    h.items.splice(i, 1); h.gold += Math.round(it.cost * RULES.sellBack); this.refresh(h);
     h.hp = Math.min(h.hp, h.mhp); h.mp = Math.min(h.mp, h.mmp);
   }
   aimFor(h, def, c) {
@@ -367,14 +415,15 @@ export class Game {
     return { x, y, dx, dy };
   }
   canAct(h) { return !h.dead && h.stunUntil <= this.time && !h.casting && !h.dashing; }
-  // Charged abilities: pressing the key enters CHARGING, releasing it casts with aim.power = 0..1.
-  // Nothing is spent until release; holding past `hold` seconds just cancels.
+  // Charged abilities: pressing the key pays the cost and enters CHARGING; releasing it casts with
+  // aim.power = 0..1. Holding past `hold` seconds, or being interrupted, cancels it and refunds part of the cost.
   startCharge(h, s) {
     const def = h.def.abilities[s], r = h.ranks[s] - 1;
     if (!def || !def.charge || r < 0 || h.state || !this.canAct(h) || h.cds[s] > this.time) return;
-    if (h.mp < def.cost[Math.min(r, def.cost.length - 1)]) return;
-    h.recall = null;
-    this.enter(h, s, 'charging', def.charge.hold, { slow: def.charge.slow, noAttack: true, full: def.charge.full });
+    const cost = def.cost[Math.min(r, def.cost.length - 1)];
+    if (h.mp < cost) return;
+    h.recall = null; h.mp -= cost;
+    this.enter(h, s, 'charging', def.charge.hold, { slow: def.charge.slow, noAttack: true, full: def.charge.full, paid: cost });
   }
   cast(h, s, c) {
     const def = h.def.abilities[s], r = h.ranks[s] - 1, st = h.state;
@@ -383,18 +432,18 @@ export class Game {
     if (st && st.name !== 'charging') { if (def.recast) def.recast(this, h, r, this.aimFor(h, def, c), st); return; }
     if (def.charge && !st) return;                                  // charged abilities only fire from CHARGING
     if (h.cds[s] > this.time) return;
-    const cost = def.cost[Math.min(r, def.cost.length - 1)];
+    const cost = st ? 0 : def.cost[Math.min(r, def.cost.length - 1)];   // a charged ability was paid for when the charge began
     if (h.mp < cost) return;
     if (def.kind === 'dash' && h.rootUntil > this.time) return;
     const aim = this.aimFor(h, def, c);
     aim.power = st ? Math.max(0, Math.min(1, (this.time - st.t0) / st.full)) : 0;
     if (st) this.leave(h, 'done');
     // Target validation: an ability with `pick` chooses what it is aimed at; no valid target, no cast.
-    if (def.pick) { aim.target = def.pick(this, h, aim); if (!aim.target) { this.fx({ e: 'say', p: h.pid, m: 'No target there' }); return; } }
+    if (def.pick) { aim.target = def.pick(this, h, aim); if (!aim.target) { this.fx({ e: 'say', p: h.pid, m: def.noTarget || 'No target there' }); return; } }
     if (aim.target && aim.target.type === 'hero' && aim.target.team !== h.team) this.callForHelp(h, aim.target);   // targeted ability on a champion
     h.mp -= cost; h.cds[s] = this.time + def.cd[Math.min(r, def.cd.length - 1)];
-    h.recall = null; h.revealUntil = this.time + 1.5;
-    if (h.windup) { h.windup = null; h.nextAttack = this.time; }
+    h.recall = null; h.revealUntil = this.time + RULES.revealFor;
+    if (h.windup && !h.windup.locked) { h.windup = null; h.nextAttack = this.time; }
     if (def.kind !== 'self') h.face = Math.atan2(aim.dy, aim.dx);
     this.fx({ e: 'cast', id: h.id, s, d: def.castTime || 0 });
     const fire = () => def.cast(this, h, r, aim);
@@ -418,7 +467,11 @@ export class Game {
         const done = u.buffs.filter(b => b.until <= this.time);
         if (done.length) { u.buffs = u.buffs.filter(b => b.until > this.time); for (const b of done) if (b.onEnd && !u.dead) b.onEnd(); }
       }
-      if (u.push) { if (this.time < u.push.until && !u.dead) { u.x += u.push.vx * DT; u.y += u.push.vy * DT; this.clampPos(u); } else u.push = null; }
+      if (u.push) {                                   // forced movement, for exactly as long as it was given
+        const dt = Math.min(DT, u.push.left); u.push.left -= dt;
+        if (dt > 0 && !u.dead) { u.x += u.push.vx * dt; u.y += u.push.vy * dt; this.clampPos(u); }
+        if (u.push.left <= 1e-9 || u.dead) u.push = null;
+      }
       if (u.type === 'hero') this.stepHero(u);
       else if (u.dead) continue;
       else if (u.type === 'minion') this.stepMinion(u);
@@ -442,10 +495,10 @@ export class Game {
   }
   spawnMinion(q) {
     const k = MINION[q.kind], dir = q.team === 'blue' ? 1 : -1, up = Math.floor(this.time / WAVES.upgradeEvery);
-    const hp = Math.round(k.hp * (1 + WAVES.hpPerUpgrade * up)), y = MAP.mid + (q.slot - 1) * 90;
+    const hp = k.hp + k.hpPer * up, y = MAP.mid + (q.slot - 1) * 90;
     return this.add({ type: 'minion', team: q.team, kind: q.kind, melee: q.kind === 'melee', wave: q.wave, slot: q.slot,
-      x: MAP.spawn[q.team].x + dir * MAP.minionOffset, y, laneY: y, radius: k.radius, hp, mhp: hp, ad: k.ad * (1 + WAVES.adPerUpgrade * up),
-      armor: 0, mr: 0, ms: 325, range: k.range, as: k.as, windupT: k.windupT, projSpeed: k.projSpeed, gold: k.gold, xp: k.xp,
+      x: MAP.spawn[q.team].x + dir * MAP.minionOffset, y, laneY: y, radius: k.radius, hp, mhp: hp, ad: k.ad + k.adPer * up,
+      armor: 0, mr: 0, ms: 325, range: k.range, as: k.as, windupT: k.windupT, projSpeed: k.projSpeed, gold: k.gold + k.goldPer * up, xp: k.xp,
       targetId: 0, mode: 'walk', lookAt: this.time + (this.nextId % 5) * 0.1 });
   }
   moveToward(u, x, y) {
@@ -471,14 +524,14 @@ export class Game {
         if (u.type === 'hero' && t.type === 'hero') this.callForHelp(u, t);
         const period = 1 / this.atkSpeed(u);
         const wd = u.windupT ?? u.windupFrac * period;
-        u.windup = { id: t.id, at: this.time + wd };
+        u.windup = { id: t.id, at: this.time + wd, locked: !!(u.emp && u.emp.lockWindup && u.emp.until > this.time) };
         this.fx({ e: 'atk', id: u.id, d: +wd.toFixed(2) });
         u.nextAttack = this.time + period;
       }
     } else this.moveToward(u, t.x, t.y);
   }
   fireAttack(u, t) {
-    if (u.type === 'hero') u.revealUntil = this.time + 1.5;
+    if (u.type === 'hero') u.revealUntil = this.time + RULES.revealFor;
     if (u.melee) this.attackHit(u, t);
     else this.homing(u, u.x, u.y, t, u.projSpeed, u.type === 'tower' ? '#ffffff' : null, () => this.attackHit(u, t));
   }
@@ -487,18 +540,17 @@ export class Game {
     let dmg = u.ad;
     const kind = MINION[t.kind];
     if (u.type === 'minion') dmg = t.type === 'hero' ? dmg * WAVES.vsHero : t.type === 'tower' ? dmg * WAVES.vsTower : dmg + ((MINION[u.kind] || {}).vsMinionHp || 0) * t.hp;
-    if (u.type === 'tower' && t.type === 'hero') {
-      const R = RULES.tower, resist = Math.max(R.heroResistFloor, 1 - R.heroResistPerLevel * (t.lvl - 1));
-      const share = R.heroShot * resist * (1 + R.heatPerShot * u.heat); u.heat = Math.min(R.maxHeat, u.heat + 1);
-      return this.damage(u, t, share * t.mhp, 'true', true);
+    if (u.type === 'tower' && t.type === 'hero') {     // flat physical damage that grows with game time and with each shot in a row
+      const R = RULES.tower; if (this.time - u.heatAt > R.heatReset) u.heat = 0;
+      dmg = (R.heroAd + (R.heroAdLate - R.heroAd) * Math.min(1, this.time / R.heroAdRamp)) * (1 + R.heatPerShot * u.heat);
+      u.heat = Math.min(R.maxHeat, u.heat + 1); u.heatAt = this.time;
     }
     // A tower shot takes a fixed share of a minion's max health, however much health upgrades have added.
     if (u.type === 'tower' && t.type === 'minion' && kind && kind.towerShot) return this.damage(u, t, kind.towerShot * t.mhp, 'true', true);
     if (u.type === 'hero') {
       // Empowered next attack: h.emp = { until, hit(target) -> bonus damage }, used up by one attack.
       if (u.emp) { const e = u.emp; u.emp = null; if (e.until > this.time) dmg += e.hit(t) || 0; }
-      this.popMark(u, t);
-      if (u.def.passive && u.def.passive.onAttack) u.def.passive.onAttack(this, u, t);
+      this.applyOnHit(u, t);
     }
     this.damage(u, t, dmg, 'phys', true);
   }
@@ -519,10 +571,10 @@ export class Game {
       if (T >= h.respawnAt) { h.dead = false; h.hp = h.mhp; h.mp = h.mmp; h.x = sp.x; h.y = sp.y; h.order = null; }
       return;
     }
-    h.gold += RULES.goldPerSec * DT;
+    if (T >= RULES.goldFrom) h.gold += RULES.goldPerSec * DT;
     const home = this.dist(h, sp) < MAP.fountainR;
-    h.hp = Math.min(h.mhp, h.hp + (h.def.hpRegen + (home ? h.mhp * 0.1 : 0) + (h.potionUntil > T ? 15 : 0)) * DT);
-    h.mp = Math.min(h.mmp, h.mp + (h.def.manaRegen + (home ? h.mmp * 0.1 : 0)) * DT);
+    h.hp = Math.min(h.mhp, h.hp + (h.hpRegen + (home ? h.mhp * RULES.fountainRegen : 0) + (h.potionUntil > T ? h.potionRate : 0)) * DT);
+    h.mp = Math.min(h.mmp, h.mp + (h.manaRegen + (home ? h.mmp * RULES.fountainRegen : 0)) * DT);
     const es = MAP.spawn[other(h.team)];
     if (this.dist(h, es) < MAP.fountainR) this.damage(null, h, MAP.fountainBurn * DT, 'true');
     if (h.dead || T < h.stunUntil) return;
@@ -640,8 +692,8 @@ export class Game {
     let tg = this.units.get(t.forced);
     if (!(this.targetable(t, tg) && this.inRange(t, tg))) { t.forced = 0; tg = this.units.get(t.targetId); }
     if (!(this.targetable(t, tg) && this.inRange(t, tg))) {
-      tg = this.nearestEnemy(t, t.range, u => u.type === 'minion') || this.nearestEnemy(t, t.range);
-      if (!tg || tg.id !== t.targetId) t.heat = 0;
+      const within = u => this.inRange(t, u);
+      tg = this.nearestEnemy(t, Infinity, u => u.type === 'minion' && within(u)) || this.nearestEnemy(t, Infinity, within);
     }
     t.targetId = tg ? tg.id : 0;
     if (tg) this.engage(t, tg);
@@ -658,7 +710,7 @@ export class Game {
     // steered sideways along the minion's edge, so walking into a wave goes around it instead of stopping dead. Dashing or shoved units pass through; blinks simply land and get pushed clear.
     const C = RULES.collision, min = C.hero + C.minion;
     for (const h of this.heroes.values()) {
-      if (h.dead || h.dashing || h.push) continue;
+      if (h.dead || h.dashing || h.push || h.ghostUntil > this.time) continue;   // ghosted heroes ignore unit collision
       for (const m of ms) {
         if (m.push) continue;
         let dx = h.x - m.x, dy = h.y - m.y, d = Math.hypot(dx, dy);
@@ -706,6 +758,7 @@ export class Game {
       if (this.time < z.at) return true;
       if (z.shape === 'line') this.fx({ e: 'beam', x: z.x | 0, y: z.y | 0, a: +Math.atan2(z.dy, z.dx).toFixed(3), l: z.len | 0, w: z.w, c: z.color });
       else if (!z.quiet) this.fx({ e: 'burst', x: z.x, y: z.y, r: z.r, c: z.color });
+      if (z.onLand) z.onLand();
       for (const t of this.strikeTargets(z)) z.onHit(t, z.inner > 0 && Math.hypot(t.x - z.x, t.y - z.y) <= z.inner);
       z.at += z.interval; return --z.ticks > 0;
     });
@@ -719,11 +772,11 @@ export class Game {
       if (!this.visible(u, team) && !u.dead) continue;
       const o = { id: u.id, k: u.type[0], t: u.team[0], x: r(u.x), y: r(u.y), hp: Math.ceil(u.hp), mhp: r(u.mhp) };
       if (u.type === 'minion') { o.m = u.kind === 'melee' ? 1 : u.kind === 'cannon' ? 2 : 0; o.f = +u.face.toFixed(2); o.tg = u.targetId; }
-      if (u.type === 'tower') o.tg = u.targetId;
+      if (u.type === 'tower') { o.tg = u.targetId; if (u.plates) o.pl = u.plates; }
       if (u.type === 'hero') Object.assign(o, { h: u.hero, n: u.name, lvl: u.lvl, mp: r(u.mp), mmp: r(u.mmp), f: +u.face.toFixed(2),
         d: u.dead ? Math.ceil(u.respawnAt - T) : 0, st: T < u.stunUntil ? 1 : 0, rt: T < u.rootUntil ? 1 : 0,
-        sl: this.buffMax(u, 'slow') > 0 ? 1 : 0, sh: u.shieldUntil > T ? r(u.shieldAmt) : 0,
-        rc: u.recall ? +(1 - (u.recall.at - T) / 8).toFixed(2) : 0, br: this.brushOf(u) >= 0 ? 1 : 0,
+        sl: this.buffMax(u, 'slow') > 0 ? 1 : 0, sh: r((u.shieldUntil > T ? u.shieldAmt : 0) + (u.floorShield && u.floorShield.until > T ? u.floorShield.amt : 0)),
+        rc: u.recall ? +(1 - (u.recall.at - T) / RULES.recallTime).toFixed(2) : 0, br: this.brushOf(u) >= 0 ? 1 : 0,
         mk: u.mark && u.mark.until > T ? 1 : 0, kl: u.kills, cs: u.cs,
         pr: u.def.passive && u.def.passive.wait && u.def.passive.wait(this, u) <= 0 ? 1 : 0,
         pn: u.def.passive && u.def.passive.count ? u.def.passive.count(this, u) : 0,

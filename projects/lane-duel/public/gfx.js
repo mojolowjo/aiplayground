@@ -123,7 +123,7 @@ function drawHero(u, a, now, teamCol, isMe) {
   const f = a.f ?? 0, flash = now - a.flash < 0.09;
   begin(u);
   ell(10, 16, 52, 34, 'rgba(0,0,0,.32)');
-  ctx.globalAlpha = isMe ? 0.95 : 0.75; ell(0, 0, 60, 60, null, teamCol, isMe ? 5 : 4); ctx.globalAlpha = 1;
+  ctx.globalAlpha = isMe ? 0.95 : 0.75; ell(0, 0, hello.rules.heroRadius, hello.rules.heroRadius, null, teamCol, isMe ? 5 : 4); ctx.globalAlpha = 1;
   if (castP > 0) glow(0, 0, 70 + 60 * (1 - castP), col, castP * 0.7);
   if (u.ku) { ctx.translate(0, -34 - 6 * Math.sin(now * 12)); ctx.scale(1.1, 1.1); }   // knocked into the air: lifted off its shadow
   ctx.rotate(f);
@@ -270,7 +270,8 @@ function drawTower(u, a, now, col, near) {
   const { p } = atkPose(a, now), charge = p >= 0 ? p : 0, flash = now - a.flash < 0.08;
   begin(u);
   ctx.globalAlpha = near ? 0.55 : 0.18; ctx.setLineDash([24, 18]); ctx.lineDashOffset = -now * 30;
-  ell(0, 0, hello.rules.tower.range, hello.rules.tower.range, null, col, 3); ctx.setLineDash([]); ctx.globalAlpha = 1;
+  const reach = hello.rules.tower.range + hello.rules.tower.radius;   // the range is measured from the tower's edge
+  ell(0, 0, reach, reach, null, col, 3); ctx.setLineDash([]); ctx.globalAlpha = 1;
   ell(16, 24, 112, 84, 'rgba(0,0,0,.4)');
   const oct = (r, rot) => { const pts = []; for (let i = 0; i < 8; i++) { const an = i / 8 * TAU + rot; pts.push(Math.cos(an) * r, Math.sin(an) * r); } return pts; };
   poly(oct(104, 0.39), '#5d6570', OUT, 4); poly(oct(92, 0.39), '#7a838f');
@@ -456,7 +457,7 @@ function heroBar(u, a, col, isMe) {
   ctx.fillStyle = 'rgba(255,255,255,.25)'; ctx.fillRect(x, y, w * clamp01(u.hp / u.mhp), 3);
   if (u.sh) { ctx.fillStyle = '#e8f4ff'; ctx.fillRect(x + w * clamp01(u.hp / u.mhp), y, Math.min(w * u.sh / u.mhp, w - w * clamp01(u.hp / u.mhp)), h); }
   ctx.fillStyle = '#0b0e12'; for (let v = 100; v < u.mhp; v += 100) ctx.fillRect(x + w * v / u.mhp, y, 1, v % 1000 ? h * 0.55 : h);
-  ctx.fillStyle = '#4a8fe0'; ctx.fillRect(x, y + h + 1, w * clamp01(u.mp / u.mmp), 4);
+  if (u.mmp) { ctx.fillStyle = '#4a8fe0'; ctx.fillRect(x, y + h + 1, w * clamp01(u.mp / u.mmp), 4); }
   ctx.fillStyle = '#0b0e12'; ctx.beginPath(); ctx.arc(x - 11, y + 8, 11, 0, TAU); ctx.fill();
   ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.stroke();
   ctx.fillStyle = '#fff'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'center'; ctx.fillText(u.lvl, x - 11, y + 12);
