@@ -54,7 +54,7 @@ function view(forStart) {
     meta: {
       version: app.getVersion(), refreshRate: Math.round(screen.getPrimaryDisplay().displayFrequency) || 60,
       dataDir: data.dir, portable: data.portable, fallback: data.fallback, wantedDir: data.wanted || null,
-      restartNeeded: lib.RESTART_KEYS.some(k => settings[k] !== boot[k]),
+      restartNeeded: lib.RESTART_KEYS.some(k => settings[k] !== boot[k]), vsyncActive: boot.vsync,   // vsyncActive: what this run started with
       ...(forStart ? { defaultServer: DEFAULT_SERVER, update } : {}),
     },
   };

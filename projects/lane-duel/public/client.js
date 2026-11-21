@@ -21,7 +21,10 @@ function resize() {
   scale = H / 1250 * zoom;
 }
 // Frame pacing and the performance overlay.
-const PERF = { slack: 1, samples: 60, every: 500 };   // ms of leeway when skipping frames; snapshots averaged for jitter; ms between overlay updates
+// slack: ms of leeway when skipping frames; samples: snapshots averaged for jitter; every: ms between overlay
+// updates; sleepOver / wakeEarly: with V-Sync off, sleep on a timer when the next frame is more than sleepOver ms
+// away, waking wakeEarly ms before it (timers are only good to a few ms), and count down the rest precisely.
+const PERF = { slack: 1, samples: 60, every: 500, sleepOver: 5, wakeEarly: 1 };
 const perf = { due: 0, frames: 0, since: performance.now(), lastSnap: 0, gaps: [] };
 addEventListener('resize', resize); resize();
 
@@ -369,14 +372,32 @@ addEventListener('keyup', e => {
 // ---------- rendering ----------
 const sx = x => (x - cam.x) * scale + W / 2, sy = y => (y - hello.map.h / 2) * scale + H / 2;
 let lastFrame = performance.now();
-function frame() {
-  requestAnimationFrame(frame);
-  const nowMs = performance.now(), cap = fpsCap();
-  if (cap) {   // FPS limit: skip this frame if the next one is not due yet
-    const gap = 1000 / cap;
-    if (nowMs < perf.due - PERF.slack) return;
-    perf.due = nowMs - perf.due > gap ? nowMs + gap : perf.due + gap;
-  }
+// ---------- frame pacing ----------
+// Normally the browser paces the frames: requestAnimationFrame calls once per monitor refresh, and an FPS
+// limit below that just skips some of the calls. With V-Sync off (desktop app) that does not work: after a
+// skipped call the browser waits a whole 60th of a second before the next, so a limit of 120 came out near 45.
+// There, frames are paced by the clock instead: sleep until just before the next one is due, then draw.
+const pacer = new MessageChannel(); pacer.port1.onmessage = () => clockFrame();
+const vsyncActive = () => (typeof Settings.meta.vsyncActive === 'boolean' ? Settings.meta.vsyncActive : Settings.cfg.vsync);
+function frameDue(nowMs, cap) { const gap = 1000 / cap; perf.due = nowMs - perf.due > gap ? nowMs + gap : perf.due + gap; }
+function drawFrame(nowMs) { try { frame(nowMs); } finally { nextFrame(); } }
+function nextFrame() {
+  if (!fpsCap() || vsyncActive()) return requestAnimationFrame(syncedFrame);
+  const left = perf.due - performance.now();
+  if (left > PERF.sleepOver) setTimeout(clockFrame, left - PERF.wakeEarly); else pacer.port2.postMessage(0);
+}
+function clockFrame() {
+  const cap = fpsCap(), nowMs = performance.now();
+  if (cap && nowMs < perf.due) return nextFrame();          // not yet
+  if (cap) frameDue(nowMs, cap);
+  drawFrame(nowMs);
+}
+function syncedFrame() {
+  const cap = fpsCap(), nowMs = performance.now();
+  if (cap) { if (nowMs < perf.due - PERF.slack) return nextFrame(); frameDue(nowMs, cap); }   // FPS limit: skip this refresh
+  drawFrame(nowMs);
+}
+function frame(nowMs) {
   const dt = Math.min(0.1, (nowMs - lastFrame) / 1000), now = nowMs / 1000; lastFrame = nowMs;
   showPerf(nowMs);
   const top = RS < 1 ? uiCtx : worldCtx;   // where bars and text go
@@ -487,4 +508,4 @@ function frame() {
     ctx.fillText(`Respawning in ${meUnit.d}`, W / 2, H * 0.3); }
   updateHud();
 }
-Settings.load().then(() => { connect(); frame(); });
+Settings.load().then(() => { connect(); nextFrame(); });
