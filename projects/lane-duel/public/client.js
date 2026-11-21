@@ -21,12 +21,12 @@ function resize() {
   scale = H / 1250 * zoom;
 }
 // Frame pacing and the performance overlay.
-// slack: ms of leeway when skipping frames; samples: snapshots averaged for jitter; every: ms between overlay
+// samples: snapshots averaged for jitter; every: ms between overlay
 // updates; sleepOver / wakeEarly: with V-Sync off, sleep on a timer when the next frame is more than sleepOver ms
 // away, waking wakeEarly ms before it (timers are only good to a few ms), and count down the rest precisely.
 // A timer that wakes more than `late` ms after it was asked to, `lateLimit` times, is not trusted again: some
 // systems (Windows on battery, notably) only wake timers every 15 ms, which would hold the game near 60 FPS.
-const PERF = { slack: 1, samples: 60, every: 500, sleepOver: 5, wakeEarly: 1, late: 1.5, lateLimit: 3 };
+const PERF = { samples: 60, every: 500, sleepOver: 5, wakeEarly: 1, late: 1.5, lateLimit: 3 };
 const perf = { due: 0, lateWakes: 0, wake: 0, frames: 0, since: performance.now(), lastSnap: 0, gaps: [] };
 addEventListener('resize', resize); resize();
 
@@ -290,11 +290,12 @@ Settings.onChange(cfg => {
   $('perf').style.display = cfg.overlay ? 'block' : 'none';
   if (Settings.inApp) { $('fs').textContent = cfg.windowMode === 'windowed' ? 'Fullscreen' : 'Exit fullscreen'; $('fs').title = ''; $('getApp').style.display = 'none'; }
 });
-// The frame cap in frames per second, or 0 when the monitor is already pacing the frames. Only the desktop app has one.
+// The frame cap in frames per second, or 0 to let the monitor pace the frames. Only the desktop app has one.
+// "Monitor refresh" with V-Sync on needs no cap: the monitor is already doing it.
 function fpsCap() {
   if (!Settings.inApp) return 0;
-  const v = Settings.cfg.fpsLimit, hz = Settings.meta.refreshRate || 0, cap = v === 'auto' ? hz : v === 0 ? Settings.MAX_FPS : v;
-  return vsyncActive() && cap >= hz ? 0 : cap;   // with V-Sync on nothing can be drawn faster than the monitor, so there is nothing to skip
+  const v = Settings.cfg.fpsLimit;
+  return v === 'auto' ? (vsyncActive() ? 0 : Settings.meta.refreshRate || 0) : v === 0 ? Settings.MAX_FPS : v;
 }
 function showPerf(nowMs) {
   perf.frames++;
@@ -375,16 +376,15 @@ addEventListener('keyup', e => {
 const sx = x => (x - cam.x) * scale + W / 2, sy = y => (y - hello.map.h / 2) * scale + H / 2;
 let lastFrame = performance.now();
 // ---------- frame pacing ----------
-// Normally the browser paces the frames: requestAnimationFrame calls once per monitor refresh, and an FPS
-// limit below that just skips some of the calls. With V-Sync off (desktop app) that does not work: after a
-// skipped call the browser waits a whole 60th of a second before the next, so a limit of 120 came out near 45.
-// There, frames are paced by the clock instead: sleep until just before the next one is due, then draw.
+// Without a cap the browser paces the frames: requestAnimationFrame calls once per monitor refresh.
+// With a cap, frames are paced by the clock instead: wait until the next one is due, then draw. (Skipping
+// requestAnimationFrame calls does not work: after a call that draws nothing the browser slows its calls right
+// down, so on a fast monitor, or with V-Sync off, a cap of 120 came out near 45.)
 const pacer = new MessageChannel(); pacer.port1.onmessage = () => clockFrame();
 const vsyncActive = () => (typeof Settings.meta.vsyncActive === 'boolean' ? Settings.meta.vsyncActive : Settings.cfg.vsync);
-function frameDue(nowMs, cap) { const gap = 1000 / cap; perf.due = nowMs - perf.due > gap ? nowMs + gap : perf.due + gap; }
 function drawFrame(nowMs) { try { frame(nowMs); } finally { nextFrame(); } }
 function nextFrame() {
-  if (!fpsCap() || vsyncActive()) return requestAnimationFrame(syncedFrame);
+  if (!fpsCap()) return requestAnimationFrame(() => drawFrame(performance.now()));
   const left = perf.due - performance.now();
   if (left > PERF.sleepOver && perf.lateWakes < PERF.lateLimit) { perf.wake = performance.now() + left - PERF.wakeEarly; setTimeout(clockFrame, left - PERF.wakeEarly); }
   else { perf.wake = 0; pacer.port2.postMessage(0); }
@@ -393,12 +393,7 @@ function clockFrame() {
   const cap = fpsCap(), nowMs = performance.now();
   if (perf.wake && nowMs - perf.wake > PERF.late) perf.lateWakes++;
   if (cap && nowMs < perf.due) return nextFrame();          // not yet
-  if (cap) frameDue(nowMs, cap);
-  drawFrame(nowMs);
-}
-function syncedFrame() {
-  const cap = fpsCap(), nowMs = performance.now();
-  if (cap) { if (nowMs < perf.due - PERF.slack) return nextFrame(); frameDue(nowMs, cap); }   // FPS limit: skip this refresh
+  if (cap) { const gap = 1000 / cap; perf.due = nowMs - perf.due > gap ? nowMs + gap : perf.due + gap; }
   drawFrame(nowMs);
 }
 function frame(nowMs) {

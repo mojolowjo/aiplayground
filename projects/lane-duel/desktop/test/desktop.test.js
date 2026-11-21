@@ -35,7 +35,7 @@ function fakeElectron() {
   return { rec, electron: {
     app, BrowserWindow, Menu: { setApplicationMenu: m => { rec.menu = m; } },
     ipcMain: { handle: (ch, fn) => { rec.handlers[ch] = fn; } }, shell: { openExternal: u => { rec.opened.push(u); } },
-    screen: { getPrimaryDisplay: () => ({ displayFrequency: 144 }), getAllDisplays: () => [{ bounds: { x: 0, y: 0, width: 1920, height: 1080 } }] },
+    screen: { getPrimaryDisplay: () => ({ displayFrequency: 60 }), getDisplayMatching: () => ({ displayFrequency: 144 }), getAllDisplays: () => [{ bounds: { x: 0, y: 0, width: 1920, height: 1080 } }] },
     session: { defaultSession: { setPermissionRequestHandler: f => { rec.perm = f; }, setPermissionCheckHandler() {} } },
     net: { fetch: async () => ({ ok: true, json: async () => [{ tag_name: 'lane-duel-v1.2.0' }, { tag_name: 'lane-duel-v9.0.0', draft: true }, { tag_name: 'other-v5.0.0' }] }) },
     contextBridge: { exposeInMainWorld: (name, api) => { rec.exposed = { name, api }; } }, ipcRenderer: { on() {}, invoke: async () => null },

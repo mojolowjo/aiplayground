@@ -78,9 +78,8 @@ const Settings = (() => {
   function render() {
     const p = el('div', { className: 'ldset' }, el('h2', { textContent: 'Settings' }));
     if (app) {
-      const hz = meta.refreshRate || 60, over = cfg.vsync && (cfg.fpsLimit === 0 || cfg.fpsLimit > hz);
       p.append(el('h3', { textContent: 'Performance' }), choice('fpsLimit', 'FPS limit', 'How many frames are drawn each second.'));
-      if (over) p.append(el('div', { className: 'note warn', textContent: `With V-Sync on, the game cannot draw faster than your monitor (${hz}). Turn V-Sync off to go above it.` }));
+      if (cfg.vsync && cfg.fpsLimit !== 'auto') p.append(el('div', { className: 'note', textContent: 'With V-Sync on, your monitor shows at most its own refresh rate. Frames drawn beyond that are not seen.' }));
       p.append(
         toggle('vsync', 'V-Sync', 'Matches frames to the monitor. Off allows more frames but can tear. Needs a restart.'),
         choice('renderScale', 'Render scale', 'Draws the battlefield smaller and stretches it. The HUD and text stay sharp.'),
