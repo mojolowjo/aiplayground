@@ -63,8 +63,11 @@ The stats panel shows your CS and missed CS, and **T** draws each minion's targe
 - Attack ranges are measured edge to edge, for heroes, minions and towers.
 - Passive gold (2.04 a second) starts at 1:05. The first kill of the game pays 100 extra.
 - Sable Venn has no mana; her abilities cost nothing.
-- Heroes cannot walk through minions; a wave in the way has to be walked around. Blinks and
-  dashes pass through.
+- Heroes cannot walk through minions, and nothing is ever shoved by a bump. A hero walking into a
+  wave is steered around it and may lose a little time; a hero standing still is never moved, the
+  minions walk around it. Blinks and dashes pass through, and a hero that lands on top of minions
+  is set down on the nearest free spot. First-wave minions and heroes pass through each other
+  until the two waves have met.
 
 ## Items
 
@@ -215,12 +218,14 @@ too. Hold Esc to leave fullscreen. Firefox and Safari do not support this part.
   | Gorrum | Forced movement, an empowered attack, an ability with a passive and an active mode |
   | Wren Ashby | Cooldown refunds, mark and detonate, stacking buffs |
   | Sable Venn | Objects in the world, chain targeting, an interruptible channel |
+- `shared/move.js` — walking and unit collision: one step function that both the server and the
+  browser's movement prediction call, so they always agree.
 - `shared/shop.js` — shop rules (what a purchase costs and uses up) used by both the server and the
   browser, so the price you are shown is the price you are charged.
 - `public/client.js` — networking, input, HUD and the frame loop.
 - `public/shop.js` — the shop screen and the bag.
-- `public/predict.js` — moves your own hero on your screen the moment you click, using the server's
-  movement rules, then reconciles with each snapshot. Only movement is predicted; the server stays
+- `public/predict.js` — moves your own hero on your screen the moment you click, with the same
+  step function as the server (`shared/move.js`), then reconciles with each snapshot. Only movement is predicted; the server stays
   the authority on everything.
 - `public/gfx.js` — all art, drawn in code: characters, animations, particles, map.
 - `public/icons.js` — ability, spell and item icons as inline SVG.

@@ -2,6 +2,7 @@
 import assert from 'node:assert';
 import { Game, TICK, MAP, WAVES, MINION, RULES, ITEM } from '../game/sim.js';
 import { plan, missing, describe, buildsInto, BAG_SLOTS } from '../shared/shop.js';
+import * as Move from '../shared/move.js';
 import { HEROES, ITEMS } from '../game/data.js';
 import fs from 'node:fs';
 
@@ -329,26 +330,55 @@ const duel = (a, b = 'oriel') => {
   assert.equal(MINION.cannon.range, 300);
   console.log('tower ok');
 }
-// 10. Heroes and minions collide; dashes pass through
+// 10. Unit collision: nothing is ever shoved by a bump. Movers steer around and slide; standing units stay put.
 {
-  const g = mk('wren', 'gorrum'), h = g.heroes.get(1); g.nextWave = Infinity; g.wavesMet = true;
-  const wall = y => { const m = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 }); Object.assign(m, { x: 3300, y, laneY: y, ms: 0 }); return m; };
-  const ms = [wall(740), wall(800), wall(860)], gap = RULES.collision.hero + RULES.collision.minion;
-  const walk = () => { h.x = 3000; h.y = 800; h.face = 0; g.command(1, { c: 'move', x: 3600, y: 800 }); let t = 0, off = 0, near = 1e9;
-    while (h.order && t < 10) { g.step(); t += 1 / TICK; off = Math.max(off, Math.abs(h.y - 800)); for (const m of ms) near = Math.min(near, g.dist(h, m)); } return { t, off, near }; };
-  for (const m of ms) m.x = 9000;                       // no wall: a straight walk
-  const free = walk(); assert(free.off < 1 && Math.abs(free.t - 600 / 325) < 0.1, 'open ground: straight line');
-  for (const m of ms) m.x = 3300;
-  const blocked = walk();
-  assert(Math.abs(h.x - 3600) < 1 && blocked.t > free.t + 0.2 && blocked.off > 60, `a wave in the way has to be walked around: ${blocked.t.toFixed(2)}s vs ${free.t.toFixed(2)}s, ${blocked.off | 0} off the line`);
-  assert(blocked.near > gap - 12, 'and the hero never walks through a minion: closest ' + (blocked.near | 0));
-  for (const m of ms) { m.x = 3300; } ms[0].y = 740; ms[1].y = 800; ms[2].y = 860;
-  h.x = 3000; h.y = 800; g.dash(h, { x: 3600, y: 800, speed: 1500 }); let near = 1e9; for (let i = 0; i < TICK; i++) { g.step(); near = Math.min(near, g.dist(h, ms[1])); }
-  assert(Math.abs(h.x - 3600) < 1 && Math.abs(h.y - 800) < 1 && near < 30, 'a dash goes straight through');
-  g.blink(h, 3300, 800); run(g, 0.5); assert(ms.every(m => g.dist(h, m) > gap - 12), 'a blink into a wave is pushed clear');
-  // minions still block skillshots
-  const e = g.heroes.get(2); h.x = 3000; h.y = 800; e.x = 3700; e.y = 800; e.hp = e.mhp = 5000; const red = g.spawnMinion({ team: 'red', kind: 'melee', wave: 2, slot: 1 }); Object.assign(red, { x: 3400, y: 800, ms: 0 });
-  h.ranks[0] = 1; h.cds[0] = 0; g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); run(g, 0.8); assert(red.hp < red.mhp && e.hp === 5000, 'an enemy minion still blocks a skillshot');
+  const C = RULES.collision, gap = C.hero + C.minion;
+  const scene = () => { const g = mk('wren', 'gorrum'), h = g.heroes.get(1); g.nextWave = Infinity; g.wavesMet = true; h.x = 3000; h.y = 800; h.face = 0; h.order = { type: 'hold' }; return { g, h }; };
+  const still = (g, kind, x, y, team = 'blue') => Object.assign(g.spawnMinion({ team, kind, wave: 2, slot: 1 }), { x, y, laneY: y, ms: 0, range: 0, lookAt: Infinity });
+  const march = (g, x, y, wave = 2) => Object.assign(g.spawnMinion({ team: 'blue', kind: 'melee', wave, slot: 1 }), { x, y, laneY: y });
+  const minions = g => [...g.units.values()].filter(u => u.type === 'minion');
+  const walk = (g, h, x, y, secs = 6) => { g.command(1, { c: 'move', x, y }); let ticks = 0, step = 0, back = 0, best = Math.hypot(x - h.x, y - h.y), near = 1e9;
+    while (h.order && ticks < secs * TICK) { const px = h.x, py = h.y; g.step(); ticks++; step = Math.max(step, Math.hypot(h.x - px, h.y - py)); const d = Math.hypot(x - h.x, y - h.y); back = Math.max(back, d - best); best = Math.min(best, d);
+      for (const m of minions(g)) near = Math.min(near, g.dist(h, m)); }
+    return { t: ticks / TICK, step, back, near, arrived: !h.order }; };
+
+  // A standing hero is never moved: a whole wave walks through where it stands, and goes around it.
+  { const { g, h } = scene(); const wave = []; for (let i = 0; i < 6; i++) wave.push(march(g, 2700 - (i >> 1) * 90, 760 + (i % 3) * 40)); wave.push(march(g, 2500, 800));
+    let moved = 0; for (let i = 0; i < 4 * TICK; i++) { const px = h.x, py = h.y; g.step(); moved += Math.hypot(h.x - px, h.y - py); for (const m of wave) assert(g.dist(m, h) > gap - 1.5, 'no minion walks into the hero'); }
+    assert(moved < 1, `a wave walked through a standing hero, who moved ${moved.toFixed(3)} units in total`); assert(wave.every(m => m.x > 3300), 'the minions went around and kept going: ' + wave.map(m => m.x | 0)); }
+  // One minion walking straight at a standing hero goes around and loses little time.
+  { const { g, h } = scene(); const m = march(g, 2600, 800), free = march(g, 2600, 400); run(g, 3); assert(h.x === 3000 && h.y === 800 && m.x > 3200 && free.x - m.x < 60, `around the hero, ${(free.x - m.x) | 0} units behind an unblocked minion`); }
+  // Ghosted first-wave minions and heroes pass straight through each other.
+  { const { g, h } = scene(); g.wavesMet = false; const m = march(g, 2800, 800, 1); let off = 0, near = 1e9; for (let i = 0; i < 2 * TICK; i++) { g.step(); off = Math.max(off, Math.abs(m.y - 800)); near = Math.min(near, g.dist(m, h)); }
+    assert(off < 0.01 && near < 10 && m.x > 3300 && h.x === 3000, 'a first-wave minion walks through the hero'); assert.equal(g.snapshot(1).units.find(u => u.id === m.id).gh, 1);
+    m.x = 3300; m.ms = 0; const w = walk(g, h, 3600, 800); assert(w.arrived && w.near < 10 && Math.abs(w.t - 600 / 325) < 0.1, 'and the hero walks through it'); }
+
+  // Walking into a wave: steered around it, at its own speed, never thrown anywhere.
+  { const { g, h } = scene(); const wall = [740, 800, 860].map(y => still(g, 'melee', 3300, y)), before = wall.map(m => [m.x, m.y]);
+    for (const m of wall) m.x = 9000; const open = walk(g, h, 3600, 800); assert(open.arrived && Math.abs(open.t - 600 / 325) < 0.1, 'open ground: straight there');
+    wall.forEach((m, i) => { m.x = before[i][0]; }); h.x = 3000; h.y = 800; const w = walk(g, h, 3600, 800), stepMax = g.speed(h) / TICK;
+    assert(w.arrived && w.t > open.t && w.t < open.t + 1, `a wave in the way costs a little time: ${w.t.toFixed(2)}s against ${open.t.toFixed(2)}s`);
+    assert(w.step <= stepMax + 1e-6, `never more than one step per tick: ${w.step.toFixed(2)} of ${stepMax.toFixed(2)}`); assert(w.back < 5, `never backward: at most ${w.back.toFixed(2)} units away from the target`);
+    assert(w.near > gap - 1.5, 'never inside a minion: closest ' + w.near.toFixed(1)); assert.deepEqual(wall.map(m => [m.x, m.y]), before, 'and no minion moved'); }
+  // Surrounded, with many minions overlapping the hero at once: still at most one step per tick, and nobody else moves.
+  { const { g, h } = scene(); const ring = []; for (let i = 0; i < 8; i++) ring.push(still(g, 'melee', 3000 + Math.cos(i * Math.PI / 4) * 48, 800 + Math.sin(i * Math.PI / 4) * 48));   // inside the hero's circle, not inside each other
+    for (let i = 0; i < 12; i++) ring.push(still(g, 'caster', 3000 + Math.cos(i * Math.PI / 6) * 90, 800 + Math.sin(i * Math.PI / 6) * 90));
+    const before = ring.map(m => [m.x, m.y]); h.ghostUntil = 0; run(g, 0.5); assert(h.x === 3000 && h.y === 800, 'standing in a crowd: not moved at all');
+    const w = walk(g, h, 3600, 800, 3); assert(w.step <= g.speed(h) / TICK + 1e-6, `one step per tick at most: ${w.step.toFixed(2)}`); assert.deepEqual(ring.map(m => [m.x, m.y]), before, 'the minions stay where they are'); }
+  // A blink into a wave lands on the nearest free spot; the minions do not move.
+  { const { g, h } = scene(); const wall = [740, 800, 860].map(y => still(g, 'melee', 3300, y)), before = wall.map(m => [m.x, m.y]);
+    g.blink(h, 3300, 800); const off = Math.hypot(h.x - 3300, h.y - 800); assert(off > 1 && off <= C.unstick && wall.every(m => g.dist(h, m) >= gap - 1e-6), `moved ${off.toFixed(0)} units to where it fits`);
+    assert.deepEqual(wall.map(m => [m.x, m.y]), before, 'no minion moved'); const at = [h.x, h.y]; run(g, 1); assert.deepEqual([h.x, h.y], at, 'and nothing pushes it afterwards');
+    for (let i = 0; i < 40; i++) still(g, 'melee', 5000 + (i % 8) * 30, 700 + (i >> 3) * 30); g.blink(h, 5100, 760); run(g, 1); assert(Number.isFinite(h.x), 'a spot with no room within reach leaves the hero where it landed'); }
+  // Dashes and forced movement still ignore collision; a hero leaving them is set down where it fits.
+  { const { g, h } = scene(); const wall = [740, 800, 860].map(y => still(g, 'melee', 3300, y));
+    g.dash(h, { x: 3600, y: 800, speed: 1500 }); let near = 1e9; for (let i = 0; i < TICK; i++) { g.step(); near = Math.min(near, g.dist(h, wall[1])); } assert(Math.abs(h.x - 3600) < 1 && Math.abs(h.y - 800) < 1 && near < 30, 'a dash goes straight through');
+    h.x = 3000; h.y = 800; g.shove(h, 1000, 0, 0.3); run(g, 0.6); assert(wall.every(m => g.dist(h, m) >= gap - 1e-6) && h.x > 3250, 'a shove carries it into the wave, and it is set down in a free spot'); }
+  // Minions still block skillshots, and minions that spawn on top of each other are eased apart slowly.
+  { const { g, h } = scene(); const e = g.heroes.get(2); e.x = 3700; e.y = 800; e.hp = e.mhp = 5000; e.order = { type: 'hold' }; const red = still(g, 'melee', 3400, 800, 'red');
+    h.ranks[0] = 1; h.cds[0] = 0; g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); run(g, 0.8); assert(red.hp < red.mhp && e.hp === 5000, 'an enemy minion still blocks a skillshot');
+    const a = still(g, 'melee', 6000, 800), b = still(g, 'melee', 6002, 800); g.step(); assert(near(g.dist(a, b), 2 + 2 * C.nudge, 0.01), `overlapping minions part by at most ${C.nudge} units each per tick`); run(g, 1); assert(g.dist(a, b) >= 2 * C.minion - 0.01); }
+  assert.deepEqual(Object.keys(C).sort(), ['hero', 'keepSide', 'look', 'margin', 'minion', 'minionPad', 'nudge', 'unstick', 'walkingFor'], 'heroShare and slide are gone');
   console.log('collision ok');
 }
 // 11. Practice opponent: last-hits, backs off and recalls, respects vision; the dummy is still there
@@ -482,10 +512,10 @@ const duel = (a, b = 'oriel') => {
 }
 // 15. Client-side prediction (public/predict.js) follows the server's own movement rules
 {
-  const Predict = new Function(fs.readFileSync(new URL('../public/predict.js', import.meta.url), 'utf8') + '; return Predict;')();
+  const Predict = new Function('Move', fs.readFileSync(new URL('../public/predict.js', import.meta.url), 'utf8') + '; return Predict;')(Move);
   Predict.configure(RULES.predict);
   const setup = wallX => { const g = mk('wren', 'gorrum'), h = g.heroes.get(1); g.nextWave = Infinity; h.x = 3000; h.y = 800; h.face = 0;
-    const ms = [740, 800, 860].map(y => { const m = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 }); return Object.assign(m, { x: wallX, y, laneY: y, ms: 0, lookAt: Infinity }); });
+    g.wavesMet = true; const ms = [740, 800, 860].map(y => { const m = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 }); return Object.assign(m, { x: wallX, y, laneY: y, ms: 0, lookAt: Infinity }); });
     const env = () => ({ now: g.time, speed: g.speed(h), canMove: true, ghosted: false, odd: h.id % 2 === 1, minions: ms, map: MAP, coll: RULES.collision });
     return { g, h, ms, env }; };
   // (a) Same orders, same world, same steps: the prediction lands where the server does, on open ground and around a wave.
@@ -493,6 +523,12 @@ const duel = (a, b = 'oriel') => {
     Predict.moveTo(p, 3600, 800, { x: h.x, y: h.y, f: h.face }, g.time); g.command(1, { c: 'move', x: 3600, y: 800 });
     while (h.order && steps++ < 300) { g.step(); Predict.step(p, 1 / TICK, env()); worst = Math.max(worst, Math.hypot(p.x - h.x, p.y - h.y)); }
     assert(!h.order && !p.order && worst < 0.01, `prediction matches the server step for step ${wallX < 9000 ? 'around a wave' : 'on open ground'}: worst gap ${worst.toFixed(4)} over ${steps} steps`); }
+  // Walking through a marching wave for 3s: the client's prediction and the server end within 5 units of each other.
+  { const { g, h } = setup(9000), p = Predict.create(); const wave = []; for (let i = 0; i < 6; i++) wave.push(Object.assign(g.spawnMinion({ team: 'blue', kind: i < 3 ? 'melee' : 'caster', wave: 2, slot: i % 3 }), { x: 3500 + (i < 3 ? 0 : 180), y: 740 + (i % 3) * 60, laneY: 740 + (i % 3) * 60 }));
+    const env = () => ({ now: g.time, speed: g.speed(h), canMove: true, ghosted: false, odd: h.id % 2 === 1, minions: wave.map(m => ({ x: m.x, y: m.y })), map: MAP, coll: RULES.collision });
+    Predict.moveTo(p, 4200, 800, { x: h.x, y: h.y, f: h.face }, g.time); g.command(1, { c: 'move', x: 4200, y: 800 }); let worst = 0;
+    for (let i = 0; i < 3 * TICK; i++) { const e = env(); g.step(); Predict.step(p, 1 / TICK, { ...e, now: g.time }); worst = Math.max(worst, Math.hypot(p.x - h.x, p.y - h.y)); }
+    assert(Math.hypot(p.x - h.x, p.y - h.y) < 5 && worst < 5 && h.x > 3700, `prediction and server agree walking through a moving wave: ${Math.hypot(p.x - h.x, p.y - h.y).toFixed(2)} apart after 3s, ${worst.toFixed(2)} at worst`); }
   // (b) With 100ms of round trip the hero moves at once on the client, stays one round trip ahead, and snapshots agree with it.
   { const { g, h, env } = setup(3300), p = Predict.create(), rtt = 0.1, toServer = [], toClient = []; let worst = 0, late = 0, lead = 0, moved = 0;
     Predict.moveTo(p, 3600, 800, { x: h.x, y: h.y, f: h.face }, g.time); toServer.push({ at: g.time + rtt / 2, c: { c: 'move', x: 3600, y: 800 } });

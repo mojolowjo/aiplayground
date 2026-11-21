@@ -113,7 +113,8 @@
 <!-- The shared rule modules load first; the game's own scripts follow in order once they are in place. -->
 <script type="module">
   import * as Shop from './shared/shop.js';
-  window.Shop = Shop;
+  import * as Move from './shared/move.js';
+  window.Shop = Shop; window.Move = Move;
   for (const src of ['icons.js', 'predict.js', 'gfx.js', 'shop.js', 'client.js'])
     await new Promise((ok, fail) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = fail; document.body.appendChild(s); });
 </script>

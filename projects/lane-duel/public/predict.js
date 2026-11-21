@@ -3,8 +3,8 @@
 // rules test (test/smoke.js) can run it against the server's own movement code.
 //
 // The idea: when you give a move order, your hero starts walking on your screen at once instead of after
-// the server's reply. The client runs the same movement and minion-collision rules as game/sim.js
-// (Game.moveToward and the hero half of Game.separate). Every snapshot is then compared with where the
+// the server's reply. The client takes the very same walking step as the server: both call Move.step in
+// shared/move.js (loaded before this file as the global `Move`). Every snapshot is then compared with where the
 // client had predicted the hero would be at that moment, and any difference is blended away, or snapped
 // if it is large (a stun, pull, blink or death the client could not have known about).
 //
@@ -38,29 +38,13 @@ const Predict = (() => {
       for (const e of p.hist) { e.x += dx; e.y += dy; }
       if (Math.hypot(p.corrX, p.corrY) < 0.05) p.corrX = p.corrY = 0;
     }
-    // Game.moveToward
+    // The same walking step the server takes (shared/move.js): steer around minions, slide along their edges.
     if (p.order && env.canMove && env.now >= p.lockUntil) {
-      const dx = p.order.x - p.x, dy = p.order.y - p.y, d = Math.hypot(dx, dy), s = env.speed * dt;
-      if (d > 0.5) p.face = Math.atan2(dy, dx);
-      if (d <= s) { p.x = p.order.x; p.y = p.order.y; p.order = null; }
-      else { p.x += dx / d * s; p.y += dy / d * s; }
+      const C = env.coll, blockers = env.ghosted ? [] : env.minions.filter(m => !m.gh).map(m => ({ x: m.x, y: m.y, r: C.hero + C.minion }));
+      const res = Move.step(p, p.order, env.speed * dt, blockers, { now: env.now, look: C.look, keep: C.keepSide, margin: C.margin, odd: env.odd });
+      if (res.arrived) p.order = null;
     }
-    // The hero half of Game.separate: minions hold their ground and the hero is steered around them.
-    const C = env.coll, min = C.hero + C.minion;
-    if (!env.ghosted) for (const m of env.minions) {
-      let dx = p.x - m.x, dy = p.y - m.y, d = Math.hypot(dx, dy);
-      if (d >= min) continue;
-      if (d < 0.01) { dx = 0; dy = env.odd ? 1 : -1; d = 1; }
-      if (!p.detour || env.now > p.detour.until) p.detour = { side: Math.abs(dy) > 4 ? Math.sign(dy) : (env.odd ? 1 : -1) };
-      p.detour.until = env.now + C.detourFor;
-      const over = min - d, nx = dx / d, ny = dy / d;
-      let tx = -ny, ty = nx;
-      if (Math.abs(ty) > 0.15 ? ty * p.detour.side < 0 : tx * Math.cos(p.face) + ty * Math.sin(p.face) < 0) { tx = -tx; ty = -ty; }
-      p.x += nx * over * C.heroShare + tx * over * C.slide; p.y += ny * over * C.heroShare + ty * over * C.slide;
-    }
-    // Game.clampPos
-    const M = env.map;
-    p.x = Math.max(M.edge, Math.min(M.w - M.edge, p.x)); p.y = Math.max(M.top + 30, Math.min(M.bot - 30, p.y));
+    Move.clamp(p, env.map);
     p.hist.push({ t: env.now, x: p.x, y: p.y });
     while (p.hist.length > 2 && env.now - p.hist[0].t > CFG.history) p.hist.shift();
   }

@@ -154,7 +154,7 @@ function feed(text) {
 function onSnap(s) {
   const now = performance.now() / 1000, o = s.time - now;
   offset = offset === null || Math.abs(o - offset) > 0.5 ? o : offset + (o - offset) * 0.05;
-  snaps.push(s); if (snaps.length > 20) snaps.shift();
+  s.at = now; snaps.push(s); if (snaps.length > 20) snaps.shift();
   me = s.me; meUnit = s.units.find(u => u.id === (me && me.id));
   // Check the prediction against the server. Forced movement and death hand the hero back to the snapshots.
   if (meUnit) { if (meUnit.d || meUnit.fm) Predict.release(pred); else predErr = Predict.reconcile(pred, meUnit.x, meUnit.y, now, ping / 1000); }
@@ -186,6 +186,14 @@ function unitAt(wx, wy, heroOnly) {
     if (d <= r + (heroOnly ? 180 : 25) && d < bd) { bd = d; best = u; }
   }
   return best;
+}
+// Where the minions will be at the moment the predicted hero is living in. The hero on screen is ahead of the
+// newest snapshot by about one round trip, so each minion is moved on by its own speed (from the last two
+// snapshots) over that time. Without this the hero would steer around where a marching wave used to be.
+function minionsAhead(now) {
+  const B = snaps[snaps.length - 1], A = snaps[snaps.length - 2]; if (!B) return [];
+  const prev = A ? new Map(A.units.map(u => [u.id, u])) : new Map(), dt = A ? B.time - A.time : 0, ahead = Math.min(0.4, ping / 1000 + (now - B.at));
+  return B.units.filter(u => u.k === 'm').map(u => { const a = dt > 0 && prev.get(u.id); return { x: u.x + (a ? (u.x - a.x) / dt * ahead : 0), y: u.y + (a ? (u.y - a.y) / dt * ahead : 0), gh: u.gh }; });
 }
 let lastDrawn = null;                       // your hero as it was last drawn (predicted or interpolated)
 const drawnMe = () => lastDrawn || meUnit;
@@ -307,7 +315,7 @@ function frame() {
   const mi = st.units.findIndex(u => u.id === (me && me.id));
   if (mi >= 0 && pred.mode === 'predict' && me && meUnit) {
     Predict.step(pred, dt, { now, speed: me.ms, canMove: !meUnit.nm && !meUnit.d, ghosted: !!meUnit.gh, odd: me.id % 2 === 1,
-      minions: st.units.filter(u => u.k === 'm'), map: M, coll: hello.rules.collision });
+      minions: minionsAhead(now), map: M, coll: hello.rules.collision });
     st.units[mi] = { ...st.units[mi], x: pred.x, y: pred.y, ...(pred.order ? { f: pred.face } : {}) };
   }
   const mine = mi >= 0 ? st.units[mi] : undefined; lastDrawn = mine || null;

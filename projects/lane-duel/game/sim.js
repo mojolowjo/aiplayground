@@ -2,6 +2,7 @@
 import { HEROES, SPELLS, ITEMS } from './data.js';
 import { think } from './bot.js';
 import { byId, plan, STAT_TEXT } from '../shared/shop.js';
+import * as Move from '../shared/move.js';
 
 export const TICK = 30, DT = 1 / TICK;
 // Lane geometry. Minions spawn `minionOffset` in front of their base, so the first melee minions of each
@@ -50,9 +51,14 @@ export const RULES = {
   tower: { hp: 5000, innerHp: 4000, plates: 5, plateGold: 120, ad: 150, armor: 40, mr: 40, range: 750, as: 0.83, windupT: 0.15,
     projSpeed: 1300, radius: 90, heroAd: 180, heroAdLate: 350, heroAdRamp: 1500,
     heatPerShot: 0.4, maxHeat: 3, heatReset: 3, guardRange: 900, guardedMult: 0.2 },
-  // Collision between heroes and minions: circles of these radii push apart. heroShare is how much of the push
-  // the hero takes (1 = minions hold their ground); slide is how strongly a blocked hero is steered around.
-  collision: { hero: 34, minion: 18, heroShare: 1, slide: 1, detourFor: 1 },
+  // Unit collision (the rules are in shared/move.js). hero / minion: collision radii, smaller than the hit
+  // radii on purpose so units look as if they almost touch. minionPad: minions treat each other as this much
+  // bigger, which leaves gaps a hero can slip through. look: how far ahead a walking unit checks its path;
+  // keepSide: seconds it sticks to the side it chose to go round; margin: extra angle it clears an edge by.
+  // nudge: the most an overlapping minion is moved per tick to separate it from another minion.
+  // unstick: how far a hero that landed on top of units may be moved to the nearest free spot.
+  // walkingFor: a hero counts as walking for this long after its last step; minions do not steer around a walking hero.
+  collision: { hero: 34, minion: 18, minionPad: 1.2, look: 200, keepSide: 0.5, margin: 0.05, nudge: 3, unstick: 150, walkingFor: 0.15 },
   // Practice bot. Per difficulty: react = seconds between decisions; hitErr = how far off its judgement of
   // "one attack will kill it" can be; skip = share of minions it does not try for at all; trade = chance per
   // second of attacking a player in range; qEvery = seconds between Q pokes; aimErr = aim error in radians;
@@ -325,7 +331,7 @@ export class Game {
     }
   }
   blink(h, x, y) {
-    this.fx({ e: 'blink', x: h.x, y: h.y }); h.x = x; h.y = y; this.clampPos(h); this.fx({ e: 'blink', x: h.x, y: h.y });
+    this.fx({ e: 'blink', x: h.x, y: h.y }); h.x = x; h.y = y; this.clampPos(h); this.unstick(h); this.fx({ e: 'blink', x: h.x, y: h.y });
     h.windup = null;
   }
 
@@ -588,7 +594,7 @@ export class Game {
       if (u.push) {                                   // forced movement, for exactly as long as it was given
         const dt = Math.min(DT, u.push.left); u.push.left -= dt;
         if (dt > 0 && !u.dead) { u.x += u.push.vx * dt; u.y += u.push.vy * dt; this.clampPos(u); }
-        if (u.push.left <= 1e-9 || u.dead) u.push = null;
+        if (u.push.left <= 1e-9 || u.dead) { u.push = null; this.unstick(u); }
       }
       if (u.type === 'hero') this.stepHero(u);
       else if (u.dead) continue;
@@ -619,12 +625,42 @@ export class Game {
       armor: 0, mr: 0, ms: 325, range: k.range, as: k.as, windupT: k.windupT, projSpeed: k.projSpeed, gold: k.gold + k.goldPer * up, xp: k.xp,
       targetId: 0, mode: 'walk', lookAt: this.time + (this.nextId % 5) * 0.1 });
   }
+  // ---------- walking and collision (the rules themselves are in shared/move.js) ----------
+  // First-wave minions and heroes pass through each other until the waves have met, which keeps the opening fair.
+  ghostMinion(m) { return m.wave === 1 && !this.wavesMet; }
+  // What a walking unit has to go around: for a hero, minions; for a minion, heroes and other minions.
+  // Ghosted units neither block nor are blocked. Each blocker's r is the two collision radii added together.
+  blockersFor(u) {
+    const C = RULES.collision, out = [];
+    if (u.type === 'hero') {
+      if (u.ghostUntil > this.time) return out;
+      for (const m of this.units.values()) if (m.type === 'minion' && !m.dead && !this.ghostMinion(m)) out.push({ x: m.x, y: m.y, r: C.hero + C.minion });
+    } else if (u.type === 'minion') {
+      const ghost = this.ghostMinion(u);
+      for (const o of this.units.values()) {
+        if (o === u || o.dead) continue;
+        if (o.type === 'minion') out.push({ x: o.x, y: o.y, r: C.minion + C.minion * C.minionPad });
+        else if (o.type === 'hero' && !ghost && !(o.ghostUntil > this.time)) out.push({ x: o.x, y: o.y, r: C.minion + C.hero, walking: this.time - (o.walkedAt ?? -9) < C.walkingFor });   // a walking hero steers; the minion only slides
+      }
+    }
+    return out;
+  }
+  // One walking step toward x,y. Only this unit moves; nothing it bumps into is pushed. Returns true on arrival.
   moveToward(u, x, y) {
     if (u.rootUntil > this.time) return false;
-    const dx = x - u.x, dy = y - u.y, d = Math.hypot(dx, dy), s = this.speed(u) * DT;
-    if (d > 0.5) u.face = Math.atan2(dy, dx);
-    if (d <= s) { u.x = x; u.y = y; this.clampPos(u); return true; }
-    u.x += dx / d * s; u.y += dy / d * s; this.clampPos(u); return false;
+    const C = RULES.collision;
+    const px = u.x, py = u.y;
+    const res = Move.step(u, { x, y }, this.speed(u) * DT, this.blockersFor(u), { now: this.time, look: C.look, keep: C.keepSide, margin: C.margin, odd: u.id % 2 === 1 });
+    this.clampPos(u);
+    if (u.type === 'hero' && Math.hypot(u.x - px, u.y - py) > 0.5) u.walkedAt = this.time;
+    return res.arrived;
+  }
+  // A hero that ended up on top of units (blink, dash, respawn, a ghost effect or a shove ending) is moved
+  // once to the nearest spot where it fits. Nothing else moves; if nowhere fits, the overlap is simply left.
+  unstick(h) {
+    if (h.type !== 'hero' || h.dead) return;
+    const p = Move.freeSpot(h, this.blockersFor(h), RULES.collision.unstick, MAP);
+    if (p) { h.x = p.x; h.y = p.y; }
   }
   // Returns true while the unit is locked in an attack windup.
   stepWindup(u) {
@@ -691,7 +727,7 @@ export class Game {
     const T = this.time, sp = MAP.spawn[h.team];
     if (h.ai) think(this, h);                       // practice bot: decides, then issues ordinary commands
     if (h.dead) {
-      if (T >= h.respawnAt) { h.dead = false; h.hp = h.mhp; h.mp = h.mmp; h.x = sp.x; h.y = sp.y; h.order = null; }
+      if (T >= h.respawnAt) { h.dead = false; h.hp = h.mhp; h.mp = h.mmp; h.x = sp.x; h.y = sp.y; h.order = null; this.unstick(h); }
       return;
     }
     if (T >= RULES.goldFrom) h.gold += RULES.goldPerSec * DT;
@@ -712,6 +748,7 @@ export class Game {
     h.mp = Math.min(h.mmp, h.mp + (h.manaRegen + (home ? h.mmp * RULES.fountainRegen : 0)) * DT);
     const es = MAP.spawn[other(h.team)];
     if (this.dist(h, es) < MAP.fountainR) this.damage(null, h, MAP.fountainBurn * DT, 'true');
+    if (h.ghostUntil && T >= h.ghostUntil) { h.ghostUntil = 0; this.unstick(h); }          // a ghost effect ran out
     if (h.dead || T < h.stunUntil) return;
     for (let s = 0; s < 4; s++) { const d = h.def.abilities[s]; if (d.tick && h.ranks[s] > 0) d.tick(this, h, h.ranks[s] - 1); }   // always-on effects
     if (h.state && T >= h.state.until) this.leave(h, 'timeout');
@@ -759,7 +796,7 @@ export class Game {
       const t = this.enemiesIn(h.team, h.x, h.y, h.radius).find(u => u.type === 'hero');
       if (t) { h.dashing = null; d.onHero(t); h.order = { type: 'atk', id: t.id }; return; }
     }
-    if (done) { h.dashing = null; if (d.onEnd) d.onEnd(); if (d.follow && !d.follow.dead) h.order = { type: 'atk', id: d.follow.id }; else if (h.order && h.order.type === 'move') h.order = null; }
+    if (done) { h.dashing = null; this.unstick(h); if (d.onEnd) d.onEnd(); if (d.follow && !d.follow.dead) h.order = { type: 'atk', id: d.follow.id }; else if (h.order && h.order.type === 'move') h.order = null; }
   }
   // ---------- minions ----------
   // What a unit is attacking right now (its most recent attack target, if recent enough), or null.
@@ -833,35 +870,16 @@ export class Game {
     t.targetId = tg ? tg.id : 0;
     if (tg) this.engage(t, tg);
   }
+  // Minions that overlap each other (right after spawning, mostly) are eased apart a little each tick.
+  // Only minions are moved here, and never by more than RULES.collision.nudge. Heroes are never pushed.
   separate() {
-    const ms = [...this.units.values()].filter(u => u.type === 'minion');
+    const C = RULES.collision, ms = [...this.units.values()].filter(u => u.type === 'minion'), min = C.minion * 2;
     for (let i = 0; i < ms.length; i++) for (let j = i + 1; j < ms.length; j++) {
-      const a = ms[i], b = ms[j]; let dx = b.x - a.x, dy = b.y - a.y; const d = Math.hypot(dx, dy), min = a.radius + b.radius - 6;
-      if (d >= min) continue;
+      const a = ms[i], b = ms[j]; let dx = b.x - a.x, dy = b.y - a.y; const d = Math.hypot(dx, dy);
+      if (d >= min || a.push || b.push) continue;
       if (d < 0.01) { dx = 1; dy = (a.id % 2 ? 1 : -1); }
-      const k = (min - d) / (2 * (d || 1.4)) * 0.5; a.x -= dx * k; a.y -= dy * k; b.x += dx * k; b.y += dy * k;
-    }
-    // Heroes and minions (either team) also push apart, so a wave can body-block a hero. The hero is also
-    // steered sideways along the minion's edge, so walking into a wave goes around it instead of stopping dead. Dashing or shoved units pass through; blinks simply land and get pushed clear.
-    const C = RULES.collision, min = C.hero + C.minion;
-    for (const h of this.heroes.values()) {
-      if (h.dead || h.dashing || h.push || h.ghostUntil > this.time) continue;   // ghosted heroes ignore unit collision
-      for (const m of ms) {
-        if (m.push) continue;
-        let dx = h.x - m.x, dy = h.y - m.y, d = Math.hypot(dx, dy);
-        if (d >= min) continue;
-        if (d < 0.01) { dx = 0; dy = h.id % 2 ? 1 : -1; d = 1; }
-        // Pick one side to go around and stick with it for a moment; otherwise a hero between two minions is
-        // steered both ways at once and stops dead.
-        if (!h.detour || this.time > h.detour.until) h.detour = { side: Math.abs(dy) > 4 ? Math.sign(dy) : (h.id % 2 ? 1 : -1) };
-        h.detour.until = this.time + C.detourFor;
-        const over = min - d, nx = dx / d, ny = dy / d;
-        let tx = -ny, ty = nx;                                             // along the minion's edge...
-        if (Math.abs(ty) > 0.15 ? ty * h.detour.side < 0 : tx * Math.cos(h.face) + ty * Math.sin(h.face) < 0) { tx = -tx; ty = -ty; }   // ...toward the chosen side
-        h.x += nx * over * C.heroShare + tx * over * C.slide; h.y += ny * over * C.heroShare + ty * over * C.slide;
-        m.x -= nx * over * (1 - C.heroShare); m.y -= ny * over * (1 - C.heroShare);
-      }
-      this.clampPos(h);
+      const len = Math.hypot(dx, dy), k = Math.min(C.nudge, (min - d) / 2) / len;
+      a.x -= dx * k; a.y -= dy * k; b.x += dx * k; b.y += dy * k;
     }
   }
   stepShots() {
@@ -906,7 +924,7 @@ export class Game {
     for (const u of this.units.values()) {
       if (!this.visible(u, team) && !u.dead) continue;
       const o = { id: u.id, k: u.type[0], t: u.team[0], x: r(u.x), y: r(u.y), hp: Math.ceil(u.hp), mhp: r(u.mhp) };
-      if (u.type === 'minion') { o.m = u.kind === 'melee' ? 1 : u.kind === 'cannon' ? 2 : 0; o.f = +u.face.toFixed(2); o.tg = u.targetId; }
+      if (u.type === 'minion') { o.m = u.kind === 'melee' ? 1 : u.kind === 'cannon' ? 2 : 0; o.f = +u.face.toFixed(2); o.tg = u.targetId; if (this.ghostMinion(u)) o.gh = 1; }
       if (u.type === 'tower') { o.tg = u.targetId; if (u.plates) o.pl = u.plates; }
       if (u.type === 'hero') Object.assign(o, { h: u.hero, n: u.name, lvl: u.lvl, mp: r(u.mp), mmp: r(u.mmp), f: +u.face.toFixed(2),
         d: u.dead ? Math.ceil(u.respawnAt - T) : 0, st: T < u.stunUntil ? 1 : 0, rt: T < u.rootUntil ? 1 : 0,
