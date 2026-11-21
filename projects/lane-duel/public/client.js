@@ -253,6 +253,27 @@ $('fs').onclick = () => {
   if (Settings.inApp) window.laneDuelApp.setFullscreen(Settings.cfg.windowMode === 'windowed' ? 'borderless' : 'windowed');
   else if (document.fullscreenElement) document.exitFullscreen(); else goFullscreen();
 };
+// ---------- desktop app downloads ----------
+// The two lobby links start out pointing at the releases page. Once GitHub says what the newest lane-duel-v*
+// release is, they point straight at its Windows and Linux files. If GitHub cannot be asked, they stay as they are.
+const APP_RELEASES = { api: 'https://api.github.com/repos/mojolowjo/aiplayground/releases?per_page=50', tag: /^lane-duel-v(\d+)\.(\d+)\.(\d+)$/, files: { getWin: '.exe', getLinux: '.AppImage' } };
+async function findDownloads() {
+  try {
+    const list = await (await fetch(APP_RELEASES.api, { headers: { Accept: 'application/vnd.github+json' } })).json();
+    let best = null;
+    for (const r of list) {
+      const m = !r.draft && !r.prerelease && APP_RELEASES.tag.exec(r.tag_name); if (!m) continue;
+      const v = m.slice(1).map(Number), newer = !best || v.find((n, i) => n !== best.v[i]) > best.v[v.findIndex((n, i) => n !== best.v[i])];
+      if (newer) best = { v, assets: r.assets };
+    }
+    if (!best) return;
+    for (const [id, ext] of Object.entries(APP_RELEASES.files)) {
+      const a = best.assets.find(x => x.name.endsWith(ext)); if (a) { $(id).href = a.browser_download_url; $(id).removeAttribute('target'); }
+    }
+    $('getVer').textContent = ' ' + best.v.join('.');
+  } catch { /* offline or rate-limited: the links still open the releases page */ }
+}
+if (!Settings.inApp) findDownloads();
 // ---------- settings ----------
 function openMenu() { Settings.open(Settings.inApp ? [{ label: 'Back to server list', onClick: () => window.laneDuelApp.backToStart() }] : []); }
 $('gear').onclick = openMenu;

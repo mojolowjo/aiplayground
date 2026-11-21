@@ -220,7 +220,7 @@ keeps working as before.
 
 ### For players
 
-1. **Download** the newest file from
+1. **Download** with the **Download for Windows** or **Download for Linux** link in the game's lobby, or from
    [the releases page](https://github.com/mojolowjo/aiplayground/releases?q=lane-duel):
    `LaneDuel-<version>.exe` for Windows, `LaneDuel-<version>.AppImage` for Linux. Put it in a folder of
    its own (the Desktop is fine).
@@ -278,7 +278,8 @@ The app never downloads updates. If a newer version exists, the start screen sho
 
   GitHub Actions (`.github/workflows/lane-duel-desktop.yml`) then builds the `.exe` on Windows and the
   `.AppImage` on Linux, with the version taken from the tag, and publishes both in a GitHub Release.
-  The lobby's "Download the app" link and the app's own update check both look at those releases.
+  The lobby's **Download for Windows** and **Download for Linux** links find the newest release by
+  themselves and download its file directly, and the app's own update check looks at the same releases.
   The tag must be on a commit that contains the workflow file.
 - **Trying it without a build:** `cd desktop`, `npm install`, `npm start`.
 - **Building by hand:** `npm run build:linux` or `npm run build:win` in `desktop/` (output in

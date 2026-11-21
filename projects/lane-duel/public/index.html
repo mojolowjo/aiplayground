@@ -74,7 +74,7 @@
   #fs { position: fixed; left: 10px; bottom: 10px; padding: 4px 10px; font-size: 12px; background: #24323c; z-index: 4; }
   #gear { position: fixed; left: 104px; bottom: 10px; padding: 4px 10px; font-size: 12px; background: #24323c; z-index: 4; }
   #perf { position: fixed; right: 10px; top: 42px; padding: 3px 8px; font: 12px ui-monospace, monospace; color: #b8e0c0; background: #0c141acc; border-radius: 4px; pointer-events: none; display: none; z-index: 4; }
-  #getApp { color: #8a9aa5; font-size: 12px; }
+  #getApp { color: #8a9aa5; font-size: 12px; } #getApp a { color: #cfe3ee; margin-left: 8px; }
   #help { position: fixed; left: 10px; top: 8px; max-width: 30vw; font-size: 11px; color: #8a9aa5; line-height: 1.5; pointer-events: none; }
 </style>
 </head>
@@ -98,7 +98,9 @@
       <option value="dummy">a stationary dummy</option><option value="easy">a bot — easy</option>
       <option value="normal" selected>a bot — normal</option><option value="hard">a bot — hard</option></select></span>
     <span id="hint" style="color:#9fb2bf;margin-left:8px"></span></p>
-  <a id="getApp" href="https://github.com/mojolowjo/aiplayground/releases?q=lane-duel" target="_blank" rel="noopener">Download the app</a>
+  <div id="getApp">Desktop app<span id="getVer"></span>:
+    <a id="getWin" href="https://github.com/mojolowjo/aiplayground/releases?q=lane-duel" target="_blank" rel="noopener">Download for Windows</a>
+    <a id="getLinux" href="https://github.com/mojolowjo/aiplayground/releases?q=lane-duel" target="_blank" rel="noopener">Download for Linux</a></div>
 </div>
 
 <div id="top" class="panel"></div>
