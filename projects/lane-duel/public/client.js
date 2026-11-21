@@ -15,7 +15,7 @@ let pendingA = false, shopOpen = false, showAggro = false, fx = [], ping = 0, W 
 const VIEW = {
   height: 1640,      // world units from the top of the screen to the bottom at the default zoom (also the furthest out you can choose)
   minHeight: 1100,   // the closest you can zoom in with the mouse wheel
-  barrageHeight: 2780, // the furthest the camera pulls back by itself (Kessa's barrage)
+  barrageHeight: 2780, // the furthest the camera pulls back by itself (Xerhta's barrage)
   step: 1.08,        // each notch of the wheel zooms by this factor
   ease: 5,           // how quickly the camera eases to the wanted zoom, per second
   barragePad: 250,   // ground shown beyond the barrage's reach
@@ -77,7 +77,12 @@ function buildHeroes() {
     d.onclick = () => send({ t: 'pick', hero: k });
     $('heroes').appendChild(d);
   }
+  filterHeroes();
 }
+// The search box: keep the heroes whose name starts with what was typed, whatever the capitals.
+function heroMatches(name, typed) { return name.toLowerCase().startsWith(typed.trim().toLowerCase()); }
+function filterHeroes() { for (const d of $('heroes').children) d.style.display = heroMatches(hello.heroes[d.dataset.k].name, $('heroSearch').value) ? '' : 'none'; }
+$('heroSearch').oninput = filterHeroes;
 function renderLobby() {
   const ps = lobbyState.players, mine = ps.find(p => p.id === myId);
   $('lobby').style.display = inGame ? 'none' : 'block';
@@ -193,6 +198,7 @@ function onSnap(s) {
   // Check the prediction against the server. Forced movement and death hand the hero back to the snapshots.
   if (meUnit) { if (meUnit.d || meUnit.fm) Predict.release(pred); else predErr = Predict.reconcile(pred, meUnit.x, meUnit.y, now, ping / 1000); }
   for (const e of s.ev) { if (e.e === 'kill') feed(`${e.k} killed ${e.v}`); else gfxEvent(e, now, me ? me.id : 0); }
+  soundSnapshot(s, now);
   if (s.over && $('over').style.display !== 'block') {
     const won = hello.team === s.over.winner;
     $('ot').textContent = won ? 'Victory' : 'Defeat'; $('ot').style.color = won ? '#ffd24a' : '#ff6b6b';
@@ -345,6 +351,7 @@ addEventListener('mousedown', e => {
 addEventListener('mouseup', e => { if (e.button === 2) mouse.rdown = false; });
 addEventListener('keydown', e => {
   if (Settings.isOpen()) { if (e.code === 'Escape' && !e.repeat) Settings.close(); return; }
+  if (e.code === 'KeyM' && !e.repeat && e.target.tagName !== 'INPUT' && !e.ctrlKey && !e.metaKey) return toggleMute();
   if (!inGame || !hello || e.target.tagName === 'INPUT' || e.repeat) return;
   const k = e.code, qi = ['KeyQ', 'KeyW', 'KeyE', 'KeyR'].indexOf(k);
   [mouse.wx, mouse.wy] = toWorld(mouse.x, mouse.y);
@@ -385,7 +392,7 @@ function blocked(i) {
   return '';
 }
 let said = 0;
-function say(text) { const now = performance.now(); if (now - said < 400) return; said = now; floater(meUnit.x, meUnit.y - 60, text, '#ffb0a0', 15); }
+function say(text) { const now = performance.now(); if (now - said < 400) return; said = now; SFX.play('shared.deny'); floater(meUnit.x, meUnit.y - 60, text, '#ffb0a0', 15); }
 addEventListener('keyup', e => {
   const qi = ['KeyQ', 'KeyW', 'KeyE', 'KeyR'].indexOf(e.code);
   if (qi < 0 || !held[qi]) return;
@@ -528,4 +535,4 @@ function frame(nowMs) {
     ctx.fillText(`Respawning in ${meUnit.d}`, W / 2, H * 0.3); }
   updateHud();
 }
-Settings.load().then(() => { connect(); nextFrame(); });
+Settings.load().then(() => { soundSetup(); connect(); nextFrame(); });

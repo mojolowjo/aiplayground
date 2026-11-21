@@ -20,6 +20,7 @@ const OPTIONS = {
 const DEFAULTS = {
   fpsLimit: 'auto', vsync: true, renderScale: 100, effects: 'high', windowMode: 'windowed', hwAccel: true,
   smoothing: 60, overlay: false,
+  volMaster: 70, volFx: 100, volUi: 80, muteMaster: false, muteFx: false, muteUi: false, muteUnfocused: true,   // sound: volumes in percent
   servers: [], hideDefault: false, bounds: null,
 };
 const RESTART_KEYS = ['vsync', 'hwAccel'];   // these only take effect when the app starts
@@ -55,7 +56,8 @@ function readDefaultServer(file) {
 function sanitize(raw, base = DEFAULTS) {
   const r = raw && typeof raw === 'object' ? raw : {}, out = { ...base };
   for (const k of Object.keys(OPTIONS)) if (OPTIONS[k].includes(r[k])) out[k] = r[k];
-  for (const k of ['vsync', 'hwAccel', 'overlay', 'hideDefault']) if (typeof r[k] === 'boolean') out[k] = r[k];
+  for (const k of ['vsync', 'hwAccel', 'overlay', 'hideDefault', 'muteMaster', 'muteFx', 'muteUi', 'muteUnfocused']) if (typeof r[k] === 'boolean') out[k] = r[k];
+  for (const k of ['volMaster', 'volFx', 'volUi']) if (Number.isInteger(r[k]) && r[k] >= 0 && r[k] <= 100) out[k] = r[k];
   if (Array.isArray(r.servers)) {
     const seen = new Set(); out.servers = [];
     for (const s of r.servers.slice(0, MAX_SERVERS)) { const c = cleanServer(s); if (c && !seen.has(c.address)) { seen.add(c.address); out.servers.push(c); } }

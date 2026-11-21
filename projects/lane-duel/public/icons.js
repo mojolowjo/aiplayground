@@ -21,25 +21,25 @@ const ICON = (() => {
     oriel1: `<ellipse cx="24" cy="34" rx="18" ry="8" fill="#ff8a3a55" stroke="#ffb35a" stroke-width="2.5"/>` + flame(24, 22, 1.15),
     oriel2: C(24, 24, 15, 'none', 4, O) + `<circle cx="24" cy="24" r="15" fill="none" stroke="#d0a8ff" stroke-width="2.5" stroke-dasharray="7 4"/>` + star(24, 24, 12, '#fff'),
     oriel3: C(24, 24, 9, '#ffe27a') + [0, 45, 90, 135, 180, 225, 270, 315].map(d => G(24, 24, d, P('M13 -3L21 0L13 3Z', '#ffd24a', 1.5))).join('') + C(24, 24, 4, '#fff', 0),
-    // --- Gorrum
+    // --- Bliknarczt
     gorrumP: P('M24 5L40 11V24C40 33 33 40 24 43C15 40 8 33 8 24V11Z', '#c9973f') + C(24, 22, 9, '#0f2a26') + C(24, 22, 5, '#7ff0c8', 0) + [[12, 13], [36, 13], [14, 31], [34, 31]].map(([x, y]) => C(x, y, 1.6, '#6b4a14', 0)).join(''),
     gorrum0: L('M6 42L26 22', O, 5) + `<path d="M6 42L26 22" fill="none" stroke="#aab3bd" stroke-width="3" stroke-dasharray="4 3"/>` + G(24, 24, -45, P('M0 -3H8V-9L24 0L8 9V3H0Z', '#dfe6ee', 2) + P('M2 -3L-6 -10L-2 -2ZM2 3L-6 10L-2 2Z', '#aab3bd', 1.5)),
     gorrum1: P('M10 38V22H16V38ZM21 38V16H27V38ZM32 38V22H38V38Z', '#8a6a2c') + [[13, 15, 5], [24, 9, 6], [35, 15, 5]].map(([x, y, r]) => C(x, y, r, '#e8f0f2', 1.5)).join('') + L('M6 42H42', '#c9973f', 3),
     gorrum2: P('M12 30V20Q12 16 16 16H32Q36 16 36 20V30Q36 36 30 36H18Q12 36 12 30Z', '#aab3bd') + L('M18 16V24M24 16V24M30 16V24', O, 1.8) + P('M24 2L32 11H27V14H21V11H16Z', '#ffd27a', 1.5) + L('M10 42H38', '#fff8', 2),
     gorrum3: C(24, 24, 18, 'none', 2.5, '#9fe8d2') + `<circle cx="24" cy="24" r="12" fill="none" stroke="#9fe8d2" stroke-width="2.5" stroke-dasharray="5 3"/>` + P('M27 8L16 26H23L20 40L33 21H25Z', '#eafff8'),
-    // --- Wren
+    // --- Ezrlae
     wrenP: C(24, 24, 16, '#d8b060') + C(24, 24, 12, '#fff6e0', 1.5) + P('M24 10L28 24H20Z', '#c0392b', 1.2) + P('M24 38L28 24H20Z', '#e8e8f0', 1.2) + C(24, 24, 2, O, 0),
     wren0: G(7, 41, -45, P('M0 0L10 -5L46 0L10 5Z', '#fff2c0', 2) + P('M10 -2.2L40 0L10 2.2Z', '#ffffff', 0)) + L('M30 40L36 34M22 42L26 38', '#fff8', 2) + star(38, 10, 6, '#fff'),
     wren1: C(24, 24, 9, '#ffe9a0') + C(22, 22, 3, '#fff', 0) + `<circle cx="24" cy="24" r="16" fill="none" stroke="#ffe9a0" stroke-width="2.5" stroke-dasharray="6 4"/>` + L('M24 3V10M24 38V45M3 24H10M38 24H45', '#fff', 2.5),
     wren2: C(12, 34, 7, '#ffffff22', 2, '#ffe9a0') + `<circle cx="12" cy="34" r="7" fill="none" stroke="#ffe9a0" stroke-width="2" stroke-dasharray="3 3"/>` + P('M18 30L24 24L21 21L30 20L29 29L26 26L20 32Z', '#f4ecd8', 1.5) + G(30, 18, -45, P('M0 0L4 -3L16 0L4 3Z', '#fff2c0', 1.5)),
     wren3: [[O, 9], ['#f0c05a', 6], ['#ffffff', 2]].map(([c, w]) => L('M14 6Q40 24 14 42', c, w)).join('') + L('M4 14H14M2 24H16M4 34H14', '#fff9', 2.5) + L('M30 12Q40 24 30 36', '#fff7', 2),
-    // --- Sable
+    // --- Katanira
     sableP: [0, 120, 240].map(d => G(24, 24, d, cres(11, 0, 9, '#eaf4ff'))).join('') + star(24, 24, 7, '#fff'),
     sable0: G(30, 16, -30, cres(0, 0, 13, '#eaf4ff')) + `<path d="M8 40L18 30L14 22L26 20" fill="none" stroke="#bcd0ff" stroke-width="2.5" stroke-dasharray="4 3" stroke-linecap="round"/>` + C(8, 40, 3, '#fff', 1.5) + C(14, 22, 3, '#fff', 1.5),
     sable1: G(24, 18, -90, cres(0, 0, 12, '#eaf4ff')) + P('M24 3L29 9H19Z', '#fff', 1.2) + `<ellipse cx="24" cy="40" rx="13" ry="4" fill="none" stroke="#bcd0ff" stroke-width="2" stroke-dasharray="4 3"/>` + L('M8 26V34M40 26V34', '#fff8', 2),
     sable2: G(30, 18, 200, cres(0, 0, 14, '#f4f0d8')) + `<path d="M6 42L20 30" fill="none" stroke="#fff" stroke-width="2.5" stroke-dasharray="3 4" stroke-linecap="round"/>` + star(10, 14, 5, '#fff') + star(40, 38, 4, '#fff'),
     sable3: [0, 60, 120, 180, 240, 300].map(d => G(24, 24, d, cres(12, 0, 8, '#eaf4ff'))).join('') + C(24, 24, 4, '#bcd0ff', 1.5),
-    // --- Kessa
+    // --- Xerhta
     kessaP: P('M24 5C31 15 36 21 36 29A12 12 0 0 1 12 29C12 21 17 15 24 5Z', '#7fb8ff') + P('M20 30A5 5 0 0 0 25 35', 'none', 2, '#ffffffcc') + L('M38 12V20M34 16H42', '#fff', 2.5),
     kessa0: G(5, 41, -40, P('M0 -5H44L50 0L44 5H0Z', '#8fd0ff', 2) + P('M2 -1.8H46V1.8H2Z', '#ffffff', 0) + C(0, 0, 6, '#dff2ff')) + L('M30 40L36 34M22 42L26 38', '#fff8', 2),
     kessa1: `<ellipse cx="24" cy="30" rx="19" ry="12" fill="#ffe9a033" stroke="#ffe9a0" stroke-width="2.5" stroke-dasharray="6 3"/>` + `<ellipse cx="24" cy="30" rx="8" ry="5" fill="#ffe9a0" stroke="${O}" stroke-width="2"/>` + star(24, 13, 9, '#fff6d0'),

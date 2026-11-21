@@ -75,6 +75,9 @@ async function boot(file, env = {}) {
   assert(s.servers[1].name.length === 40, 'names are cut to length');
   const bad = lib.sanitize({ fpsLimit: 61, renderScale: 52, effects: 'ultra', smoothing: '60', vsync: 'yes', servers: 'x', bounds: { width: 5, height: 5 } });
   assert.deepEqual(bad, lib.DEFAULTS, 'invalid values fall back to the defaults');
+  const snd = lib.sanitize({ volMaster: 35, volFx: 0, volUi: 101, muteFx: true, muteUnfocused: false, muteUi: 'yes' });
+  assert(snd.volMaster === 35 && snd.volFx === 0 && snd.volUi === 80 && snd.muteFx && !snd.muteUnfocused && snd.muteUi === false, 'sound: volumes are whole percents from 0 to 100');
+  assert(lib.DEFAULTS.volMaster === 70 && lib.DEFAULTS.volFx === 100 && lib.DEFAULTS.volUi === 80 && lib.DEFAULTS.muteUnfocused === true);
   // the menu (public/settings-menu.js) offers exactly the choices the app accepts
   const box = { window: {}, addEventListener() {}, localStorage: {}, out: null };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'settings-menu.js'), 'utf8') + '\nout = { OPTIONS: Settings.OPTIONS, DEFAULTS: Settings.DEFAULTS };', box);

@@ -73,7 +73,7 @@ const duel = (a, b = 'oriel') => {
   const mr = 100 / (100 + e.mr), ar = 100 / (100 + e.armor);     // what Oriel's resistances let through
   return { g, h, e, reset, minion, mr, ar };
 };
-// 4. Kessa: every ability is telegraph -> delay -> resolve, driven by the ability state machine
+// 4. Xerhta: every ability is telegraph -> delay -> resolve, driven by the ability state machine
 {
   const { g, h, e, reset, mr } = duel('kessa'), K = HEROES.kessa.abilities, beam = () => g.zones.find(z => z.shape === 'line');
   assert.deepEqual([h.range, h.baseMs, h.mhp, h.mmp], [525, 340, 575 + 5 * 106, 400 + 5 * 22]); assert(near(h.hpRegen, 1.1 + 5 * 0.11) && near(h.manaRegen, 1.37 + 5 * 0.16), 'regen grows per level');
@@ -135,14 +135,14 @@ const duel = (a, b = 'oriel') => {
   assert(K.every(a => typeof a.desc === 'string' && a.desc.length > 40)); JSON.stringify(g.snapshot(1));
   console.log('kessa ok');
 }
-// 5. Gorrum: forced movement, chained decaying buffs, a locked empowered attack, marks, a floor shield
+// 5. Bliknarczt: forced movement, chained decaying buffs, a locked empowered attack, marks, a floor shield
 {
   const { g, h, e, reset, mr, ar } = duel('gorrum');
   assert.deepEqual([h.range, h.mhp, h.mmp], [125, 600 + 5 * 109, 267 + 5 * 40]);
   h.cds[3] = 1e9;                                   // keep the R marks out of the other checks
   const noR = () => { h.cds[3] = 1e9; };
   reset(800); noR(); g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); g.command(1, { c: 'move', x: 2000, y: 800 }); run(g, 0.5);
-  assert.equal(h.x, 3000, 'Gorrum cannot move while the harpoon is out'); run(g, 0.3); g.command(2, { c: 'move', x: 6000, y: 800 });
+  assert.equal(h.x, 3000, 'Bliknarczt cannot move while the harpoon is out'); run(g, 0.3); g.command(2, { c: 'move', x: 6000, y: 800 });
   assert(e.stunUntil > g.time && e.x < 3800 && e.x > 3200, 'hooked target is being dragged: ' + (e.x | 0)); run(g, 0.35);
   assert(near(e.x, 3000 + h.radius + 75, 0.01) && near(5000 - e.hp, 110 * mr), 'pulled to 75 in front of where he stood: ' + (e.x | 0)); run(g, 0.7); assert(h.x < 2950, 'and he is free again 0.25s after the hit');
   reset(800); noR(); g.command(1, { c: 'cast', s: 0, x: h.x, y: h.y + 500 }); run(g, 0.5); assert(h.state && h.state.name === 'hooking'); run(g, 0.5); assert(!h.state, 'a miss frees him when the harpoon runs out');
@@ -169,7 +169,7 @@ const duel = (a, b = 'oriel') => {
   h.floorShield.amt = 0; h.hp = h.mhp * 0.35; g.damage(e, h, h.mhp * 0.1, 'true'); assert(near(h.hp, h.mhp * 0.25), 'only once per cooldown');
   console.log('gorrum ok');
 }
-// 6. Wren: cooldown refunds, mark and detonate, stacking buff, blink + auto-target, piercing wave
+// 6. Ezrlae: cooldown refunds, mark and detonate, stacking buff, blink + auto-target, piercing wave
 {
   const { g, h, e, reset, minion, mr, ar } = duel('wren'), P = HEROES.wren.passive;
   const as0 = g.atkSpeed(h); assert(near(h.ad, 60 + 5 * 3.75) && h.bonusAd === 0);
@@ -198,10 +198,10 @@ const duel = (a, b = 'oriel') => {
   assert(near(5000 - m2.hp, 150) && near(5000 - e.hp, 350 * mr, 0.02), `Meridian crossed the map and pierced: ${(5000 - e.hp) | 0} to the hero, ${(5000 - m2.hp) | 0} to the minion`);
   console.log('wren ok');
 }
-// 7. Sable: no mana, blades in the world, chain targeting, delayed spawn, target validation, a hero-only channel
+// 7. Katanira: no mana, blades in the world, chain targeting, delayed spawn, target validation, a hero-only channel
 {
   const { g, h, e, reset, minion, mr, ar } = duel('sable'), B = HEROES.sable.abilities;
-  assert(h.mmp === 0 && h.mp === 0 && g.snapshot(1).units.find(u => u.id === h.id).mmp === 0 && B.every(a => a.cost[0] === 0), 'Sable has no mana and her abilities cost nothing');
+  assert(h.mmp === 0 && h.mp === 0 && g.snapshot(1).units.find(u => u.id === h.id).mmp === 0 && B.every(a => a.cost[0] === 0), 'Katanira has no mana and her abilities cost nothing');
   h.items = ['crystal']; g.refresh(h); assert.equal(h.mmp, 0, 'even with a mana item'); h.items = []; g.refresh(h);
   reset(500); const a = minion(3700, 950, 5000), b = minion(3900, 700, 5000), far = minion(5200, 800, 5000);
   g.command(1, { c: 'cast', s: 0, x: 4800, y: 1300 }); assert(!(h.cds[0] > g.time), 'Q needs a target near the cursor');
@@ -420,13 +420,13 @@ const duel = (a, b = 'oriel') => {
   // No hidden information: with the player out of sight in brush, no hero's bot casts anything at it.
   for (const hero of Object.keys(HEROES)) { const { g, me, b } = scene(hero); const br = MAP.brush[0]; me.x = br.x + br.w / 2; me.y = br.y + 100; me.hp = 1; me.mhp = 9000; b.x = me.x + 500; run(g, 20);
     assert(b.cds.every(cd => !(cd > 0)) && me.hp === 1, `${hero} bot does nothing to a player it cannot see`); }
-  // Gorrum only hooks with a clear line; Kessa only lets her beam go once it reaches.
+  // Bliknarczt only hooks with a clear line; Xerhta only lets her beam go once it reaches.
   { const { g, me, b } = scene('gorrum'); me.mhp = me.hp = 30000; const wall = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 }); Object.assign(wall, { x: 9300, y: 800, ms: 0, ad: 0, hp: 1e6, mhp: 1e6, lookAt: Infinity });
     for (let i = 0; i < 20 * TICK; i++) { g.step(); b.x = 9600; b.y = 800; } assert(!(b.cds[0] > 0), 'no hook while a minion stands in the way');
     g.units.delete(wall.id); let hooked = false; for (let i = 0; i < 20 * TICK && !hooked; i++) { g.step(); hooked = b.cds[0] > g.time; } assert(hooked, 'the hook comes out once the line is clear'); }
   { const { g, me, b } = scene('kessa'); me.mhp = me.hp = 30000; me.x = 8400; let beams = 0;
     for (let i = 0; i < 40 * TICK; i++) { const n = g.zones.length; g.step(); b.x = 9600; b.y = 800; for (const z of g.zones.slice(n)) if (z.shape === 'line') { beams++; assert(z.len >= g.dist(b, me) - me.radius - 80, `the beam (${z.len | 0}) was released long enough to reach (${g.dist(b, me) | 0})`); } }
-    assert(beams >= 2 && me.hp < 30000, 'Kessa charges and releases her beam at the player'); }
+    assert(beams >= 2 && me.hp < 30000, 'Xerhta charges and releases her beam at the player'); }
   // Hard sidesteps a skillshot it can see; easy stands in it.
   const dodged = ai => { let hit = 0; for (let k = 0; k < 12; k++) { const { g, me, b } = scene('wren', ai); me.mhp = me.hp = 30000; me.x = 9150 + k * 10; b.hp = b.mhp = 30000; b.hpRegen = 0; b.x = 10050; b.y = 940; run(g, 2);     // the bot is standing at its post
       g.command(1, { c: 'lvl', s: 0 }); b.mp = 0; b.manaRegen = 0; const hp = b.hp; g.command(1, { c: 'cast', s: 0, x: b.x, y: b.y }); run(g, 1.5); if (b.hp < hp - 1) hit++; } return hit; };   // no mana: it can only move
@@ -720,7 +720,7 @@ const duel = (a, b = 'oriel') => {
     b.x = 9000; b.hp = b.mhp * 0.45; run(g, 0.5); assert(n >= 1 && b.potQ.length === 1 && potions() === n - 1, 'the bot drinks a potion below half health');
     b.gold = 1000; b.hp = b.mhp * 0.45; run(g, 2); assert.equal(b.potQ.length, 1, 'one at a time');
     const g2 = new Game([{ id: 1, team: 'blue', hero: 'kessa', name: 'A' }, { id: -1, team: 'red', hero: 'gorrum', name: 'Bot', bot: true, ai: 'normal' }], { seed: 3 }); g2.nextWave = Infinity; const b2 = g2.heroes.get(-1);
-    for (let i = 0; i < 200; i++) { b2.gold += 60; b2.x = MAP.spawn.red.x; g2.step(); } assert(bag(b2).includes('spiritboots') && !bag(b2).includes('ironboots'), 'against an ability hero Gorrum buys Spirit Boots'); }
+    for (let i = 0; i < 200; i++) { b2.gold += 60; b2.x = MAP.spawn.red.x; g2.step(); } assert(bag(b2).includes('spiritboots') && !bag(b2).includes('ironboots'), 'against an ability hero Bliknarczt buys Spirit Boots'); }
   console.log('items ok');
 }
 console.log('all checks passed');

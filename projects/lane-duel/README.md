@@ -17,6 +17,10 @@ Any seat nobody takes is filled by the practice opponent chosen next to the Star
 Damaging an enemy within 10 seconds of its death counts as an assist: the assisters share half
 the kill's gold (150 at most between them) and each get half the XP.
 
+The characters are Oriel, Bliknarczt, Ezrlae, Katanira and Xerhta. The lobby's search box filters them
+by the start of the name ("xer" finds Xerhta). In the code they keep the ids `oriel`, `gorrum`, `wren`,
+`sable` and `kessa`.
+
 ## Run it
 
 Needs Node.js 20 or newer.
@@ -38,8 +42,8 @@ With one player in the room the Start button becomes **Practice**, with a choice
 - **A stationary dummy** stands by its tower and hits whatever comes into range.
 - **A bot (easy / normal / hard)** plays the lane: it last-hits minions, trades when you walk
   up, backs off below 35% health and recalls when safe, and uses its whole kit with a plan for
-  each character (for example Gorrum only hooks with a clear line and follows up with his
-  knock-up; Kessa charges her beam until you are inside its reach; Sable goes all in when a combo
+  each character (for example Bliknarczt only hooks with a clear line and follows up with his
+  knock-up; Xerhta charges her beam until you are inside its reach; Katanira goes all in when a combo
   should kill). Difficulty changes how accurately it last-hits, how quickly it reacts, how well it
   aims, how often it commits and how long it waits between abilities. On hard it also sidesteps
   skillshots and telegraphed areas it can see coming.
@@ -62,7 +66,7 @@ The stats panel shows your CS and missed CS, and **T** draws each minion's targe
   20% damage.
 - Attack ranges are measured edge to edge, for heroes, minions and towers.
 - Passive gold (2.04 a second) starts at 1:05. The first kill of the game pays 100 extra.
-- Sable Venn has no mana; her abilities cost nothing.
+- Katanira has no mana; her abilities cost nothing.
 - Heroes cannot walk through minions, and nothing is ever shoved by a bump. A hero walking into a
   wave is steered around it and may lose a little time; a hero standing still is never moved, the
   minions walk around it. Blinks and dashes pass through, and a hero that lands on top of minions
@@ -176,7 +180,7 @@ Only the files in `public/` and `shared/` are served. The limits are in `net/gua
 | Right-click | Move, or attack the enemy under the cursor (hold to keep moving). Your character never attacks on its own: it only attacks what you click, or what it meets on an attack-move |
 | A, then left-click | Attack-move (Shift + right-click also works) |
 | S | Stop |
-| Q W E R | Abilities, cast at the cursor. Kessa's Q charges while held and fires on release; her R is pressed again for each shot |
+| Q W E R | Abilities, cast at the cursor. Xerhta's Q charges while held and fires on release; her R is pressed again for each shot |
 | Shift or Ctrl + Q/W/E/R, or click the icon | Spend a skill point |
 | D / F | Blink / Mend (the lobby has a button to swap them; the choice is remembered) |
 | B | Recall to base (8s, cancelled by damage or orders) |
@@ -186,6 +190,7 @@ Only the files in `public/` and `shared/` are served. The limits are in `net/gua
 | Y / Space | Toggle camera lock / centre on your character |
 | Mouse wheel | Zoom in (up) and back out (down). The default view is the furthest out; your choice is remembered |
 | Esc | Close the shop or cancel an attack-move; otherwise open **Settings** (also the ⚙ button, bottom left) |
+| M | Sound off / on |
 | T | Show what each minion is targeting (practice aid) |
 | F8 | Debug: show where the server has your hero, next to where your screen predicts it |
 
@@ -211,6 +216,23 @@ there are two, remembered by that browser:
 - **Performance overlay**: FPS, ping and jitter (how unevenly the server's updates arrive) in a corner.
 
 The desktop app adds performance settings; see below.
+
+## Sound
+
+Every sound is made in code as it plays (Web Audio): there are no audio files, so it works offline and
+inside the desktop app. Each character has its own set (attacks, each ability's cast and hit, the passive,
+a death sound) and the rest are shared (gold, minions, towers, shop, recall, level up). Sound starts with
+your first click or key press, because browsers do not allow it sooner.
+
+- You hear both teams, panned left and right by where the sound is on screen and quieter with distance.
+  Anything more than about a screen and a half away is not played. Your own hero is never quieter than 70%.
+- Things you cannot see make no sound, except ultimates: an enemy ultimate starting is heard from out of sight.
+- **🔊 Sound** (bottom left) opens three volume sliders, each with a mute button: **Master** (70%),
+  **Effects** (abilities, attacks, minions, towers; 100%) and **Interface** (gold, shop, level up, warnings;
+  80%). Moving a slider plays a sample. "Mute when the window isn't focused" is on by default.
+- **M** turns all sound off and on.
+- The choices are remembered: in the browser's storage, or in the desktop app's settings file (app 1.0.2 and
+  later; older apps keep them in their own browser storage, inside `LaneDuel-data`).
 
 ## Desktop app
 
@@ -251,6 +273,7 @@ hidden.
 | Window mode | Windowed, borderless fullscreen or fullscreen. Both fullscreen modes are borderless windows that cover the screen (the app cannot take the screen over exclusively the way some games do); "Fullscreen" uses the system's kiosk mode |
 | Hardware acceleration | On by default. Turn off only if the picture is wrong. Needs a restart |
 | Smoothing, Performance overlay | As in the browser |
+| Audio | The same three volume sliders and mutes as the 🔊 Sound button |
 
 When a setting needs a restart, a **Restart to apply** button appears.
 
@@ -301,16 +324,16 @@ The app never downloads updates. If a newer version exists, the start screen sho
   map, towers, minions, collision and the bot are at the top, in `MAP`, `RULES`, `WAVES` and `MINION`.
 - `game/bot.js` — the practice bot. It plays through the same commands a player sends.
 - `game/data.js` — characters, abilities, items. Tune numbers here.
-  Kessa's kit shows the two shared building blocks: `g.strike` (telegraph, delay,
+  Xerhta's kit shows the two shared building blocks: `g.strike` (telegraph, delay,
   resolve) and the ability state machine (`g.enter` / `g.leave`), both in `sim.js`.
   Each character is written to show a few techniques, with the shared helpers in `sim.js`:
 
   | Character | Shows |
   |---|---|
-  | Kessa | Delayed strikes, charging, an ability state machine |
-  | Gorrum | Forced movement, an empowered attack, an ability with a passive and an active mode |
-  | Wren Ashby | Cooldown refunds, mark and detonate, stacking buffs |
-  | Sable Venn | Objects in the world, chain targeting, an interruptible channel |
+  | Xerhta | Delayed strikes, charging, an ability state machine |
+  | Bliknarczt | Forced movement, an empowered attack, an ability with a passive and an active mode |
+  | Ezrlae | Cooldown refunds, mark and detonate, stacking buffs |
+  | Katanira | Objects in the world, chain targeting, an interruptible channel |
 - `shared/move.js` — walking and unit collision: one step function that both the server and the
   browser's movement prediction call, so they always agree.
 - `shared/shop.js` — shop rules (what a purchase costs and uses up) used by both the server and the
@@ -329,3 +352,8 @@ The app never downloads updates. If a newer version exists, the start screen sho
 - `desktop/` — the desktop app (Electron): `main.js` (window, data folder, navigation rules),
   `lib.js` (the same decisions as plain functions, for the test), `preload.js` (the six functions a page
   gets), `start/` (the server list), `default-server.json`, `test/desktop.test.js`.
+- `public/sfx.js` — the sound engine and every sound's recipe (`SFX.shared.<name>`, `SFX.heroes.<heroId>.<name>`).
+  `public/sound.js` decides which sound an event plays and where on screen it is. The sim sends
+  `{ e: 'sfx', k, x, y, id, h, s, n }` events for moments that had none (`g.sfx(...)` in `game/sim.js`).
+- `test/sfx.js` — builds every recipe against a stand-in audio context, checks the limits, the volume
+  controls and the sim's sound events.

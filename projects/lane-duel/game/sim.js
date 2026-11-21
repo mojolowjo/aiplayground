@@ -77,10 +77,10 @@ export const RULES = {
     // reachMargin: how far inside a range the target must be; forget: seconds it keeps aiming at where it last saw someone.
     lowHp: 0.4, finishHp: 0.25, manaReserve: 0.25, pokeReach: 0.9, reachMargin: 60, forget: 3,
     zoneDelay: 0.8, shotSpeed: 1600,                 // lead times assumed for a kit without its own numbers (Oriel)
-    passiveBelow: 0.85,                              // Kessa: only farm the passive's mana when below this share of mana
-    engageSlack: 120, engageFor: 2.5, fleeSpeed: 80, chaseRange: 900,     // Gorrum: following up a hook, chasing a runner
-    boltGap: 100, escapeRange: 700,                  // Wren: bolt last-hits minions at least this far out of attack range; blink away inside this
-    bladeNear: 300, comboAttacks: 2, comboTrust: 0.7, allInMargin: 0.1, allInRetry: 2, allInFor: 4,   // Sable: when a combo should kill, and how long she commits
+    passiveBelow: 0.85,                              // Xerhta: only farm the passive's mana when below this share of mana
+    engageSlack: 120, engageFor: 2.5, fleeSpeed: 80, chaseRange: 900,     // Bliknarczt: following up a hook, chasing a runner
+    boltGap: 100, escapeRange: 700,                  // Ezrlae: bolt last-hits minions at least this far out of attack range; blink away inside this
+    bladeNear: 300, comboAttacks: 2, comboTrust: 0.7, allInMargin: 0.1, allInRetry: 2, allInFor: 4,   // Katanira: when a combo should kill, and how long she commits
     dodgeAhead: 0.8, dodgeMargin: 25, dodgeExtra: 50,                     // sidestepping: how far ahead it looks, and how wide a berth it gives
   },
 };
@@ -264,15 +264,25 @@ export class Game {
     u.x = Math.max(MAP.edge, Math.min(MAP.w - MAP.edge, u.x)); u.y = Math.max(MAP.top + 30, Math.min(MAP.bot - 30, u.y));
   }
   fx(e) { this.events.push(e); }
+  // A sound for the clients (public/sfx.js has the recipes). src = who made it, k = the recipe's name, at = where.
+  // o.s = an ability slot (the client then looks for e.g. "qHit"); o.n = a number the recipe may use (a bounce
+  // count, a stun length); o.u = heard even through fog (ultimates); o.v = tied to something everyone can see
+  // (a telegraphed area); o.p = only that player hears it. While an ability's own code runs, this.slot is its
+  // slot, so the shots and strikes it creates know which ability they belong to.
+  sfx(src, k, at, o = {}) {
+    const a = at || src;
+    this.fx({ e: 'sfx', k, x: Math.round(a.x), y: Math.round(a.y), ...(src ? { id: src.id } : {}), ...(src && src.hero ? { h: src.hero } : {}), ...o });
+  }
+  inSlot(s, f) { const was = this.slot; this.slot = s; try { return f(); } finally { this.slot = was; } }
 
   // ---------- ability primitives ----------
   line(h, aim, o) {
     const s = { id: this.nextId++, kind: 'line', x: h.x, y: h.y, dx: aim.dx, dy: aim.dy, left: o.range, range: o.range, dist: 0, team: h.team,
-      speed: o.speed, w: o.width, color: o.color, onHit: o.onHit, pierce: o.pierce, hit: new Set(), style: o.style || 'orb', own: o.tether ? h.id : 0 };
+      speed: o.speed, w: o.width, color: o.color, onHit: o.onHit, pierce: o.pierce, hit: new Set(), style: o.style || 'orb', own: o.tether ? h.id : 0, src: h, sl: this.slot };
     this.shots.push(s); return s;
   }
   homing(src, x, y, target, speed, color, onHit, style) {
-    this.shots.push({ id: this.nextId++, kind: 'home', x, y, target, speed, team: src.team, color, onHit, w: 24,
+    this.shots.push({ id: this.nextId++, kind: 'home', x, y, target, speed, team: src.team, color, onHit, w: 24, src, sl: this.slot,
       style: style || (src.type === 'tower' ? 'bolt' : src.type === 'minion' ? 'mote' : src.def.shot || 'orb') });
   }
   // AreaStrike: telegraph -> delay -> resolve. Everyone sees the shape from the moment it is created; after
@@ -283,7 +293,8 @@ export class Game {
   strike(h, o) {
     const z = { id: this.nextId++, shape: o.shape || 'circle', x: o.x, y: o.y, r: o.r || 0, inner: o.inner || 0,
       dx: o.dx || 0, dy: o.dy || 0, len: o.len || 0, w: o.w || 0, team: h.team, born: this.time, at: this.time + o.delay,
-      ticks: o.ticks || 1, interval: o.interval || 0, color: o.color, onHit: o.onHit, onLand: o.onLand, quiet: !!o.quiet };
+      ticks: o.ticks || 1, interval: o.interval || 0, color: o.color, onHit: o.onHit, onLand: o.onLand, quiet: !!o.quiet, src: h, sl: this.slot, n: o.n };
+    if (z.sl != null) this.sfx(h, 'tele', z.shape === 'line' ? h : z, { s: z.sl, v: 1, d: +o.delay.toFixed(3), ...(o.n ? { n: o.n } : {}) });   // the telegraph: an incoming whistle, a sizzle
     this.zones.push(z); return z;
   }
   strikeTargets(z) {
@@ -317,7 +328,7 @@ export class Game {
   // for o.life seconds, and runs o.onTake when its owner walks within o.r of it.
   drop(h, x, y, delay, o) {
     const b = { id: this.nextId++, kind: o.kind, owner: h, team: h.team, x, y, r: o.r, born: this.time, at: this.time + delay,
-      until: this.time + delay + o.life, onTake: o.onTake };
+      until: this.time + delay + o.life, onTake: o.onTake, landSfx: o.landSfx };
     this.clampPos(b); this.pickups.push(b); return b;
   }
   take(h, b) {
@@ -326,6 +337,7 @@ export class Game {
   }
   stepPickups() {
     for (const b of [...this.pickups]) {
+      if (b.landSfx && this.time >= b.at) { this.sfx(b.owner, b.landSfx, b); b.landSfx = null; }   // it has just landed
       if (this.time >= b.until) this.pickups.splice(this.pickups.indexOf(b), 1);
       else if (this.time >= b.at && !b.owner.dead && this.dist(b.owner, b) <= b.r) this.take(b.owner, b);
     }
@@ -350,6 +362,7 @@ export class Game {
     h.state = null;
     const def = h.def.abilities[st.s];
     if (st.name === 'charging' && why !== 'done' && st.paid) this.restoreMana(h, st.paid * RULES.chargeRefund);   // cancelled charge: part of the cost back
+    this.sfx(h, st.name === 'charging' && why !== 'done' ? 'cancel' : 'end', h, { s: st.s, st: st.name });   // lets the client stop a charge whine or a channel's sound
     if (def.onLeave) def.onLeave(this, h, st, why);
   }
 
@@ -380,10 +393,11 @@ export class Game {
     t.hp -= amt;
     if (t.plates) {                                   // tower plates: each one broken pays the hero who broke it
       const size = t.mhp / t.plates, broke = Math.ceil(hp0 / size - 1e-9) - Math.ceil(Math.max(0, t.hp) / size - 1e-9);
-      if (broke > 0 && src && src.type === 'hero') { src.gold += broke * RULES.tower.plateGold; this.fx({ e: 'gold', x: t.x, y: t.y, n: broke * RULES.tower.plateGold, p: src.pid }); }
+      if (broke > 0 && src && src.type === 'hero') { src.gold += broke * RULES.tower.plateGold; this.fx({ e: 'gold', x: t.x, y: t.y, n: broke * RULES.tower.plateGold, p: src.pid, w: 'p' }); }
+      if (broke > 0) this.sfx(null, 'plate', t);
     }
     if (src && amt >= 1) this.fx({ e: 'dmg', id: t.id, x: Math.round(t.x), y: Math.round(t.y), n: Math.round(amt),
-      s: src.type === 'hero' ? src.id : 0, k: t.type[0], ty: type[0], ...(o.crit ? { cr: 1 } : {}) });
+      s: src.type === 'hero' ? src.id : 0, k: t.type[0], ty: type[0], ...(o.crit ? { cr: 1 } : {}), ...(attack ? { a: 1 } : {}) });
     if (hero && !hero.dead) {
       hero.undo = [];                                 // dealing damage closes the shop's undo history
       // amt is now what actually came off the target's health, after armor and shields.
@@ -422,7 +436,7 @@ export class Game {
     let killer = src && src.type === 'hero' ? src : null;
     if (t.type === 'minion') {
       this.units.delete(t.id);
-      if (src && src.type === 'hero') { src.gold += t.gold; src.cs++; this.fx({ e: 'gold', x: t.x, y: t.y, n: t.gold, p: src.pid }); }
+      if (src && src.type === 'hero') { src.gold += t.gold; src.cs++; this.fx({ e: 'gold', x: t.x, y: t.y, n: t.gold, p: src.pid, w: 'm' }); }
       const near = enemy.filter(h => !h.dead && this.dist(h, t) < WAVES.xpRange);
       for (const h of near) { this.giveXp(h, t.xp / near.length); if (h !== src) h.missed++; }   // in range but no last hit = a missed minion
     } else if (t.type === 'hero') {
@@ -433,13 +447,13 @@ export class Game {
       const k = killer || recent[0] || null, xp = 100 + 40 * t.lvl, helpers = recent.filter(a => a !== k);
       killer = k;
       const bounty = RULES.killGold + (k && !this.firstBlood ? RULES.firstBloodGold : 0);
-      if (k) { this.firstBlood = true; k.kills++; k.gold += bounty; this.giveXp(k, xp); this.fx({ e: 'gold', x: t.x, y: t.y, n: bounty, p: k.pid }); }
+      if (k) { this.firstBlood = true; k.kills++; k.gold += bounty; this.giveXp(k, xp); this.fx({ e: 'gold', x: t.x, y: t.y, n: bounty, p: k.pid, w: 'k' }); }
       const share = helpers.length ? Math.min(RULES.assistMax, bounty * RULES.assistShare) / helpers.length : 0;
       for (const a of helpers) {
-        a.assists = (a.assists || 0) + 1; a.gold += share; this.giveXp(a, xp / 2); this.fx({ e: 'gold', x: t.x, y: t.y, n: Math.round(share), p: a.pid });
+        a.assists = (a.assists || 0) + 1; a.gold += share; this.giveXp(a, xp / 2); this.fx({ e: 'gold', x: t.x, y: t.y, n: Math.round(share), p: a.pid, w: 'k' });
         if (a.def.passive && a.def.passive.onKill) a.def.passive.onKill(this, a, t);
       }
-      this.fx({ e: 'kill', k: k ? k.name : 'the lane', v: t.name });
+      this.fx({ e: 'kill', k: k ? k.name : 'the lane', v: t.name, kp: k ? k.pid : 0, vp: t.pid });
     } else if (t.type === 'tower') {
       this.units.delete(t.id); this.fx({ e: 'kill', k: src && src.name ? src.name : other(t.team) + ' minions', v: `a ${t.team} tower` });
       if (!this.towers(t.team).length) this.over = { winner: other(t.team), reason: 'both towers destroyed' };
@@ -461,7 +475,7 @@ export class Game {
     if (!h || this.over || !c) return;
     const num = v => (Number.isFinite(v) ? v : 0);
     if (c.c === 'lvl') return this.levelUp(h, c.s | 0);
-    if (c.c === 'buy') return this.buy(h, c.item);
+    if (c.c === 'buy') { const ok = this.buy(h, c.item); if (!ok) this.sfx(h, 'deny', h, { p: h.pid }); return ok; }
     if (c.c === 'sell') return this.sell(h, c.i | 0);
     if (c.c === 'undo') return this.undoShop(h);
     if (c.c === 'use') return this.useItem(h, c.i | 0);
@@ -500,7 +514,7 @@ export class Game {
       h.items = h.items.map((s, k) => (k === at ? slot : s)).filter((s, k) => k === at || !p.used.includes(k));
       if (at < 0) h.items.push(slot);
     }
-    h.gold -= p.price; this.refresh(h); return true;
+    h.gold -= p.price; this.refresh(h); this.sfx(h, 'buy', h, { p: h.pid }); return true;
   }
   // Sell the item in bag slot i for RULES.sellBack of its total price (one potion at a time from a stack).
   sell(h, i) {
@@ -509,14 +523,14 @@ export class Game {
     const gain = Math.round(it.cost * RULES.sellBack);
     h.undo.push({ items: h.items.map(s => ({ ...s })), gold: gain });
     if (it.stack && slot.n > 1) slot.n--; else h.items.splice(i, 1);
-    h.gold += gain; this.refresh(h);
+    h.gold += gain; this.refresh(h); this.sfx(h, 'sell', h, { p: h.pid });
     h.hp = Math.min(h.hp, h.mhp); h.mp = Math.min(h.mp, h.mmp); return true;
   }
   // Take back the last buy or sell: the bag as it was, and exactly the gold that changed hands.
   undoShop(h) {
     if (!this.canShop(h) || !h.undo.length) return false;
     const e = h.undo.pop();
-    h.items = e.items; h.gold -= e.gold; this.refresh(h);
+    h.items = e.items; h.gold -= e.gold; this.refresh(h); this.sfx(h, 'undo', h, { p: h.pid });
     h.hp = Math.min(h.hp, h.mhp); h.mp = Math.min(h.mp, h.mmp); return true;
   }
   // Drink the potion or flask in bag slot i. A second drink waits its turn behind the first.
@@ -524,7 +538,7 @@ export class Game {
     const slot = h.items[i], it = slot && ITEM[slot.id];
     if (!it || !it.use || h.dead || slot.n < 1) return false;
     slot.n--; if (!it.charges && slot.n < 1) h.items.splice(i, 1);
-    h.potQ.push({ rate: it.use.heal / it.use.over, left: it.use.over }); h.undo = [];
+    h.potQ.push({ rate: it.use.heal / it.use.over, left: it.use.over }); h.undo = []; this.sfx(h, 'potion');
     return true;
   }
   aimFor(h, def, c) {
@@ -547,12 +561,13 @@ export class Game {
     if (h.mp < cost) return;
     h.recall = null; h.mp -= cost;
     this.enter(h, s, 'charging', def.charge.hold, { slow: def.charge.slow, noAttack: true, full: def.charge.full, paid: cost });
+    this.sfx(h, 'charge', h, { s, d: def.charge.full });
   }
   cast(h, s, c) {
     const def = h.def.abilities[s], r = h.ranks[s] - 1, st = h.state;
     if (!def || r < 0 || !this.canAct(h) || h.silenceUntil > this.time) return;
     if (st && st.s !== s) return;                                   // busy with another ability
-    if (st && st.name !== 'charging') { if (def.recast) def.recast(this, h, r, this.aimFor(h, def, c), st); return; }
+    if (st && st.name !== 'charging') { if (def.recast) this.inSlot(s, () => def.recast(this, h, r, this.aimFor(h, def, c), st)); return; }
     if (def.charge && !st) return;                                  // charged abilities only fire from CHARGING
     if (h.cds[s] > this.time) return;
     const cost = st ? 0 : def.cost[Math.min(r, def.cost.length - 1)];   // a charged ability was paid for when the charge began
@@ -569,14 +584,14 @@ export class Game {
     const ambush = this.has(h, 'ambush'); if (ambush && this.time >= h.ambushLock) h.ambushUntil = this.time + ambush.window;
     if (h.windup && !h.windup.locked) { h.windup = null; h.nextAttack = this.time; }
     if (def.kind !== 'self') h.face = Math.atan2(aim.dy, aim.dx);
-    this.fx({ e: 'cast', id: h.id, s, d: def.castTime || 0 });
-    const fire = () => def.cast(this, h, r, aim);
+    this.fx({ e: 'cast', id: h.id, s, d: def.castTime || 0, h: h.hero, x: Math.round(h.x), y: Math.round(h.y) });
+    const fire = () => this.inSlot(s, () => def.cast(this, h, r, aim));
     if (def.castTime) h.casting = { at: this.time + def.castTime, fire }; else fire();
   }
   castSpell(h, s, c) {
     const def = Object.hasOwn(SPELLS, s) ? SPELLS[s] : null;
     if (!def || !this.canAct(h) || h.spellCds[s] > this.time || (h.state && h.state.lock)) return;
-    h.spellCds[s] = this.time + def.cd; h.recall = null;
+    h.spellCds[s] = this.time + def.cd; h.recall = null; this.sfx(h, def.name.toLowerCase());
     def.cast(this, h, this.aimFor(h, def, c));
   }
 
@@ -727,7 +742,7 @@ export class Game {
     const T = this.time, sp = MAP.spawn[h.team];
     if (h.ai) think(this, h);                       // practice bot: decides, then issues ordinary commands
     if (h.dead) {
-      if (T >= h.respawnAt) { h.dead = false; h.hp = h.mhp; h.mp = h.mmp; h.x = sp.x; h.y = sp.y; h.order = null; this.unstick(h); }
+      if (T >= h.respawnAt) { h.dead = false; h.hp = h.mhp; h.mp = h.mmp; h.x = sp.x; h.y = sp.y; h.order = null; this.unstick(h); this.sfx(h, 'respawn'); }
       return;
     }
     if (T >= RULES.goldFrom) h.gold += RULES.goldPerSec * DT;
@@ -753,11 +768,11 @@ export class Game {
     for (let s = 0; s < 4; s++) { const d = h.def.abilities[s]; if (d.tick && h.ranks[s] > 0) d.tick(this, h, h.ranks[s] - 1); }   // always-on effects
     if (h.state && T >= h.state.until) this.leave(h, 'timeout');
     // Channels: a state with `every` calls its ability's onTick on that interval until the state ends.
-    if (h.state && h.state.every && T >= h.state.tickAt) { const st = h.state; st.tickAt += st.every; h.def.abilities[st.s].onTick(this, h, st); }
+    if (h.state && h.state.every && T >= h.state.tickAt) { const st = h.state; st.tickAt += st.every; this.inSlot(st.s, () => h.def.abilities[st.s].onTick(this, h, st)); }
     if (h.dashing) return this.stepDash(h);
     if (h.casting) { if (T >= h.casting.at) { const f = h.casting.fire; h.casting = null; f(); } return; }
     if (h.recall) {
-      if (T >= h.recall.at) { h.recall = null; h.x = sp.x; h.y = sp.y; h.order = null; this.fx({ e: 'blink', x: h.x, y: h.y }); }
+      if (T >= h.recall.at) { this.sfx(h, 'recallDone'); h.recall = null; h.x = sp.x; h.y = sp.y; h.order = null; this.fx({ e: 'blink', x: h.x, y: h.y }); }
       return;
     }
     if (h.bot && !h.ai) return this.stepBot(h);
@@ -888,7 +903,7 @@ export class Game {
       if (s.kind === 'home') {
         const t = s.target; if (t.dead) continue;
         const dx = t.x - s.x, dy = t.y - s.y, d = Math.hypot(dx, dy), st = s.speed * DT;
-        if (d <= st + t.radius * 0.5) { s.onHit(); continue; }
+        if (d <= st + t.radius * 0.5) { if (s.sl != null) this.sfx(s.src, 'hit', t, { s: s.sl }); this.inSlot(s.sl, () => s.onHit()); continue; }
         s.x += dx / d * st; s.y += dy / d * st; keep.push(s);
       } else {
         const st = Math.min(s.speed * DT, s.left); let dead = false;
@@ -896,12 +911,13 @@ export class Game {
           s.x += s.dx * st / n; s.y += s.dy * st / n; s.dist += st / n;
           for (const t of this.enemiesIn(s.team, s.x, s.y, s.w / 2)) {
             if (s.hit.has(t.id)) continue;
-            s.hit.add(t.id); s.onHit(t, s);
+            s.hit.add(t.id); if (s.sl != null) this.sfx(s.src, 'hit', t, { s: s.sl }); this.inSlot(s.sl, () => s.onHit(t, s));
             if (!s.pierce) { dead = true; break; }
           }
         }
         s.left -= st;
         if (!dead && s.left > 0 && s.x > 0 && s.x < MAP.w) keep.push(s);
+        else if (!dead && !s.pierce && s.sl != null) this.sfx(s.src, 'miss', s, { s: s.sl });      // it ran out without hitting anything
       }
     }
     this.shots = keep;
@@ -912,7 +928,9 @@ export class Game {
       if (z.shape === 'line') this.fx({ e: 'beam', x: z.x | 0, y: z.y | 0, a: +Math.atan2(z.dy, z.dx).toFixed(3), l: z.len | 0, w: z.w, c: z.color });
       else if (!z.quiet) this.fx({ e: 'burst', x: z.x, y: z.y, r: z.r, c: z.color });
       if (z.onLand) z.onLand();
-      for (const t of this.strikeTargets(z)) z.onHit(t, z.inner > 0 && Math.hypot(t.x - z.x, t.y - z.y) <= z.inner);
+      let centre = 0, heroes = 0;
+      this.inSlot(z.sl, () => { for (const t of this.strikeTargets(z)) { const c = z.inner > 0 && Math.hypot(t.x - z.x, t.y - z.y) <= z.inner; if (c) centre = 1; if (t.type === 'hero') heroes = 1; z.onHit(t, c); } });
+      if (z.sl != null) this.sfx(z.src, 'land', z.shape === 'line' ? { x: z.x + z.dx * z.len / 2, y: z.y + z.dy * z.len / 2 } : z, { s: z.sl, v: 1, ...(centre ? { c: 1 } : {}), ...(heroes ? { hh: 1 } : {}), ...(z.n ? { n: z.n } : {}) });
       z.at += z.interval; return --z.ticks > 0;
     });
   }

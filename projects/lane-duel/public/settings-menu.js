@@ -3,7 +3,7 @@
 // desktop app's start screen (desktop/scripts/sync-shared.js copies it there).
 //
 // In the desktop app (window.laneDuelApp exists) settings are kept by the app, and every option is offered.
-// In a normal browser only the two network settings exist, kept in localStorage; everything else stays at
+// In a normal browser the network and sound settings exist, kept in localStorage; everything else stays at
 // its default, which is how the game has always drawn.
 const Settings = (() => {
   // The same lists as desktop/lib.js (the desktop test compares them).
@@ -14,9 +14,13 @@ const Settings = (() => {
     windowMode: ['windowed', 'borderless', 'fullscreen'],
     smoothing: [30, 45, 60, 90, 120],
   };
-  const DEFAULTS = { fpsLimit: 'auto', vsync: true, renderScale: 100, effects: 'high', windowMode: 'windowed', hwAccel: true, smoothing: 60, overlay: false };
+  // Sound: three volumes in percent, each with its own mute.
+  const AUDIO = { volMaster: 70, volFx: 100, volUi: 80, muteMaster: false, muteFx: false, muteUi: false, muteUnfocused: true };
+  const VOLUMES = [['volMaster', 'muteMaster', 'Master', 'Everything.'], ['volFx', 'muteFx', 'Effects', 'Abilities, attacks, minions, towers.'], ['volUi', 'muteUi', 'Interface', 'Gold, shop, level up, warnings.']];
+  const SAMPLE_EVERY = 160;   // ms between sample sounds while a slider is dragged
+  const DEFAULTS = { fpsLimit: 'auto', vsync: true, renderScale: 100, effects: 'high', windowMode: 'windowed', hwAccel: true, smoothing: 60, overlay: false, ...AUDIO };
   const MAX_FPS = 500;   // what the top FPS choice means. It is stored as 0 (it used to be "Unlimited"), so apps already downloaded keep working
-  const BROWSER_KEYS = ['smoothing', 'overlay'], STORE = 'ldSettings';
+  const BROWSER_KEYS = ['smoothing', 'overlay', ...Object.keys(AUDIO)], STORE = 'ldSettings';
   const TEXT = {
     fpsLimit: v => (v === 'auto' ? `Monitor refresh${meta.refreshRate ? ` (${meta.refreshRate})` : ''}` : String(v === 0 ? MAX_FPS : v)),
     renderScale: v => v + '%',
@@ -36,6 +40,8 @@ const Settings = (() => {
     .ldset .warn { color: #e0b060; }
     .ldset select { background: #0f181e; color: #e8eee9; border: 1px solid #3a4c5a; border-radius: 5px; padding: 4px 6px; font: inherit; min-width: 150px; }
     .ldset input[type=checkbox] { width: 18px; height: 18px; }
+    .ldset input[type=range] { flex: none; width: 150px; } .ldset .num { width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+    .ldset button.mute { padding: 4px 8px; font-size: 12px; width: 58px; } .ldset button.mute.on { background: #7a3030; }
     .ldset .foot { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 16px; }
     .ldset button { background: #2c6e49; color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; cursor: pointer; }
     .ldset button.plain { background: #24323c; } .ldset button.go { background: #b7791f; }`;
@@ -43,8 +49,23 @@ const Settings = (() => {
   const app = window.laneDuelApp || null;
   let cfg = { ...DEFAULTS }, meta = {}, box = null, buttons = [];
   const subs = [];
-  const fire = () => { for (const f of subs) f(cfg, meta); if (box) render(); };
-  function take(view) { if (!view) return; cfg = { ...DEFAULTS, ...view.settings }; meta = view.meta || {}; fire(); }
+  let dragging = false, only = null, lastSample = 0, appKeepsAudio = true;
+  const fire = () => { for (const f of subs) f(cfg, meta); if (box && !dragging) render(); };
+  // Sound settings as saved in this browser. (Also used inside a desktop app too old to keep them itself.)
+  function localAudio() {
+    const out = {};
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORE) || '{}');
+      for (const [k, d] of Object.entries(AUDIO)) if (typeof d === 'boolean' ? typeof saved[k] === 'boolean' : Number.isInteger(saved[k]) && saved[k] >= 0 && saved[k] <= 100) out[k] = saved[k];
+    } catch { /* storage blocked or garbled: defaults */ }
+    return out;
+  }
+  const saveLocal = keys => { try { localStorage.setItem(STORE, JSON.stringify(Object.fromEntries(keys.map(k => [k, cfg[k]])))); } catch { /* not saved; still applies until the page closes */ } };
+  function take(view) {
+    if (!view) return;
+    appKeepsAudio = 'volMaster' in view.settings;
+    cfg = { ...DEFAULTS, ...(appKeepsAudio ? {} : localAudio()), ...view.settings }; meta = view.meta || {}; fire();
+  }
 
   // Read the saved settings. Safe to call again whenever they may have changed.
   async function load() {
@@ -54,14 +75,19 @@ const Settings = (() => {
       if (OPTIONS.smoothing.includes(saved.smoothing)) cfg.smoothing = saved.smoothing;
       if (typeof saved.overlay === 'boolean') cfg.overlay = saved.overlay;
     } catch { /* storage blocked or garbled: defaults */ }
+    Object.assign(cfg, localAudio());
     fire(); return cfg;
   }
   function set(partial) {
     Object.assign(cfg, partial);
-    if (app) app.setSettings(partial).then(take, () => {});
-    else try { localStorage.setItem(STORE, JSON.stringify(Object.fromEntries(BROWSER_KEYS.map(k => [k, cfg[k]])))); } catch { /* not saved; still applies until the page closes */ }
+    if (app) { if (!appKeepsAudio) saveLocal(Object.keys(AUDIO)); app.setSettings(partial).then(take, () => {}); }
+    else saveLocal(BROWSER_KEYS);
     fire();
   }
+  // Apply a change at once without saving it yet (a slider being dragged). set() saves it when the drag ends.
+  function preview(partial) { Object.assign(cfg, partial); for (const f of subs) f(cfg, meta); }
+  // The page can ask to hear what a volume sounds like: api.onSample = group => ... ('master', 'fx' or 'ui').
+  function sample(group, force) { const t = Date.now(); if (!force && t - lastSample < SAMPLE_EVERY) return; lastSample = t; if (api.onSample) api.onSample(group); }
   if (app) addEventListener('laneduel-settings', load);
 
   // ---------- the menu ----------
@@ -75,8 +101,24 @@ const Settings = (() => {
     const box = el('input', { type: 'checkbox', checked: !!cfg[key] }); box.onchange = () => set({ [key]: box.checked });
     return el('label', { className: 'row', title: hint || '' }, el('span', null, label, hint ? el('small', { textContent: hint }) : null), box);
   }
+  function volume([key, muteKey, label, hint]) {
+    const group = { volMaster: 'master', volFx: 'fx', volUi: 'ui' }[key];
+    const num = el('b', { className: 'num', textContent: cfg[key] + '%' }), slide = el('input', { type: 'range', min: 0, max: 100, step: 1, value: cfg[key] });
+    const mute = el('button', { className: 'plain mute' + (cfg[muteKey] ? ' on' : ''), textContent: cfg[muteKey] ? 'Muted' : 'Mute', title: cfg[muteKey] ? 'Turn back on' : 'Mute' });
+    slide.onpointerdown = () => { dragging = true; };
+    slide.oninput = () => { num.textContent = slide.value + '%'; preview({ [key]: +slide.value }); sample(group); };
+    slide.onchange = () => { dragging = false; set({ [key]: +slide.value }); sample(group, true); };
+    mute.onclick = () => { set({ [muteKey]: !cfg[muteKey] }); sample(group, true); };
+    return el('div', { className: 'row', title: hint }, el('span', null, label, el('small', { textContent: hint })), slide, num, mute);
+  }
+  function audio(p) {
+    p.append(el('h3', { textContent: 'Audio' }), ...VOLUMES.map(volume),
+      toggle('muteUnfocused', "Mute when the window isn't focused"),
+      el('div', { className: 'note', textContent: 'M turns all sound off and on.' }));
+  }
   function render() {
-    const p = el('div', { className: 'ldset' }, el('h2', { textContent: 'Settings' }));
+    const p = el('div', { className: 'ldset' }, el('h2', { textContent: only === 'audio' ? 'Sound' : 'Settings' }));
+    if (only === 'audio') { audio(p); const foot = el('div', { className: 'foot' }, el('button', { textContent: 'Close', onclick: close })); p.append(foot); box.replaceChildren(p); return; }
     if (app) {
       p.append(el('h3', { textContent: 'Performance' }), choice('fpsLimit', 'FPS limit', 'How many frames are drawn each second.'));
       if (cfg.vsync && cfg.fpsLimit !== 'auto') p.append(el('div', { className: 'note', textContent: 'With V-Sync on, your monitor shows at most its own refresh rate. Frames drawn beyond that are not seen.' }));
@@ -90,6 +132,7 @@ const Settings = (() => {
     p.append(el('h3', { textContent: 'Network' }),
       choice('smoothing', 'Smoothing', SMOOTHING_TIP),
       toggle('overlay', 'Performance overlay', 'Shows FPS, ping and jitter in a corner.'));
+    audio(p);
     if (app && meta.dataDir) p.append(el('div', { className: 'note' + (meta.fallback ? ' warn' : ''), textContent: meta.fallback
       ? `The folder next to the app could not be written (${meta.wantedDir}), so settings are kept in your user folder instead: ${meta.dataDir}`
       : `Settings are kept in: ${meta.dataDir}` }));
@@ -101,8 +144,10 @@ const Settings = (() => {
     box.replaceChildren(p);
   }
   // extra = [{ label, onClick }]: buttons the page wants beside Close (the game adds "Back to server list").
-  function open(extra) {
+  // o.only = 'audio' shows just the sound section (the speaker button).
+  function open(extra, o = {}) {
     if (box) return;
+    only = o.only || null; dragging = false;
     if (!document.getElementById('ldset-css')) document.head.append(el('style', { id: 'ldset-css', textContent: CSS }));
     buttons = extra || [];
     box = el('div', { className: 'ldset-back' });
@@ -112,6 +157,7 @@ const Settings = (() => {
   }
   function close() { if (box) { box.remove(); box = null; } }
 
-  return { OPTIONS, DEFAULTS, MAX_FPS, SMOOTHING_TIP, inApp: !!app, get cfg() { return cfg; }, get meta() { return meta; },
+  const api = { OPTIONS, DEFAULTS, MAX_FPS, SMOOTHING_TIP, inApp: !!app, onSample: null, get cfg() { return cfg; }, get meta() { return meta; },
     load, set, open, close, isOpen: () => !!box, onChange: f => { subs.push(f); } };
+  return api;
 })();

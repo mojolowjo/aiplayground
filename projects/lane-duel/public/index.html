@@ -73,6 +73,9 @@
   #feed { position: fixed; top: 60px; left: 12px; font-size: 14px; pointer-events: none; }
   #fs { position: fixed; left: 10px; bottom: 10px; padding: 4px 10px; font-size: 12px; background: #24323c; z-index: 4; }
   #gear { position: fixed; left: 104px; bottom: 10px; padding: 4px 10px; font-size: 12px; background: #24323c; z-index: 4; }
+  #spk { position: fixed; left: 198px; bottom: 10px; padding: 4px 10px; font-size: 12px; background: #24323c; z-index: 4; }
+  #note { position: fixed; left: 50%; top: 22%; transform: translateX(-50%); padding: 6px 14px; background: #0c141acc; border-radius: 6px; font-size: 15px; pointer-events: none; display: none; z-index: 6; }
+  #heroSearch { width: 100%; box-sizing: border-box; margin: 10px 0 8px; }
   #perf { position: fixed; right: 10px; top: 42px; padding: 3px 8px; font: 12px ui-monospace, monospace; color: #b8e0c0; background: #0c141acc; border-radius: 4px; pointer-events: none; display: none; z-index: 4; }
   #getApp { color: #8a9aa5; font-size: 12px; } #getApp a { color: #cfe3ee; margin-left: 8px; }
   #help { position: fixed; left: 10px; top: 8px; max-width: 30vw; font-size: 11px; color: #8a9aa5; line-height: 1.5; pointer-events: none; }
@@ -92,6 +95,7 @@
     <span id="joinLabel"></span> <code id="joinUrl"></code> <button id="joinCopy" class="mini">Copy</button>
     <div id="joinNote" style="color:#e0b060;font-size:12px;margin-top:3px"></div></div>
   <div id="players"></div>
+  <input id="heroSearch" placeholder="Search heroes…" maxlength="20">
   <div class="heroes" id="heroes"></div>
   <p><button id="start" disabled>Start</button>
     <span id="oppRow" style="margin-left:8px"><span id="oppLabel">against</span> <select id="opp">
@@ -118,14 +122,16 @@
 <div id="over" class="panel"><h1 id="ot"></h1><div id="or"></div><p><button id="rematch">Back to lobby</button></p></div>
 <button id="fs" title="Fullscreen also stops browser shortcuts like Ctrl+W (Chrome and Edge)">Fullscreen</button>
 <button id="gear" title="Settings (Esc)">⚙ Settings</button>
+<button id="spk" title="Sound (M turns it off and on)">🔊 Sound</button>
+<div id="note"></div>
 <div id="perf"></div>
-<div id="help">Right-click move/attack · A + click attack-move · S stop · Q W E R abilities (Shift or Ctrl + key, or click the icon, to level up) · D F spells · B recall · P shop · 1–6 drink the potion in that bag slot · Y camera lock · Space centre · mouse wheel zoom · T show minion targets</div>
+<div id="help">Right-click move/attack · A + click attack-move · S stop · Q W E R abilities (Shift or Ctrl + key, or click the icon, to level up) · D F spells · B recall · P shop · 1–6 drink the potion in that bag slot · Y camera lock · Space centre · mouse wheel zoom · M sound off/on · T show minion targets</div>
 <!-- The shared rule modules load first; the game's own scripts follow in order once they are in place. -->
 <script type="module">
   import * as Shop from './shared/shop.js';
   import * as Move from './shared/move.js';
   window.Shop = Shop; window.Move = Move;
-  for (const src of ['icons.js', 'predict.js', 'gfx.js', 'shop.js', 'settings-menu.js', 'client.js'])
+  for (const src of ['icons.js', 'predict.js', 'gfx.js', 'shop.js', 'settings-menu.js', 'sfx.js', 'sound.js', 'client.js'])
     await new Promise((ok, fail) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = fail; document.body.appendChild(s); });
 </script>
 </body>

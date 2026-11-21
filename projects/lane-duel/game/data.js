@@ -61,28 +61,28 @@ export const HEROES = {
 };
 
 // ---------------------------------------------------------------------------------------------
-// Gorrum, the Salvage Hulk: a grab tank. Forced movement, an empowered attack, and one ability
+// Bliknarczt, the Salvage Hulk: a grab tank. Forced movement, an empowered attack, and one ability
 // with a passive mode and an active mode.
 HEROES.gorrum = {
-  name: 'Gorrum', build: [['startershield', 'potion', 'potion'], 'heartgem', { attack: 'ironboots', ability: 'spiritboots' }, 'frostplate', 'spiritcloak', 'thornmail', 'titanheart'], dmgType: 'attack', role: 'Grab tank', color: '#c9973f',
+  name: 'Bliknarczt', build: [['startershield', 'potion', 'potion'], 'heartgem', { attack: 'ironboots', ability: 'spiritboots' }, 'frostplate', 'spiritcloak', 'thornmail', 'titanheart'], dmgType: 'attack', role: 'Grab tank', color: '#c9973f',
   hp: 600, hpPer: 109, mana: 267, manaPer: 40, ad: 62, adPer: 3.5, as: 0.625, asPer: 1.13,
   armor: 37, armorPer: 4.7, mr: 32, mrPer: 2.05, ms: 325, range: 125, melee: true,
   windup: 0.25, hpRegen: 1.5, hpRegenPer: 0.15, manaRegen: 1.7, manaRegenPer: 0.16,
   // Threshold trigger with a cooldown, checked before each hit lands. The shield is a "floor shield": it only
   // soaks the part of a hit that would take him below the threshold.
   passive: { name: 'Ballast Plating', every: 90, floor: 0.3, manaShare: 0.35, lasts: 10,
-    desc: 'When damage would take Gorrum below 30% health he gains a shield equal to 35% of his max mana for 10s. It only absorbs damage that would take him below 30%. Can happen once every 90s.',
+    desc: 'When damage would take Bliknarczt below 30% health he gains a shield equal to 35% of his max mana for 10s. It only absorbs damage that would take him below 30%. Can happen once every 90s.',
     wait: (g, h) => (h.ballastAt || 0) - g.time,
     beforeDamage(g, h, amt) {
       const floor = this.floor * h.mhp;
       if (this.wait(g, h) > 0 || h.hp - amt >= floor) return;
-      h.floorShield = { amt: this.manaShare * h.mmp, until: g.time + this.lasts, floor }; h.ballastAt = g.time + this.every;
+      h.floorShield = { amt: this.manaShare * h.mmp, until: g.time + this.lasts, floor }; h.ballastAt = g.time + this.every; g.sfx(h, 'passive');
     } },
   abilities: [
     { key: 'Q', name: 'Harpoon Line', kind: 'line', range: 1080, width: 140, speed: 1800, castTime: 0.25,
       cd: [20, 19, 18, 17, 16], cost: [100], dmg: [110, 160, 210, 260, 310], ap: 1.2,
       pullSpeed: 1700, landGap: 75, stun: 0.65, afterHit: 0.25,
-      get desc() { return `Fire a harpoon. The first enemy it hits takes ${list(this.dmg)} + ${this.ap * 100}% AP, is stunned for ${this.stun}s and is dragged to just in front of Gorrum. He cannot move or attack while the harpoon flies, or for ${this.afterHit}s after it hits.`; },
+      get desc() { return `Fire a harpoon. The first enemy it hits takes ${list(this.dmg)} + ${this.ap * 100}% AP, is stunned for ${this.stun}s and is dragged to just in front of Bliknarczt. He cannot move or attack while the harpoon flies, or for ${this.afterHit}s after it hits.`; },
       cast(g, h, r, aim) {
         const dmg = R(this.dmg, r) + this.ap * h.ap, me = this;
         g.enter(h, 0, 'hooking', this.range / this.speed, { lock: true });     // held in place while the harpoon is out
@@ -98,13 +98,13 @@ HEROES.gorrum = {
       get desc() { return `For ${this.lasts}s gain ${list(this.as)}% attack speed and ${pct(this.haste)}% move speed, the move speed fading to ${this.hasteEnd * 100}% over the first ${this.decay}s. When it ends you are slowed by ${this.slow * 100}% for ${this.slowFor}s.`; },
       cast(g, h, r) {
         g.addBuff(h, 'as', R(this.as, r), this.lasts);
-        g.addBuff(h, 'haste', R(this.haste, r), this.lasts, { to: this.hasteEnd, over: this.decay, onEnd: () => g.addBuff(h, 'slow', this.slow, this.slowFor) });
+        g.addBuff(h, 'haste', R(this.haste, r), this.lasts, { to: this.hasteEnd, over: this.decay, onEnd: () => { g.addBuff(h, 'slow', this.slow, this.slowFor); g.sfx(h, 'wEnd'); } });
       } },
     { key: 'E', name: 'Anchor Fist', kind: 'self', cd: [7, 6.5, 6, 5.5, 5], cost: [25], window: 5, adRatio: 1, ap: 0.25, knockUp: 1,
       get desc() { return `Resets your attack. Your next attack within ${this.window}s deals ${this.adRatio * 100}% AD + ${this.ap * 100}% AP bonus physical damage and knocks the enemy into the air for ${this.knockUp}s. Once that attack starts it cannot be cancelled.`; },
       cast(g, h) {
         const me = this;
-        h.emp = { until: g.time + this.window, lockWindup: true, hit(t) { g.knockUp(t, me.knockUp); return me.adRatio * h.ad + me.ap * h.ap; } };
+        h.emp = { until: g.time + this.window, lockWindup: true, hit(t) { g.knockUp(t, me.knockUp); g.sfx(h, 'eHit', t); return me.adRatio * h.ad + me.ap * h.ap; } };
         h.nextAttack = g.time;
       } },
     // Passive mode (onAttackHit + tick) only adds marks while the ability is off cooldown, so casting it switches that off.
@@ -122,7 +122,7 @@ HEROES.gorrum = {
           if (t.dead) { h.pulseMarks.delete(t); continue; }
           if (g.time < m.next) continue;
           m.next += this.markEvery; if (--m.n <= 0) h.pulseMarks.delete(t);
-          g.fx({ e: 'zap', x: h.x | 0, y: h.y | 0, x2: t.x | 0, y2: t.y | 0 });
+          g.fx({ e: 'zap', x: h.x | 0, y: h.y | 0, x2: t.x | 0, y2: t.y | 0 }); g.sfx(h, 'mark', t);
           g.damage(h, t, R(this.markDmg, r) + R(this.markAp, r) * h.ap + this.markMana * h.mmp, 'magic');
         }
       },
@@ -134,12 +134,12 @@ HEROES.gorrum = {
 };
 
 // ---------------------------------------------------------------------------------------------
-// Wren Ashby, the Wayfinder: a skillshot marksman. Cooldown refunds, mark and detonate, stacking buffs.
+// Ezrlae, the Wayfinder: a skillshot marksman. Cooldown refunds, mark and detonate, stacking buffs.
 // Every ability hit goes through `landed`, which adds a passive stack and pops her Waymark if it is there
 // (telling the mark what the ability cost, because the mark pays that back).
 const landed = (g, h, t, cost, pop = true) => { HEROES.wren.passive.gain(g, h); if (pop) g.popMark(h, t, { cost }); };
 HEROES.wren = {
-  name: 'Wren Ashby', build: [['starterblade', 'potion'], 'edge', 'hasteboots', 'duskblade', 'critblade', 'longbow', 'ruinblade'], dmgType: 'attack', role: 'Marksman', color: '#f0c05a',
+  name: 'Ezrlae', build: [['starterblade', 'potion'], 'edge', 'hasteboots', 'duskblade', 'critblade', 'longbow', 'ruinblade'], dmgType: 'attack', role: 'Marksman', color: '#f0c05a',
   hp: 600, hpPer: 102, mana: 375, manaPer: 70, ad: 60, adPer: 3.75, as: 0.625, asPer: 2.5,
   armor: 24, armorPer: 4.2, mr: 33, mrPer: 1.1, ms: 325, range: 550, melee: false,
   projSpeed: 2000, shot: 'light', windup: 0.188, hpRegen: 0.8, hpRegenPer: 0.13, manaRegen: 1.7, manaRegenPer: 0.2,
@@ -149,7 +149,7 @@ HEROES.wren = {
     count: (g, h) => (h.trail && h.trail.until > g.time ? h.trail.n : 0),
     gain(g, h) {
       const n = Math.min(this.max, this.count(g, h) + 1);
-      h.trail = { n, until: g.time + this.lasts };
+      h.trail = { n, until: g.time + this.lasts }; g.sfx(h, 'passive', h, { n });
       g.addBuff(h, 'as', n * this.per, this.lasts, { tag: 'trail' });
     } },
   abilities: [
@@ -173,7 +173,7 @@ HEROES.wren = {
         g.line(h, aim, { speed: this.speed, range: this.range, width: this.width, color: '#ffe9a0', onHit(t) {
           landed(g, h, t, 0, false);
           t.mark = { by: h.id, until: g.time + me.lasts, pop(u, via) {
-            g.fx({ e: 'burst', x: u.x, y: u.y, r: 110, c: '#ffe9a0' }); g.damage(h, u, dmg, 'magic');
+            g.fx({ e: 'burst', x: u.x, y: u.y, r: 110, c: '#ffe9a0' }); g.sfx(h, 'pop', u, via ? { n: 1 } : {}); g.damage(h, u, dmg, 'magic');
             if (via) g.restoreMana(h, me.manaBack + via.cost);
           } };
         } });
@@ -196,6 +196,7 @@ HEROES.wren = {
       dmg: [350, 600, 850], bonusAd: 1.1, ap: 1.2, minionDmg: [150, 225, 300], minionBonusAd: 1, minionAp: 1.1,
       get desc() { return `After ${this.castTime}s, send a wave of light across the whole map. It passes through everything, dealing ${list(this.dmg)} + ${this.bonusAd * 100}% bonus AD + ${this.ap * 100}% AP to heroes and ${list(this.minionDmg)} + ${this.minionBonusAd * 100}% bonus AD + ${this.minionAp * 100}% AP to minions.`; },
       cast(g, h, r, aim) {
+        g.sfx(h, 'rRelease', h, { u: 1 });
         const hero = R(this.dmg, r) + this.bonusAd * h.bonusAd + this.ap * h.ap, minion = R(this.minionDmg, r) + this.minionBonusAd * h.bonusAd + this.minionAp * h.ap;
         const cost = R(this.cost, r);
         g.line(h, aim, { speed: this.speed, range: this.reach, width: this.width, color: '#fff2c0', style: 'wave', pierce: true, onHit(t) {
@@ -206,19 +207,20 @@ HEROES.wren = {
 };
 
 // ---------------------------------------------------------------------------------------------
-// Sable Venn, the Glass Dancer: a reset assassin with no mana. Objects in the world, chain targeting, a channel.
+// Katanira, the Glass Dancer: a reset assassin with no mana. Objects in the world, chain targeting, a channel.
 // Her blades are pickups: every way of dropping one goes through dropBlade, and touching one slashes and
 // brings Moonstep most of the way back.
 const BLADE = { r: 150, life: 4, slash: 340, dmg1: 68, dmg18: 240, bonusAd: 0.6, ap: [0.7, 0.8, 0.9, 1], moonstepCut: [0.78, 0.84, 0.9, 0.96] };
 const slash = (g, h) => {
   const dmg = byLevel(BLADE.dmg1, BLADE.dmg18, h.lvl) + BLADE.bonusAd * h.bonusAd + BLADE.ap[tier(h.lvl)] * h.ap;
+  g.sfx(h, 'pickup');
   g.burst(h, h.x, h.y, BLADE.slash, '#dfe9ff', t => g.damage(h, t, dmg, 'magic'));
   const e = h.def.abilities[2];
   if (h.ranks[2] > 0) h.cds[2] -= BLADE.moonstepCut[tier(h.lvl)] * R(e.cd, h.ranks[2] - 1);
 };
-const dropBlade = (g, h, x, y, delay) => g.drop(h, x, y, delay, { kind: 'blade', r: BLADE.r, life: BLADE.life, onTake: () => slash(g, h) });
+const dropBlade = (g, h, x, y, delay) => g.drop(h, x, y, delay, { kind: 'blade', r: BLADE.r, life: BLADE.life, landSfx: 'bladeLand', onTake: () => slash(g, h) });
 HEROES.sable = {
-  name: 'Sable Venn', build: [['startershield', 'potion', 'potion'], 'codex', 'casterboots', 'hexblade', 'emberorb', 'voidstaff', 'doomstaff'], dmgType: 'ability', role: 'Assassin', color: '#b9c8ec',
+  name: 'Katanira', build: [['startershield', 'potion', 'potion'], 'codex', 'casterboots', 'hexblade', 'emberorb', 'voidstaff', 'doomstaff'], dmgType: 'ability', role: 'Assassin', color: '#b9c8ec',
   manaless: true, mana: 0, manaPer: 0, manaRegen: 0,
   hp: 672, hpPer: 108, ad: 58, adPer: 3.2, as: 0.658, asPer: 2.74,
   armor: 32, armorPer: 4.7, mr: 32, mrPer: 2.05, ms: 335, range: 125, melee: true,
@@ -244,7 +246,7 @@ HEROES.sable = {
         const targets = g.chain(h, first, 1 + this.bounces, this.hop);
         const fly = (src, i) => g.homing(h, src.x, src.y, targets[i], this.bladeSpeed, '#dfe9ff', () => {
           if (i === 0) { const dx = first.x - from.x, dy = first.y - from.y, d = Math.hypot(dx, dy) || 1; dropBlade(g, h, first.x + dx / d * me.bladePast, first.y + dy / d * me.bladePast, me.bladeDelay); }
-          g.damage(h, targets[i], dmg, 'magic'); if (i + 1 < targets.length) fly(targets[i], i + 1);
+          g.sfx(h, 'bounce', targets[i], { n: i + 1 }); g.damage(h, targets[i], dmg, 'magic'); if (i + 1 < targets.length) fly(targets[i], i + 1);
         }, 'blade');
         fly(h, 0);
       } },
@@ -271,7 +273,7 @@ HEROES.sable = {
         if (t.dead) return;
         const dx = h.x - t.x, dy = h.y - t.y, d = Math.hypot(dx, dy) || 1, gap = t.radius + h.radius * 0.6;
         g.blink(h, t.x + dx / d * gap, t.y + dy / d * gap);
-        if (t.team !== h.team) { g.damage(h, t, R(this.dmg, r) + this.adRatio * h.ad + this.ap * h.ap, 'magic'); h.order = t.dead ? null : { type: 'atk', id: t.id }; }
+        if (t.team !== h.team) { g.sfx(h, 'eHit', t); g.damage(h, t, R(this.dmg, r) + this.adRatio * h.ad + this.ap * h.ap, 'magic'); h.order = t.dead ? null : { type: 'atk', id: t.id }; }
         if (!t.dead) h.nextAttack = g.time;
       } },
     // Channel: a locked state that ticks on a timer. A stun or knock-up ends the state, and so the channel.
@@ -282,7 +284,7 @@ HEROES.sable = {
       cast(g, h) { g.enter(h, 3, 'channel', this.lasts, { lock: true, stopEnds: true, every: this.every, thrown: 0 }); },
       onTick(g, h, st) {
         if (st.thrown >= this.blades) return;          // exactly `blades` volleys per channel: at 0s, then every `every` seconds
-        st.thrown++;
+        st.thrown++; g.sfx(h, 'rBlade');
         const r = h.ranks[3] - 1, magic = R(this.dmg, r) + this.ap * h.ap;
         const phys = h.bonusAd * (this.bonusAd + this.bonusAdPerAs * Math.max(0, g.atkSpeed(h) / h.def.as - 1));
         const near = [...g.heroes.values()].filter(u => g.targetable(h, u) && g.dist(h, u) <= this.radius + u.radius)
@@ -293,10 +295,10 @@ HEROES.sable = {
 };
 
 // ---------------------------------------------------------------------------------------------
-// Kessa is built from two shared pieces in sim.js: g.strike (telegraph -> delay -> resolve) and the ability
+// Xerhta is built from two shared pieces in sim.js: g.strike (telegraph -> delay -> resolve) and the ability
 // state machine (g.enter / g.leave). Each ability below is one of those, or both, with different numbers.
 HEROES.kessa = {
-  name: 'Kessa', build: [['starterring', 'potion', 'potion'], 'spellbook', 'crown', 'casterboots', 'voidstaff', 'doomstaff', 'emberorb'], dmgType: 'ability', role: 'Artillery', color: '#6fb6e8',
+  name: 'Xerhta', build: [['starterring', 'potion', 'potion'], 'spellbook', 'crown', 'casterboots', 'voidstaff', 'doomstaff', 'emberorb'], dmgType: 'ability', role: 'Artillery', color: '#6fb6e8',
   hp: 575, hpPer: 106, mana: 400, manaPer: 22, ad: 55, adPer: 3, as: 0.658, asPer: 1.36,
   armor: 22, armorPer: 4.7, mr: 30, mrPer: 1.3, ms: 340, range: 525, melee: false,
   projSpeed: 1500, shot: 'orb', windup: 0.2, hpRegen: 1.1, hpRegenPer: 0.11, manaRegen: 1.37, manaRegenPer: 0.16,
@@ -307,7 +309,7 @@ HEROES.kessa = {
     onAttack(g, h, t) {
       if (this.wait(g, h) > 0) return;
       const n = Math.round(byLevel(this.mana1, this.mana18, h.lvl) * (t.type === 'hero' ? this.heroMult : 1));
-      g.restoreMana(h, n); h.surgeAt = g.time + this.every; g.fx({ e: 'mana', x: Math.round(h.x), y: Math.round(h.y), n, p: h.pid });
+      g.restoreMana(h, n); h.surgeAt = g.time + this.every; g.sfx(h, 'passive'); g.fx({ e: 'mana', x: Math.round(h.x), y: Math.round(h.y), n, p: h.pid });
     },
     onKill(g, h) { if (this.wait(g, h) > 0) h.surgeAt -= this.perKill; } },
   abilities: [
@@ -339,7 +341,8 @@ HEROES.kessa = {
       cast(g, h, r, aim) {
         const dmg = R(this.dmg, r) + this.ap * h.ap, me = this;
         g.line(h, aim, { speed: this.speed, range: this.range, width: this.width, color: '#dff2ff', onHit(t, shot) {
-          g.damage(h, t, dmg, 'magic'); g.stun(t, lerp(me.stunMin, me.stunMax, shot.dist / me.range));
+          const stun = lerp(me.stunMin, me.stunMax, shot.dist / me.range);
+          g.damage(h, t, dmg, 'magic'); g.stun(t, stun); g.sfx(h, 'stun', t, { n: +stun.toFixed(2) });
         } });
       } },
     // IDLE -> BARRAGE. Each recast while in the state is one more W-style strike; the state ends when the
@@ -350,15 +353,17 @@ HEROES.kessa = {
       get desc() { return `Root yourself for up to ${this.lasts}s and gain ${list(this.shots)} shots with ${this.range[0]} range. From ${this.firstShotAfter}s in, press R again to drop each one at the cursor: after ${this.delay}s it hits an area for ${list(this.dmg)} + ${this.ap * 100}% AP. Each hero hit makes your later shots deal ${list(this.stackDmg)} + ${this.stackAp * 100}% AP more (up to ${list(this.maxStacks)} times). A shot landing near an enemy hero reveals you. Press S to end early; if you fire nothing, half the cooldown is refunded.`; },
       cast(g, h, r) {
         g.enter(h, 3, 'barrage', this.lasts, { lock: true, stopEnds: true, shots: R(this.shots, r), fired: 0, stacks: 0, next: g.time + this.firstShotAfter, range: R(this.range, r) });
+        g.sfx(h, 'rStart', h, { u: 1, d: this.lasts });
       },
       recast(g, h, r, aim, st) {
         if (g.time < st.next) return;
         const d = Math.min(st.range, Math.hypot(aim.x - h.x, aim.y - h.y)), x = h.x + aim.dx * d, y = h.y + aim.dy * d, me = this;
         const dmg = R(this.dmg, r) + this.ap * h.ap + st.stacks * (R(this.stackDmg, r) + this.stackAp * h.ap);   // stacks earned so far; this shot's own hits count for later ones
-        g.strike(h, { x, y, r: this.radius, delay: this.delay, color: '#8fd0ff',
+        g.sfx(h, 'rShot', h, { u: 1, n: st.fired + 1 });
+        g.strike(h, { x, y, r: this.radius, delay: this.delay, color: '#8fd0ff', n: st.stacks + 1,   // n: the client makes the boom bigger with each stack
           onLand() { if ([...g.heroes.values()].some(o => o.team !== h.team && !o.dead && Math.hypot(o.x - x, o.y - y) <= me.revealNear)) h.revealUntil = g.time + g.rules.revealFor; },
           onHit(t) { g.damage(h, t, dmg, 'magic'); if (t.type === 'hero') st.stacks = Math.min(R(me.maxStacks, r), st.stacks + 1); } });
-        h.face = Math.atan2(aim.dy, aim.dx); g.fx({ e: 'cast', id: h.id, s: 3, d: 0 });
+        h.face = Math.atan2(aim.dy, aim.dx); g.fx({ e: 'cast', id: h.id, s: 3, d: 0, re: 1 });   // re: a recast (it animates the hero; the shot has its own sound)
         st.next = g.time + this.between; st.fired++;
         if (--st.shots <= 0) g.leave(h, 'done');
       },
