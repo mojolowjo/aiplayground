@@ -27,8 +27,8 @@ const rejects = async (p, re) => { try { await p; } catch (e) { assert(re.test(e
   const ips = new PerIp(2); assert.deepEqual([ips.add('a'), ips.add('a'), ips.add('a'), ips.add('b')], [true, true, false, true], 'connections are capped per address');
   ips.remove('a'); assert(ips.add('a'), 'a slot frees up when one closes'); ips.remove('b'); assert(!ips.n.has('b'));
   assert(plainIp('::ffff:1.2.3.4') === '1.2.3.4' && isThisMachine('::ffff:127.0.0.1') && isThisMachine('::1') && !isThisMachine('203.0.113.9'));
-  const files = staticFiles(fileURLToPath(new URL('../public', import.meta.url)));
-  assert(files.has('/') && files.has('/client.js') && files.has('/predict.js') && !files.has('/../server.js') && [...files.keys()].every(k => /^\/[\w.-]*$/.test(k)), 'only the files in public/ are on the list');
+  const files = staticFiles(fileURLToPath(new URL('../public', import.meta.url)), { '/shared': fileURLToPath(new URL('../shared', import.meta.url)) });
+  assert(files.has('/') && files.has('/client.js') && files.has('/predict.js') && files.has('/shared/shop.js') && !files.has('/../server.js') && [...files.keys()].every(k => /^\/(shared\/)?[\w.-]*$/.test(k)), 'only the files in public/ and shared/ are on the list');
   assert.deepEqual(['8.8.8.8', '203.0.113.7', '192.168.1.1', '10.0.0.1', '172.20.1.1', '100.64.0.1', '127.0.0.1', 'nonsense'].map(isPublicAddress), [true, true, false, false, false, false, false, false]);
   console.log('limits ok');
 }
@@ -175,6 +175,8 @@ const connect = port => new Promise((res, rej) => { const ws = new WebSocket(`ws
   // only the game's own files
   const page = await get(s.port, '/'); assert(page.status === 200 && /text\/html/.test(page.type) && /<canvas/.test(page.body));
   assert.equal((await get(s.port, '/client.js')).status, 200); assert.equal((await get(s.port, '/predict.js?v=1')).status, 200);
+  const shared = await get(s.port, '/shared/shop.js'); assert(shared.status === 200 && /javascript/.test(shared.type) && /export function plan/.test(shared.body), 'the shared rule modules are served');
+  for (const path of ['/shared', '/shared/', '/shared/../server.js', '/shared/%2e%2e/game/sim.js', '/game/data.js', '/net/guard.js', '/test/net.js', '/package.json']) assert.equal((await get(s.port, path)).status, 404, path + ' is not served');
   for (const path of ['/../server.js', '/%2e%2e/server.js', '/..%2fserver.js', '/game/sim.js', '/server.js', '/public', '/public/', '/nope.js', '/%zz', '/.', '//client.js', '/index.html/'])
     assert.equal((await get(s.port, path)).status, 404, path + ' is not served');
   assert.equal((await get(s.port, '/', 'POST')).status, 405);

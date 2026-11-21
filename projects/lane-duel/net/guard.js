@@ -46,12 +46,15 @@ export function lanAddress() {
 }
 
 // The files the web server will hand out: exactly the regular files sitting directly in `dir`, read once
-// at start. Anything else, including "..", sub-folders and the folder itself, is simply not on the list.
-export function staticFiles(dir) {
+// at start, plus those directly in each mounted folder (mounts = { '/shared': folder }) under that prefix.
+// Anything else, including "..", deeper sub-folders and the folders themselves, is simply not on the list.
+export function staticFiles(dir, mounts = {}) {
   const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
   const files = new Map();
   for (const e of fs.readdirSync(dir, { withFileTypes: true }))
     if (e.isFile() && types[path.extname(e.name)]) files.set('/' + e.name, { file: path.join(dir, e.name), type: types[path.extname(e.name)] });
+  for (const [prefix, folder] of Object.entries(mounts)) for (const e of fs.readdirSync(folder, { withFileTypes: true }))
+    if (e.isFile() && path.extname(e.name) === '.js') files.set(`${prefix}/${e.name}`, { file: path.join(folder, e.name), type: types['.js'] });
   if (files.has('/index.html')) files.set('/', files.get('/index.html'));
   return files;
 }

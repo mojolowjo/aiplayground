@@ -66,6 +66,27 @@ The stats panel shows your CS and missed CS, and **T** draws each minion's targe
 - Heroes cannot walk through minions; a wave in the way has to be walked around. Blinks and
   dashes pass through.
 
+## Items
+
+Items come in three tiers that build into each other: cheap **parts** with one stat, **mid items**
+made from one or two parts plus a fee, and **finished items** made from two or three of those,
+with bigger stats and usually a passive effect. There are also upgraded boots (one pair at a
+time), starter items for the first few minutes (one at a time), and potions and a refillable
+flask that you carry and drink yourself.
+
+- **Buying uses what you own.** The price of an item is its total price minus the full price of
+  every part of it already in your bag, at any depth. Those parts are used up, so the purchase
+  fits even in a full bag. Missing parts are bought along with it.
+- **Recommended tab.** Each character has a build laid out left to right; the next step you
+  don't have is highlighted.
+- **Undo** takes back buys and sells, newest first, until you leave base, deal or take damage,
+  cast an ability, drink something or die.
+- **New stats:** ability haste (shorter ability cooldowns), crit chance (basic attacks only,
+  dealt from a shuffled deck so 25% is exactly 5 crits in every 20 attacks), lifesteal, armor
+  pen, magic pen, tenacity (shorter stuns, roots, silences and slows) and healing received.
+
+All item data is in `ITEMS` in `game/data.js`.
+
 ## Play over the internet
 
 ### Host from home (the usual way)
@@ -143,7 +164,7 @@ Everyone lands in the same room. Add `?room=anything` to the address to use a se
 Because the server is reachable from the internet, it limits what one visitor can do: messages
 over 2 KB close the connection, as does sending more than 60 messages a second (after a burst of
 120); one address can hold 8 connections; there can be 50 rooms. Malformed messages are ignored.
-Only the files in `public/` are served. The limits are in `net/guard.js`.
+Only the files in `public/` and `shared/` are served. The limits are in `net/guard.js`.
 
 ## Controls
 
@@ -156,7 +177,9 @@ Only the files in `public/` are served. The limits are in `net/guard.js`.
 | Shift or Ctrl + Q/W/E/R, or click the icon | Spend a skill point |
 | D / F | Blink / Mend (the lobby has a button to swap them; the choice is remembered) |
 | B | Recall to base (8s, cancelled by damage or orders) |
-| P | Shop (buy at base or while dead). Standing at base with it open, click an item in your bag to sell it for 70% of its price |
+| P | Shop. Buying works at base or while dead: left-click an item to see it, right-click to buy it. Standing at base with the shop open, click an item in your bag to sell it for 70% |
+| Ctrl+Z (shop open) | Undo the last buy or sell |
+| 1–6 | Drink the potion or flask in that bag slot |
 | Y / Space | Toggle camera lock / centre on your character |
 | T | Show what each minion is targeting (practice aid) |
 | F8 | Debug: show where the server has your hero, next to where your screen predicts it |
@@ -192,7 +215,10 @@ too. Hold Esc to leave fullscreen. Firefox and Safari do not support this part.
   | Gorrum | Forced movement, an empowered attack, an ability with a passive and an active mode |
   | Wren Ashby | Cooldown refunds, mark and detonate, stacking buffs |
   | Sable Venn | Objects in the world, chain targeting, an interruptible channel |
+- `shared/shop.js` — shop rules (what a purchase costs and uses up) used by both the server and the
+  browser, so the price you are shown is the price you are charged.
 - `public/client.js` — networking, input, HUD and the frame loop.
+- `public/shop.js` — the shop screen and the bag.
 - `public/predict.js` — moves your own hero on your screen the moment you click, using the server's
   movement rules, then reconciles with each snapshot. Only movement is predicted; the server stays
   the authority on everything.

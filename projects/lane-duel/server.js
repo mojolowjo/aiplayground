@@ -24,9 +24,10 @@ const PORT = +process.env.PORT || 3000;
 const UPNP = !['off', '0', 'false', 'no'].includes(String(process.env.UPNP ?? 'on').trim().toLowerCase());
 const UPNP_LEASE = 3600;                               // seconds; renewed at half time for as long as the server runs
 const DUCK_EVERY = 300;                                // seconds between DuckDNS updates
-const FILES = staticFiles(path.join(path.dirname(fileURLToPath(import.meta.url)), 'public'));
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const FILES = staticFiles(path.join(HERE, 'public'), { '/shared': path.join(HERE, 'shared') });   // shared/ holds rules the browser runs too
 
-// Only the game's own files are served: a fixed list read at start, GET and HEAD only.
+// Only the game's own files are served (public/ and shared/): a fixed list read at start, GET and HEAD only.
 const server = http.createServer((req, res) => {
   let rel = null; try { rel = decodeURIComponent(String(req.url).split('?')[0]); } catch { /* bad escape: not a file */ }
   const hit = (req.method === 'GET' || req.method === 'HEAD') && FILES.get(rel);
@@ -64,7 +65,7 @@ function start(room, opp) {
   for (const team of ['blue', 'red']) while (ps.filter(p => p.team === team).length < sizeOf(room))
     ps.push({ id: botId--, team, hero: keys[Math.random() * keys.length | 0],
       name: opp === 'dummy' ? 'Dummy' : `Bot (${opp})`, bot: true, ai: opp === 'dummy' ? null : opp });
-  room.game = new Game(ps);
+  room.game = new Game(ps, { seed: (Math.random() * 2 ** 32) >>> 0 });   // a fresh seed per match; the match itself never calls Math.random
   clearInterval(room.timer);
   let last = performance.now(), acc = 0;
   room.timer = setInterval(() => {

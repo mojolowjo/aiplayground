@@ -1,9 +1,11 @@
 // Headless rules check: runs the simulation directly, no network.
 import assert from 'node:assert';
-import { Game, TICK, MAP, WAVES, MINION, RULES } from '../game/sim.js';
-import { HEROES } from '../game/data.js';
+import { Game, TICK, MAP, WAVES, MINION, RULES, ITEM } from '../game/sim.js';
+import { plan, missing, describe, buildsInto, BAG_SLOTS } from '../shared/shop.js';
+import { HEROES, ITEMS } from '../game/data.js';
 import fs from 'node:fs';
 
+const bag = h => h.items.map(s => s.id);            // the ids in a hero's bag, in slot order
 const run = (g, secs) => { for (let i = 0; i < secs * TICK; i++) g.step(); };
 // Most checks stage their scene on open ground on blue's side of the lane, which is where the blue inner
 // tower stands. Those games are built without the inner towers; pass `true` to keep them.
@@ -419,9 +421,9 @@ const duel = (a, b = 'oriel') => {
 {
   const g = mk('wren', 'oriel'), h = g.heroes.get(1); h.gold = 2000;
   g.command(1, { c: 'buy', item: 'greatblade' }); g.command(1, { c: 'buy', item: 'gem' });
-  const ad = h.ad, mhp = h.mhp, gold = h.gold; assert.deepEqual(h.items, ['greatblade', 'gem']);
+  const ad = h.ad, mhp = h.mhp, gold = h.gold; assert.deepEqual(bag(h), ['greatblade', 'gem']);
   g.command(1, { c: 'sell', i: 0 });
-  assert.deepEqual(h.items, ['gem']); assert.equal(h.gold, gold + 910); assert.equal(h.ad, ad - 40, 'selling returns 70% and removes the stats');
+  assert.deepEqual(bag(h), ['gem']); assert.equal(h.gold, gold + 910); assert.equal(h.ad, ad - 40, 'selling returns 70% and removes the stats');
   g.command(1, { c: 'sell', i: 5 }); assert.equal(h.items.length, 1, 'an empty slot sells nothing');
   h.x = 5000; g.command(1, { c: 'sell', i: 0 }); assert.equal(h.items.length, 1, 'no selling away from base');
   h.x = MAP.spawn.blue.x; h.dead = true; g.command(1, { c: 'sell', i: 0 }); assert.equal(h.items.length, 1, 'no selling while dead, though buying still works');
@@ -474,7 +476,7 @@ const duel = (a, b = 'oriel') => {
   assert.deepEqual([S.SPELLS.d.cd, S.SPELLS.d.range, S.SPELLS.f.cd], [300, 400, 240]);
   for (const [lvl, heal] of [[1, 80], [18, 318], [6, 80 + 238 * 5 / 17]]) { k.lvl = lvl; g3.refresh(k); k.hp = 1; k.spellCds.f = 0; g3.command(1, { c: 'spell', s: 'f' }); assert(near(k.hp, 1 + heal), `Mend at level ${lvl}`); }
   assert.deepEqual(['tome', 'staff', 'dagger', 'crystal', 'cloak'].map(i => [I[i].cost, Object.values(I[i].stats)[0]]), [[400, 20], [1200, 65], [250, 10], [300, 300], [400, 20]]);
-  k.x = MAP.spawn.blue.x; k.hp = 100; k.hpRegen = 0; k.gold = 50; g3.command(1, { c: 'buy', item: 'potion' }); k.x = 3000; run(g3, 15.2);
+  k.x = MAP.spawn.blue.x; k.hp = 100; k.hpRegen = 0; k.gold = 50; g3.command(1, { c: 'buy', item: 'potion' }); k.hpRegen = 0; k.x = 3000; g3.command(1, { c: 'use', i: 0 }); run(g3, 15.2);
   assert(near(k.hp, 220, 0.01), 'a potion restores 120 health over 15s: ' + k.hp.toFixed(1));
   console.log('shared systems ok');
 }
@@ -516,5 +518,172 @@ const duel = (a, b = 'oriel') => {
   { const g = mk('wren', 'gorrum'), h = g.heroes.get(1), flags = () => { const u = g.snapshot(1).units.find(u => u.id === h.id); return [u.nm, u.fm, u.gh]; };
     assert.deepEqual(flags(), [0, 0, 0]); g.stun(h, 1); assert.deepEqual(flags(), [1, 0, 0]); h.stunUntil = 0; g.shove(h, 100, 0, 0.5); assert.deepEqual(flags(), [1, 1, 0]); }
   console.log('prediction ok');
+}
+// 16. Items: recipes and prices, undo, limits, potions, the new stats, every passive, and the bot's shopping
+{
+  const shopper = (hero = 'wren', foe = 'oriel') => { const g = mk(hero, foe), h = g.heroes.get(1), e = g.heroes.get(2); g.nextWave = Infinity; h.gold = 20000; e.hpRegen = 0; h.hpRegen = 0; e.x = 3300; e.y = 800; return { g, h, e }; };
+  const buy = (g, ...ids) => ids.map(id => g.command(1, { c: 'buy', item: id }));
+  const wear = (g, h, ...ids) => { h.items = ids; g.refresh(h); h.hp = h.mhp; h.mp = h.mmp; };
+  const fight = (g, h, e, dx = 200) => { h.x = 3000; e.x = 3000 + dx; h.y = e.y = 800; e.hp = e.mhp = 5000; h.hp = h.mhp; e.buffs = []; h.buffs = []; e.burn = null; };
+
+  // data: every recipe adds up, every id is unique, every recipe part exists
+  for (const it of ITEMS) if (it.recipe) assert.equal(it.cost, it.recipe.reduce((n, id) => n + ITEM[id].cost, 0) + it.fee, `${it.name}: total price = parts + fee`);
+  assert.equal(new Set(ITEMS.map(i => i.id)).size, ITEMS.length); assert(ITEMS.every(i => (i.recipe || []).every(id => ITEM[id]) && i.name && i.cat && i.tier));
+  assert(['blade', 'tome', 'dagger', 'gem', 'crystal', 'plating', 'cloak', 'boots', 'greatblade', 'staff', 'potion'].every(id => ITEM[id]), 'the old item ids are all still there');
+  assert(ITEMS.filter(i => i.tier === 'finished').every(i => i.cost >= 2500 && i.cost <= 3500) && ITEMS.filter(i => i.tier === 'finished').length === 14);
+
+  // recipe pricing: the Crown example
+  { const { g, h } = shopper(); wear(g, h, 'spellbook', 'tome'); h.gold = 1300;
+    assert.deepEqual(plan(ITEM, h.items, 'crown'), { ok: true, why: '', price: 1300, used: [0, 1], stack: -1 });
+    buy(g, 'crown'); assert.deepEqual(bag(h), ['crown']); assert.equal(h.gold, 0, 'Crown: 2900 - 1200 (Spellbook) - 400 (Tome, a part of Codex) = 1300, both used up, one slot');
+    h.gold = 1299; wear(g, h, 'spellbook', 'tome'); buy(g, 'crown'); assert.deepEqual(bag(h), ['spellbook', 'tome'], 'one gold short: nothing happens'); assert.equal(h.gold, 1299); }
+  // nothing owned: full price and one free slot
+  { const { g, h } = shopper(); h.gold = 2900; buy(g, 'crown'); assert.deepEqual(bag(h), ['crown']); assert.equal(h.gold, 0, 'bought from nothing: the full 2900');
+    wear(g, h, 'gem', 'gem', 'gem', 'gem', 'gem', 'cloak'); h.gold = 9000; buy(g, 'crown'); assert.equal(h.items.length, 6); assert.equal(h.gold, 9000, 'a full bag with no parts of it: refused');
+    // ...but a full bag can still buy something that uses up an owned part
+    wear(g, h, 'gem', 'gem', 'gem', 'blade', 'gem', 'cloak'); buy(g, 'leechblade'); assert.deepEqual(bag(h), ['gem', 'gem', 'gem', 'leechblade', 'gem', 'cloak']); assert.equal(h.gold, 9000 - 550, 'it takes the part\'s slot and costs only the fee'); }
+  // deep recipes: parts of parts are used, missing parts are bought in the same purchase
+  { const { g, h } = shopper(); wear(g, h, 'blade', 'dagger', 'dagger'); h.gold = 5000; buy(g, 'ruinblade');
+    assert.deepEqual(bag(h), ['ruinblade']); assert.equal(h.gold, 5000 - (3200 - 350 - 250 - 250));
+    assert.deepEqual(missing(ITEM, [{ id: 'spellbook', n: 1 }], 'crown'), ['codex', 'tome', 'gear']); assert.deepEqual(buildsInto(ITEMS, 'codex').map(i => i.id), ['crown', 'emberorb', 'hexblade']);
+    assert.deepEqual(describe(ITEM.crown), ['+90 ability power', '+300 mana', '+20 ability haste', 'Passive – Overflow: gain ability power equal to 2% of max mana.']); }
+  // shopping only at base or while dead
+  { const { g, h } = shopper(); h.x = 5000; buy(g, 'blade'); assert.equal(h.items.length, 0, 'no buying in lane'); h.dead = true; buy(g, 'blade'); assert.equal(h.items.length, 1, 'buying while dead works'); }
+
+  // undo: several steps, newest first, exact gold and bag; a sale is taken back at full value
+  { const { g, h } = shopper(); h.gold = 3000; const states = [[[], 3000]];
+    const act = c => { g.command(1, c); states.push([bag(h), h.gold]); };
+    act({ c: 'buy', item: 'blade' }); act({ c: 'buy', item: 'gear' }); act({ c: 'buy', item: 'edge' }); act({ c: 'sell', i: 0 }); act({ c: 'buy', item: 'potion' }); act({ c: 'buy', item: 'potion' });
+    assert.deepEqual(states.map(x => x[1]), [3000, 2650, 2350, 1900, 1900 + 770, 2620, 2570]); assert.deepEqual(states.at(-1)[0], ['potion']); assert.equal(h.items[0].n, 2);
+    for (let i = states.length - 2; i >= 0; i--) { g.command(1, { c: 'undo' }); assert.deepEqual([bag(h), h.gold], states[i], `undo back to step ${i}`); }
+    g.command(1, { c: 'undo' }); assert.deepEqual([bag(h), h.gold], [[], 3000], 'nothing left to undo'); assert.equal(h.ad, HEROES.wren.ad, 'and the stats went back too');
+    const cleared = (what, how) => { h.x = MAP.spawn.blue.x; h.dead = false; h.gold = 3000; h.items = []; g.refresh(h); h.hp = h.mhp; buy(g, 'blade'); assert.equal(h.undo.length, 1); how(); g.command(1, { c: 'undo' }); assert.deepEqual(bag(h), ['blade'], 'undo history is cleared by ' + what); };
+    const e = g.heroes.get(2);
+    cleared('leaving base', () => { h.x = 3000; g.step(); h.x = MAP.spawn.blue.x; }); cleared('taking damage', () => g.damage(e, h, 5, 'true')); cleared('dealing damage', () => g.damage(h, e, 5, 'true'));
+    cleared('casting an ability', () => { h.ranks[0] = 1; h.cds[0] = 0; g.command(1, { c: 'cast', s: 0, x: 9000, y: 800 }); }); cleared('dying', () => { g.kill(null, h); h.dead = false; h.respawnAt = 0; });
+    cleared('drinking', () => { buy(g, 'potion'); g.command(1, { c: 'use', i: 1 }); }); }
+
+  // limits: one pair of boots, one starter, one flask; an upgrade of what you have is fine; passives are unique
+  { const { g, h } = shopper(); buy(g, 'boots', 'boots'); assert.deepEqual(bag(h), ['boots'], 'a second pair of boots is refused'); wear(g, h, 'boots', 'gem'); buy(g, 'swiftboots'); assert.deepEqual(bag(h), ['swiftboots', 'gem'], 'Boots -> Swift Boots is allowed');
+    wear(g, h, 'boots'); buy(g, 'hasteboots'); assert.deepEqual(bag(h), ['hasteboots'], 'upgrading Boots uses them up, so it is allowed'); buy(g, 'boots', 'ironboots'); assert.deepEqual(bag(h), ['hasteboots']);
+    buy(g, 'starterblade', 'starterring', 'starterblade'); assert.deepEqual(bag(h), ['hasteboots', 'starterblade'], 'one starter only');
+    buy(g, 'flask', 'flask'); assert.deepEqual(bag(h), ['hasteboots', 'starterblade', 'flask'], 'one flask only'); assert.equal(h.items[2].n, 3);
+    wear(g, h, 'doomstaff', 'doomstaff'); assert(near(h.ap, 240 * 1.3), 'two copies: the stats twice, the passive once'); wear(g, h, 'voidstaff', 'voidstaff'); assert.equal(h.magicPenPct, 35); }
+
+  // potions and the flask: carried, stacked, drunk with the slot key
+  { const { g, h } = shopper(); h.hp = 100; buy(g, 'potion', 'potion', 'potion', 'potion', 'potion', 'potion'); h.x = 3000; h.hpRegen = 0;
+    assert.deepEqual(h.items, [{ id: 'potion', n: 5 }], 'potions stack to 5 in one slot; the sixth is refused'); assert.equal(h.gold, 20000 - 250); run(g, 3); assert.equal(h.hp, 100, 'a potion is not drunk when bought');
+    g.command(1, { c: 'use', i: 3 }); g.command(1, { c: 'use', i: 0 }); assert.equal(h.items[0].n, 4); run(g, 7.5); assert(near(h.hp, 160, 0.01), 'half the potion after 7.5s'); run(g, 7.6); assert(near(h.hp, 220, 0.01), 'a potion heals 120 over 15s');
+    g.command(1, { c: 'use', i: 0 }); g.command(1, { c: 'use', i: 0 }); run(g, 15.1); assert(near(h.hp, 340, 0.01), 'a second drink waits its turn'); run(g, 15); assert(near(h.hp, 460, 0.01)); assert.equal(h.items[0].n, 2);
+    g.command(1, { c: 'use', i: 0 }); g.command(1, { c: 'use', i: 0 }); assert.equal(h.items.length, 0, 'the slot empties with the last potion'); run(g, 31); h.hp = 100;
+    h.x = MAP.spawn.blue.x; buy(g, 'flask', 'blade'); h.x = 3000; h.hpRegen = 0; g.step(); for (let i = 0; i < 4; i++) g.command(1, { c: 'use', i: 0 }); g.command(1, { c: 'use', i: 1 });
+    assert.deepEqual(h.items, [{ id: 'flask', n: 0 }, { id: 'blade', n: 1 }], 'three charges; empty, it stays in the bag; other items cannot be drunk'); const hp = h.hp; run(g, 36.1); assert(near(h.hp - hp, 300, 0.01), 'each charge heals 100 over 12s');
+    h.x = MAP.spawn.blue.x; g.step(); assert.equal(h.items[0].n, 3, 'the flask refills at base');
+    const before = h.gold; g.command(1, { c: 'sell', i: 0 }); assert.equal(h.gold, before + 105, 'the flask sells for 70% of 150'); buy(g, 'potion', 'potion'); const gold = h.gold; g.command(1, { c: 'sell', i: 1 }); assert(h.gold === gold + 35 && h.items[1].n === 1, 'potions sell one at a time for 70%'); }
+
+  // haste
+  { const { g, h } = shopper('oriel'); wear(g, h, 'edge', 'codex'); assert.equal(h.haste, 20); g.command(1, { c: 'lvl', s: 1 }); h.x = 3000; g.command(1, { c: 'cast', s: 1, x: 3500, y: 800 });
+    assert(near(h.cds[1] - g.time, 10 * 100 / 120, 1e-9), '20 haste turns a 10s cooldown into 8.33s: ' + (h.cds[1] - g.time).toFixed(3));
+    const cd = HEROES.oriel.abilities[1].cd[0]; assert.equal(cd, 10); run(g, 0.3); g.command(1, { c: 'spell', s: 'd', x: 3100, y: 800 }); assert(near(h.spellCds.d - g.time, 300), 'summoner spells are not affected');
+    wear(g, h, 'crown', 'hasteboots', 'emberorb', 'spellbook', 'codex', 'heartgem'); assert.equal(h.haste, 20 + 15 + 15 + 10 + 10 + 10); }
+
+  // crit: dealt from a deck, so 25% is exactly 5 in 20, and the same seed gives the same order
+  { const crits = seed => { const g = new Game([{ id: 1, team: 'blue', hero: 'wren', name: 'A' }, { id: 2, team: 'red', hero: 'oriel', name: 'B' }], { seed }), h = g.heroes.get(1), e = g.heroes.get(2); g.nextWave = Infinity;
+      h.items = ['critblade']; g.refresh(h); e.mhp = e.hp = 1e6; e.armor = 0; const out = [];
+      for (let i = 0; i < 60; i++) { g.events = []; const hp = e.hp; g.attackHit(h, e); const crit = g.events.some(ev => ev.e === 'dmg' && ev.cr); out.push(crit ? 1 : 0); assert(near(hp - e.hp, h.ad * (crit ? 2.15 : 1)), 'a crit multiplies the attack by critDmg (Keen: 215%)'); }
+      return out; };
+    const a = crits(7), b = crits(7), c = crits(8), sum = x => x.reduce((n, v) => n + v, 0);
+    assert.equal(ITEM.critblade.stats.crit, 25); assert.deepEqual([sum(a.slice(0, 20)), sum(a.slice(20, 40)), sum(a.slice(40))], [5, 5, 5], 'exactly 5 crits in every 20 attacks');
+    assert.deepEqual(a, b, 'the same seed gives the same order'); assert.notDeepEqual(a, c, 'another seed gives another');
+    const { g, h, e } = shopper(); wear(g, h, 'cape'); e.mhp = e.hp = 1e6; e.armor = 0; g.events = []; for (let i = 0; i < 20; i++) g.attackHit(h, e);
+    assert.equal(g.events.filter(ev => ev.cr).length, 3, '15% crit: 3 cards in 20'); assert(near(1e6 - e.hp, h.ad * (17 + 3 * 1.75)), 'without Keen a crit is 175%');
+    wear(g, h, 'cape', 'swiftcape', 'critblade', 'longbow', 'stormbow'); assert.equal(h.crit, 100, 'crit chance is capped at 100%'); g.events = []; g.attackHit(h, e); assert(g.events.some(ev => ev.cr));
+    h.ranks[0] = 1; wear(g, h, 'critblade'); const hp = e.hp; g.damage(h, e, 100, 'phys'); assert.equal(hp - e.hp, 100, 'abilities never crit'); }
+
+  // lifesteal, armor pen, magic pen: the worked examples
+  { const { g, h, e } = shopper(); wear(g, h, 'leechblade'); fight(g, h, e); e.armor = 100; h.hp = 200; g.attackHit(h, e);
+    const dealt = 5000 - e.hp; assert(near(dealt, h.ad / 2) && near(h.hp - 200, dealt * 0.07), 'lifesteal heals 7% of the damage dealt after armor');
+    e.shieldAmt = 10; e.shieldUntil = g.time + 5; h.hp = 200; g.attackHit(h, e); assert(near(h.hp - 200, (h.ad / 2 - 10) * 0.07), 'and after shields');
+    h.hp = 200; g.damage(h, e, 500, 'magic'); assert.equal(h.hp, 200, 'not from ability damage');
+    const tower = g.towers('red')[0], mAtk = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 }); mAtk.x = tower.x; mAtk.ms = 0; mAtk.range = 0; const m = g.spawnMinion({ team: 'red', kind: 'melee', wave: 2, slot: 1 });
+    h.hp = 200; g.attackHit(h, m); assert(near(h.hp - 200, h.ad * 0.07), 'it works on minions'); h.hp = 200; const thp = tower.hp; g.attackHit(h, tower); assert(near(h.hp - 200, (thp - tower.hp) * 0.07) && tower.hp < thp, 'and on towers');
+    wear(g, h, 'longbow'); assert.equal(h.armorPen, 30); fight(g, h, e); e.armor = 100; g.damage(h, e, 170, 'phys'); assert(near(5000 - e.hp, 100), '100 armor with 30% armor pen is treated as 70');
+    tower.hp = tower.mhp; g.damage(h, tower, 140, 'phys', true); assert(near(tower.mhp - tower.hp, 100), 'armor pen does not apply to towers (40 armor stays 40)');
+    wear(g, h, 'voidstaff', 'casterboots'); assert.deepEqual([h.magicPenPct, h.magicPenFlat], [35, 12]); fight(g, h, e); e.mr = 60; g.damage(h, e, 127, 'magic'); assert(near(5000 - e.hp, 100), '60 MR, 35% pen, 12 flat: 39, then 27');
+    fight(g, h, e); e.mr = 10; g.damage(h, e, 100, 'magic'); assert(near(5000 - e.hp, 100), 'magic resist never goes below 0'); m.mr = 60; const mhp = m.hp; g.damage(h, m, 127, 'magic'); assert(near(mhp - m.hp, 100), 'pen works on minions'); }
+
+  // tenacity: stuns, roots, silences and slows are shorter; forced movement is not
+  { const { g, h, e } = shopper(); wear(g, h, 'spiritboots'); assert(near(h.tenacity, 0.3));
+    g.stun(h, 1); assert(near(h.stunUntil - g.time, 0.7), 'a 1s stun lasts 0.7s'); h.stunUntil = 0; g.root(h, 1); g.silence(h, 2); g.addBuff(h, 'slow', 0.5, 2);
+    assert(near(h.rootUntil - g.time, 0.7) && near(h.silenceUntil - g.time, 1.4) && near(h.buffs.at(-1).until - g.time, 1.4), 'roots, silences and slows too'); h.buffs = [];
+    g.addBuff(h, 'haste', 0.5, 2); assert(near(h.buffs.at(-1).until - g.time, 2), 'buffs are not shortened'); h.stunUntil = 0;
+    g.knockUp(h, 1); assert(near(h.stunUntil - g.time, 1) && near(h.airUntil - g.time, 1), 'a knock-up is unchanged'); h.stunUntil = 0; h.x = 3000; e.x = 3600; h.y = e.y = 800;
+    g.pull(h, e, 1700, { gap: 75, stun: 0.65 }); assert(near(h.stunUntil - g.time, 0.65), 'and so is a pull'); h.push = null;
+    g.stun(e, 1); assert(near(e.stunUntil - g.time, 1), 'no tenacity, full stun'); }
+
+  // regen, heal amp and the regen passives
+  { const { g, h, e } = shopper(); const base = HEROES.wren.hpRegen, mbase = HEROES.wren.manaRegen;
+    wear(g, h, 'bead', 'charm'); assert(near(h.hpRegen, base + 1) && near(h.manaRegen, mbase + 0.5), 'regen items add per-second regen');
+    wear(g, h, 'spiritcloak'); h.hp = 100; g.heal(h, 100); assert.equal(h.hp, 225, 'Vigor: +25% healing'); h.x = 3000; h.hp = 100; h.hpRegen = 4; run(g, 1); assert(near(h.hp, 105, 0.001), 'and regen');
+    wear(g, h, 'titanheart'); h.x = 3000; h.hpRegen = 0; h.hp = 100; h.heroHitAt = g.time; run(g, 5.9); assert.equal(h.hp, 100, 'Recover waits 6s after hero damage'); run(g, 1.1);
+    assert(near(h.hp - 100, 0.004 * h.mhp, 0.05), 'then 0.4% of max health a second'); const m = g.spawnMinion({ team: 'red', kind: 'melee', wave: 2, slot: 1 }); m.ms = 0; m.range = 0;
+    g.damage(m, h, 10, 'true'); let hp = h.hp; run(g, 1); assert(near(h.hp - hp, 0.004 * h.mhp, 0.01), 'minion damage does not stop it'); g.damage(e, h, 10, 'true'); hp = h.hp; run(g, 3); assert.equal(h.hp, hp, 'hero damage does');
+    wear(g, h, 'startershield'); h.hpRegen = 0; h.hp = 100; h.heroHitAt = -1e9; run(g, 2); assert.equal(h.hp, 100, 'Second Wind: nothing until a hero hits you'); g.damage(m, h, 10, 'true'); run(g, 1); assert.equal(h.hp, 90, 'minions do not count');
+    g.damage(e, h, 10, 'true'); run(g, 3); assert(near(h.hp, 80 + 9, 0.01), '+3 a second after hero damage'); g.damage(e, h, 9, 'true'); run(g, 6); assert(near(h.hp, 80 + 18, 0.01), 'a new hit restarts the 6s'); run(g, 3); assert(near(h.hp, 98, 0.01), 'and then it stops'); }
+
+  // the magic passives
+  { const { g, h, e } = shopper('kessa'); wear(g, h, 'crown'); assert.equal(h.mmp, 700); assert(near(h.ap, 90 + 14), 'Overflow: +2% of max mana as AP'); wear(g, h, 'crown', 'crystal'); assert(near(h.ap, 90 + 20), '1000 max mana -> +20 AP');
+    wear(g, h, 'crown', 'crystal', 'doomstaff'); assert(near(h.ap, (90 + 120 + 20) * 1.3), 'Magnify multiplies everything, Overflow included');
+    wear(g, h, 'emberorb'); fight(g, h, e); const m = g.spawnMinion({ team: 'red', kind: 'melee', wave: 2, slot: 1 }); m.ms = 0; m.range = 0; h.order = e.order = { type: 'hold' };
+    g.attackHit(h, e); assert(!e.burn, 'Burn: not from a basic attack'); g.damage(h, m, 10, 'magic'); assert(!m.burn, 'not on minions');
+    e.hp = 5000; e.mr = 0; g.damage(h, e, 100, 'magic'); assert(e.burn && e.hp === 4900); run(g, 0.4); assert.equal(e.hp, 4900); run(g, 0.2); assert(near(e.hp, 4900 - 25), 'a tick of 0.5% of max health every 0.5s'); run(g, 2.5);
+    assert(near(e.hp, 4900 - 150) && !e.burn, '6 ticks: 3% of max health over 3s'); run(g, 2); assert(near(e.hp, 4750), 'and it does not restart itself');
+    g.damage(h, e, 50, 'magic'); run(g, 1.6); g.damage(h, e, 50, 'magic'); run(g, 3.2); assert(near(e.hp, 4750 - 100 - 9 * 25), 'hitting again restarts the 3s; it never stacks');
+    wear(g, h, 'emberorb', 'hexblade'); h.hpRegen = 0; h.hp = 100; e.hp = 5000; g.damage(h, e, 300, 'magic'); assert(near(h.hp, 110), 'Drain: ability damage heals a third of lifesteal (10% -> 3.3%)'); run(g, 3.2); assert(near(h.hp, 110, 0.02), 'passive damage (the burn) does not trigger it');
+    h.hp = 100; e.armor = 0; e.burn = null; g.attackHit(h, e); assert(near(h.hp - 100, h.ad * 0.1, 0.01), 'attacks still use plain lifesteal'); }
+
+  // the attack passives
+  { const { g, h, e } = shopper(); wear(g, h, 'ruinblade'); fight(g, h, e); e.armor = 0; g.attackHit(h, e); assert(near(5000 - e.hp, h.ad + 300), 'Rend: +6% of the target\'s current health'); const was = e.hp; h.hp = 100; g.attackHit(h, e);
+    assert(near(was - e.hp, h.ad + 0.06 * was) && near(h.hp - 100, (was - e.hp) * 0.1), 'current health, and lifesteal heals from it too');
+    const m = g.spawnMinion({ team: 'red', kind: 'cannon', wave: 2, slot: 1 }); m.hp = m.mhp = 5000; g.attackHit(h, m); assert(near(5000 - m.hp, h.ad + 60), 'at most 60 against minions');
+    const tower = g.towers('red')[0], ally = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 }); ally.x = tower.x; ally.ms = 0; ally.range = 0; ally.hp = ally.mhp = 1e7; ally.kind = 'statue'; g.attackHit(h, tower); assert(near(tower.mhp - tower.hp, h.ad * 100 / 140), 'never against towers');
+    wear(g, h, 'duskblade'); h.ranks = [1, 1, 1, 1]; fight(g, h, e); e.armor = 0; h.armorPen = 0; g.attackHit(h, e); assert(near(5000 - e.hp, h.ad), 'Ambush: nothing until an ability is cast');
+    g.command(1, { c: 'spell', s: 'f' }); assert(!(h.ambushUntil > g.time), 'summoner spells do not charge it'); h.cds = [0, 0, 0, 0]; h.mp = h.mmp; g.command(1, { c: 'cast', s: 1, x: 3000, y: 300 }); run(g, 0.3);
+    assert(h.ambushUntil > g.time && g.snapshot(1).units.find(u => u.id === h.id).ab === 1, 'an ability charges it (and the hero glows)'); let hp = e.hp; g.attackHit(h, e); assert(near(hp - e.hp, h.ad + 40 + 0.3 * h.bonusAd), `+40 + 30% bonus AD on the next attack: ${hp - e.hp} vs ${h.ad} + 40 + 0.3 x ${h.bonusAd}, armor ${e.armor}, pen ${h.armorPen}`);
+    hp = e.hp; g.attackHit(h, e); assert(near(hp - e.hp, h.ad), 'once'); h.cds = [0, 0, 0, 0]; g.command(1, { c: 'cast', s: 1, x: 3000, y: 300 }); assert(!(h.ambushUntil > g.time), 'it cannot charge again for 6s'); run(g, 6.1);
+    h.cds = [0, 0, 0, 0]; h.mp = h.mmp; g.command(1, { c: 'cast', s: 1, x: 3000, y: 300 }); assert(h.ambushUntil > g.time); run(g, 4.1); hp = e.hp; g.attackHit(h, e); assert(near(hp - e.hp, h.ad), 'the charge is lost after 4s');
+    h.cds = [0, 0, 0, 0]; h.mp = h.mmp; run(g, 6); g.command(1, { c: 'cast', s: 1, x: 3000, y: 300 }); tower.hp = tower.mhp; const charged = h.ambushUntil > g.time; g.attackHit(h, tower); assert(near(tower.mhp - tower.hp, (h.ad + 58) * 100 / 140), `it works on towers: charged ${charged}, dealt ${tower.mhp - tower.hp}, want ${(h.ad + 58) * 100 / 140}, towers ${g.towers('red').length}, ally hp ${ally.hp}`); }
+
+  // the defense passives
+  { const { g, h, e } = shopper('gorrum', 'wren'); wear(g, h, 'thornmail'); fight(g, h, e); h.cds[3] = 1e9; e.mr = 0; e.hp = e.mhp = 5000;
+    g.attackHit(e, h); assert(near(5000 - e.hp, 10 + 0.1 * 70), 'Barbs: a hero who attacks takes 10 + 10% of the owner\'s bonus armor');
+    const m = g.spawnMinion({ team: 'red', kind: 'melee', wave: 2, slot: 1 }), mhp = m.hp; g.attackHit(m, h); assert.equal(m.hp, mhp, 'not from minions'); const hp = e.hp; g.damage(e, h, 50, 'magic'); assert.equal(e.hp, hp, 'not from abilities');
+    const tower = g.towers('red')[0], thp = tower.hp; g.attackHit(tower, h); assert.equal(tower.hp, thp, 'not from towers');
+    wear(g, h, 'frostplate'); fight(g, h, e); const as0 = g.atkSpeed(e); g.attackHit(m, h); g.damage(e, h, 50, 'magic'); assert(near(g.atkSpeed(e), as0), 'Chill: not from minions or abilities'); g.attackHit(e, h);
+    assert(near(g.atkSpeed(e), as0 * 0.8) && g.snapshot(1).units.find(u => u.id === e.id).fz === 1, 'an attacking hero loses 20% attack speed, and it shows'); run(g, 1); g.attackHit(e, h); assert(near(g.atkSpeed(e), as0 * 0.8), 'it does not stack'); run(g, 1.5);
+    assert(near(g.atkSpeed(e), as0 * 0.8), 'it refreshes'); run(g, 0.6); assert(near(g.atkSpeed(e), as0), 'and ends after 2s');
+    wear(g, h, 'ironboots'); fight(g, h, e); h.hp = h.mhp; g.attackHit(e, h); const withGuard = h.mhp - h.hp; wear(g, h, 'boots', 'plating', 'plating'); h.armor += -5; g.refresh(h); h.items = ['ironboots']; g.refresh(h); h.passives = {}; h.hp = h.mhp; g.attackHit(e, h);
+    assert(near(withGuard / (h.mhp - h.hp), 0.9), 'Guard: basic attacks deal 10% less'); g.refresh(h); h.hp = h.mhp; g.damage(e, h, 100, 'true'); assert.equal(h.mhp - h.hp, 100, 'abilities are not reduced'); h.hp = h.mhp; g.attackHit(m, h); assert(near(h.mhp - h.hp, m.ad * 0.6 * 0.9 * 100 / (100 + h.armor)), 'minion attacks are'); }
+
+  // the stat panel numbers reach the client
+  { const { g, h } = shopper(); wear(g, h, 'duskblade', 'leechblade', 'cape', 'voidstaff', 'casterboots'); const me = g.snapshot(1).me;
+    assert.deepEqual([me.hs, me.cr, me.ls, me.apn, me.mpp, me.mpf, me.undo], [20, 15, 7, 20, 35, 12, 0]); assert.deepEqual(me.items[0], { id: 'duskblade', n: 1 }); }
+
+  // the bot shops through recipes, keeps a potion, and sells its starter when it needs the room
+  for (const hero of Object.keys(HEROES)) { const g = new Game([{ id: 1, team: 'blue', hero: 'wren', name: 'A' }, { id: -1, team: 'red', hero, name: 'Bot', bot: true, ai: 'normal' }], { seed: 3 }), b = g.heroes.get(-1), build = HEROES[hero].build; g.nextWave = Infinity;
+    g.step(); const opening = [].concat(build[0]); assert.deepEqual(bag(b).sort(), [...new Set(opening)].sort(), `${hero} bot buys its opening items`); // A 450-gold starter leaves room for one potion out of 500 starting gold, even where the build lists two.
+    assert.equal(b.items.find(s => s.id === 'potion').n, Math.min(opening.filter(i => i === 'potion').length, Math.floor((RULES.startGold - ITEM[opening[0]].cost) / ITEM.potion.cost)));
+    assert(b.gold >= 0 && b.gold < 100); const spent = [];
+    for (let i = 0; i < 400; i++) { b.gold += 60; b.x = MAP.spawn.red.x; b.y = 800; b.order = null; g.step(); assert(b.items.length <= BAG_SLOTS && b.gold >= 0); if (i % 40 === 0) spent.push(bag(b).join()); }
+    const done = b.items.filter(s => ITEM[s.id].tier === 'finished').map(s => s.id), wanted = build.slice(1).map(st => (typeof st === 'string' ? st : st[HEROES.wren.dmgType])).filter(id => ITEM[id].tier === 'finished');
+    assert(done.length >= 3 && done.every((id, i) => id === wanted[i]), `${hero} bot builds its finished items in order: ${done.join(', ')}`);
+    assert(b.items.some(s => ITEM[s.id].group === 'boots') && new Set(spent).size > 5, 'with boots, bought a piece at a time'); }
+  { const g = new Game([{ id: 1, team: 'blue', hero: 'wren', name: 'A' }, { id: -1, team: 'red', hero: 'gorrum', name: 'Bot', bot: true, ai: 'normal' }], { seed: 3 }), b = g.heroes.get(-1); g.nextWave = Infinity; g.step();
+    const potions = () => b.items.filter(s => s.id === 'potion').reduce((n, s) => n + s.n, 0), n = potions();
+    b.x = 9000; b.hp = b.mhp * 0.45; run(g, 0.5); assert(n >= 1 && b.potQ.length === 1 && potions() === n - 1, 'the bot drinks a potion below half health');
+    b.gold = 1000; b.hp = b.mhp * 0.45; run(g, 2); assert.equal(b.potQ.length, 1, 'one at a time');
+    const g2 = new Game([{ id: 1, team: 'blue', hero: 'kessa', name: 'A' }, { id: -1, team: 'red', hero: 'gorrum', name: 'Bot', bot: true, ai: 'normal' }], { seed: 3 }); g2.nextWave = Infinity; const b2 = g2.heroes.get(-1);
+    for (let i = 0; i < 200; i++) { b2.gold += 60; b2.x = MAP.spawn.red.x; g2.step(); } assert(bag(b2).includes('spiritboots') && !bag(b2).includes('ironboots'), 'against an ability hero Gorrum buys Spirit Boots'); }
+  console.log('items ok');
 }
 console.log('all checks passed');

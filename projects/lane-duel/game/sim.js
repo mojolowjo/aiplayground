@@ -1,6 +1,7 @@
 // Authoritative game simulation. No networking in here.
 import { HEROES, SPELLS, ITEMS } from './data.js';
 import { think } from './bot.js';
+import { byId, plan, STAT_TEXT } from '../shared/shop.js';
 
 export const TICK = 30, DT = 1 / TICK;
 // Lane geometry. Minions spawn `minionOffset` in front of their base, so the first melee minions of each
@@ -27,6 +28,9 @@ export const RULES = {
   startGold: 500, goldPerSec: 2.04, goldFrom: 65,
   killGold: 300, firstBloodGold: 100, assistShare: 0.5, assistMax: 150, assistWindow: 10,
   sellBack: 0.7,                                    // share of an item's price returned when it is sold
+  // Critical strikes: a basic attack that crits deals critDmg times its damage. Crits are dealt from a shuffled
+  // deck of critDeck cards per hero, so 25% crit is exactly 5 crits in every 20 attacks, in a random order.
+  critDmg: 1.75, critDeck: 20,
   respawn: [10, 10, 12, 12, 14, 16, 20, 25, 28, 32.5, 35, 37.5, 40, 42.5, 45, 47.5, 50, 52.5],   // seconds dead, by level 1-18
   heroRadius: 65, recallTime: 8, revealFor: 1.5,    // revealFor: seconds a hero stays visible in brush after acting
   fountainRegen: 0.1,                               // share of max health and mana restored per second at base
@@ -59,6 +63,7 @@ export const RULES = {
     normal: { react: 0.20, hitErr: 0.12, skip: 0.20, trade: 0.35, qEvery: 6.5, aimErr: 0.14, commit: 0.6, castGap: 1.5, dodge: false },
     hard:   { react: 0.10, hitErr: 0.03, skip: 0, trade: 0.70, qEvery: 4.5, aimErr: 0.05, commit: 1, castGap: 0.6, dodge: true },
     // Lane habits.
+    drinkBelow: 0.5, keepPotions: 1, potionsUntilFinished: 2,          // drinks below this health share; keeps a potion in the bag until it owns this many finished items
     retreatHp: 0.35, returnHp: 0.9, safeDist: 1300, safeMinions: 650, retreatBehind: 250,
     chase: 600, prepHp: 0.5, standRanged: 350, standMelee: 200, standOff: 140, tradeFor: 1.2, tradeReach: 60, towerMargin: 120,
     // Using abilities. lowHp / finishHp: enemy health shares it treats as "low" and "nearly dead"; manaReserve:
@@ -93,10 +98,14 @@ export const MINION = {
 
 const other = t => (t === 'blue' ? 'red' : 'blue');
 const xpToNext = lvl => 180 + 100 * lvl;
-const ITEM = Object.assign(Object.create(null), Object.fromEntries(ITEMS.map(i => [i.id, i])));   // no inherited keys: a made-up item id finds nothing
+export const ITEM = byId(ITEMS);                   // items by id; a made-up id finds nothing
+const STAT_KEYS = Object.keys(STAT_TEXT);          // every stat an item can give
 
 export class Game {
-  constructor(players) {
+  // opts.seed fixes every random choice in the match (crit order, bot decisions), so a match can be replayed exactly.
+  constructor(players, opts = {}) {
+    this.seed = (opts.seed ?? 1) >>> 0; let a = this.seed;
+    this.rand = () => { a = (a + 0x6D2B79F5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
     this.time = 0; this.nextId = 1; this.units = new Map(); this.shots = []; this.zones = []; this.pickups = [];
     this.events = []; this.over = null; this.nextWave = RULES.firstWave; this.waveNo = 0; this.spawnQ = []; this.wavesMet = false; this.firstBlood = false; this.heroes = new Map();
     for (const team of ['blue', 'red']) {
@@ -123,20 +132,51 @@ export class Game {
       radius: RULES.heroRadius, melee: d.melee, projSpeed: d.projSpeed, lvl: 1, xp: 0, points: 1, ranks: [0, 0, 0, 0],
       cds: [0, 0, 0, 0], spellCds: { d: 0, f: 0 }, gold: RULES.startGold, items: [], kills: 0, deaths: 0, cs: 0, missed: 0,
       order: null, casting: null, dashing: null, recall: null, state: null, respawnAt: 0, revealUntil: 0, bot: !!p.bot, ai: p.ai || null, aiMem: {},
-      potionUntil: 0, potionRate: 0, hitBy: new Map() });
+      potQ: [], undo: [], deck: [], deckCrit: -1, heroHitAt: -1e9, ambushUntil: 0, ambushLock: 0, burn: null, hitBy: new Map() });
     this.refresh(h); h.hp = h.mhp; h.mp = h.mmp; this.heroes.set(p.id, h); return h;
   }
+  // Work out a hero's stats from its level and its bag. Called whenever either changes.
   refresh(h) {
-    const d = h.def, L = h.lvl - 1, it = { ad: 0, ap: 0, hp: 0, as: 0, armor: 0, mr: 0, ms: 0, mana: 0 };
-    for (const id of h.items) for (const [k, v] of Object.entries(ITEM[id].stats || {})) it[k] += v;
+    h.items = h.items.map(s => (typeof s === 'string' ? { id: s, n: ITEM[s].charges || 1 } : s));   // a bare id is accepted for a slot
+    const d = h.def, L = h.lvl - 1, it = Object.fromEntries(STAT_KEYS.map(k => [k, 0])), passives = {};
+    let through = 1;                                   // share of crowd-control time that gets through tenacity (sources multiply)
+    const add = stats => { for (const [k, v] of Object.entries(stats || {})) { if (k === 'tenacity') through *= 1 - v / 100; else it[k] += v; } };
+    for (const slot of h.items) {
+      const def = ITEM[slot.id]; add(def.stats);
+      if (def.passive && !passives[def.passive.id]) { passives[def.passive.id] = def.passive; add(def.passive.stats); }   // a passive works once, however many copies
+    }
+    h.passives = passives; h.tenacity = 1 - through;
     const oldHp = h.mhp || 0, oldMp = h.mmp || 0;
     h.mhp = d.hp + d.hpPer * L + it.hp; h.mmp = d.manaless ? 0 : d.mana + d.manaPer * L + it.mana;   // manaless heroes have no mana at all
-    h.bonusAd = it.ad; h.ad = d.ad + d.adPer * L + it.ad; h.ap = it.ap; h.armor = d.armor + d.armorPer * L + it.armor;
-    h.hpRegen = d.hpRegen + (d.hpRegenPer || 0) * L; h.manaRegen = d.manaless ? 0 : d.manaRegen + (d.manaRegenPer || 0) * L;   // per second
+    h.bonusAd = it.ad; h.ad = d.ad + d.adPer * L + it.ad;
+    h.bonusArmor = it.armor; h.armor = d.armor + d.armorPer * L + it.armor;
+    h.ap = it.ap;
+    if (passives.overflow) h.ap += h.mmp * passives.overflow.apPerMana;
+    if (passives.magnify) h.ap *= passives.magnify.mult;                         // last, so it multiplies everything
+    h.hpRegen = d.hpRegen + (d.hpRegenPer || 0) * L + it.hpRegen;                // per second
+    h.manaRegen = d.manaless ? 0 : d.manaRegen + (d.manaRegenPer || 0) * L + it.manaRegen;
     h.mr = d.mr + d.mrPer * L + it.mr; h.baseMs = d.ms + it.ms; h.range = d.range;
     h.as = d.as * (1 + (d.asPer * L + it.as) / 100); h.windupFrac = d.windup;
+    h.haste = it.haste; h.crit = Math.min(100, it.crit); h.critDmg = passives.keen ? passives.keen.critDmg : RULES.critDmg;
+    h.lifesteal = it.lifesteal; h.armorPen = Math.min(100, it.armorPen); h.magicPenPct = Math.min(100, it.magicPenPct); h.magicPenFlat = it.magicPenFlat;
+    h.healAmp = it.healAmp;
     if (oldHp) { h.hp += h.mhp - oldHp; h.mp += h.mmp - oldMp; }
   }
+  // A living hero's item passive by id, or undefined.
+  has(u, id) { return u.passives && !u.dead ? u.passives[id] : undefined; }
+  // Crits are dealt from a deck: critDeck cards, of which crit% are crits, shuffled with the match's own random
+  // generator. A new deck is shuffled when the old one runs out or the hero's crit chance changes.
+  drawCrit(h) {
+    if (!h.crit) return false;
+    if (!h.deck.length || h.deckCrit !== h.crit) {
+      const n = RULES.critDeck, hits = Math.round(h.crit * n / 100), deck = Array.from({ length: n }, (_, i) => i < hits);
+      for (let i = n - 1; i > 0; i--) { const j = Math.floor(this.rand() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+      h.deck = deck; h.deckCrit = h.crit;
+    }
+    return h.deck.pop();
+  }
+  // Tenacity shortens stuns, roots, silences and slows. It does not shorten forced movement.
+  cc(u, dur) { return u.tenacity ? dur * (1 - u.tenacity) : dur; }
 
   // ---------- helpers ----------
   dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
@@ -157,10 +197,11 @@ export class Game {
   addBuff(u, k, v, dur, o = {}) {
     if (u.dead) return;
     if (o.tag) u.buffs = u.buffs.filter(b => b.tag !== o.tag);
+    if (k === 'slow') dur = this.cc(u, dur);
     u.buffs.push({ k, v, t0: this.time, until: this.time + dur, tag: o.tag, onEnd: o.onEnd, to: o.to, over: o.over });
   }
-  silence(u, dur) { u.silenceUntil = Math.max(u.silenceUntil, this.time + dur); this.leave(u, 'cancel'); }
-  knockUp(u, dur) { if (u.type === 'tower') return; this.stun(u, dur); u.airUntil = this.time + dur; }
+  silence(u, dur) { u.silenceUntil = Math.max(u.silenceUntil, this.time + this.cc(u, dur)); this.leave(u, 'cancel'); }
+  knockUp(u, dur) { if (u.type === 'tower') return; this.stun(u, dur, true); u.airUntil = this.time + dur; }
   // A mark is a tag one ability leaves on a target: t.mark = { by, until, pop(t, via) }. Anything else the
   // marker lands on that target calls popMark, which removes the tag and runs its effect. `via` says what
   // popped it: { cost } for an ability, nothing for a basic attack.
@@ -186,11 +227,12 @@ export class Game {
     }
     return out;
   }
-  stun(u, dur) { u.stunUntil = Math.max(u.stunUntil, this.time + dur); u.windup = null; u.casting = null; u.recall = null; this.leave(u, 'cancel'); }
-  root(u, dur) { u.rootUntil = Math.max(u.rootUntil, this.time + dur); }
+  // `forced` marks the stun that comes with forced movement (knock-ups, pulls, shoves): tenacity does not shorten it.
+  stun(u, dur, forced = false) { u.stunUntil = Math.max(u.stunUntil, this.time + (forced ? dur : this.cc(u, dur))); u.windup = null; u.casting = null; u.recall = null; this.leave(u, 'cancel'); }
+  root(u, dur) { u.rootUntil = Math.max(u.rootUntil, this.time + this.cc(u, dur)); }
   shield(u, amt, dur) { u.shieldAmt = amt; u.shieldUntil = this.time + dur; }
   stripShields(u) { u.shieldAmt = 0; u.floorShield = null; }
-  heal(u, amt) { if (!u.dead) u.hp = Math.min(u.mhp, u.hp + amt); }
+  heal(u, amt) { if (!u.dead) u.hp = Math.min(u.mhp, u.hp + amt * (1 + (u.healAmp || 0) / 100)); }
   restoreMana(u, amt) { if (!u.dead) u.mp = Math.min(u.mmp, u.mp + amt); }
   towers(team) { return [...this.units.values()].filter(u => u.type === 'tower' && u.team === team && !u.dead); }
   // The tower a team is currently defending: the outer one, or the inner one once that has fallen.
@@ -257,13 +299,13 @@ export class Game {
   // overridden) until it arrives. Towers cannot be moved.
   shove(t, vx, vy, dur, extraStun = 0) {
     if (t.type === 'tower' || t.dead) return;
-    t.push = { vx, vy, left: dur }; t.dashing = null; this.stun(t, dur + extraStun);
+    t.push = { vx, vy, left: dur }; t.dashing = null; this.stun(t, dur + extraStun, true);
   }
   // Drag t toward `to`, stopping with its centre o.gap beyond `to`'s edge. It is stunned for o.stun seconds,
   // or for the whole trip if that takes longer.
   pull(t, to, speed, o) {
     const dx = to.x - t.x, dy = to.y - t.y, d = Math.hypot(dx, dy), go = Math.max(0, d - to.radius - o.gap), dur = go / speed;
-    if (go > 0) this.shove(t, dx / d * speed, dy / d * speed, dur, Math.max(0, o.stun - dur)); else this.stun(t, o.stun);
+    if (go > 0) this.shove(t, dx / d * speed, dy / d * speed, dur, Math.max(0, o.stun - dur)); else this.stun(t, o.stun, true);
   }
   // Pickups are objects lying in the world. One becomes live `delay` seconds after it is dropped, stays
   // for o.life seconds, and runs o.onTake when its owner walks within o.r of it.
@@ -306,14 +348,23 @@ export class Game {
   }
 
   // ---------- damage ----------
-  damage(src, t, amt, type, attack = false) {
+  // attack: a basic attack. o.passive: damage dealt by an item passive (it triggers no other passives).
+  // o.crit: only for showing the number. Anything else a hero deals counts as ability damage.
+  damage(src, t, amt, type, attack = false, o = {}) {
     if (t.dead || this.over) return;
+    const hero = src && src.type === 'hero' ? src : null;
     if (t.type === 'tower') {
       if (!attack || (t.inner && this.towers(t.team).some(o => !o.inner))) return;   // the inner tower is safe behind the outer one
       const guarded = !this.enemiesIn(t.team, t.x, t.y, RULES.tower.guardRange).some(u => u.type === 'minion');
       if (guarded) amt *= RULES.tower.guardedMult;
     }
-    if (type !== 'true') amt *= 100 / (100 + (type === 'phys' ? t.armor : t.mr));
+    if (type !== 'true') {
+      let res = type === 'phys' ? t.armor : t.mr;
+      if (hero && t.type !== 'tower')                 // penetration: % first, then flat, never below zero; not against towers
+        res = type === 'phys' ? res * (1 - hero.armorPen / 100) : Math.max(0, res * (1 - hero.magicPenPct / 100) - hero.magicPenFlat);
+      amt *= 100 / (100 + res);
+    }
+    const guard = attack && this.has(t, 'guard'); if (guard) amt *= 1 - guard.less;
     if (t.shieldUntil > this.time && t.shieldAmt > 0) { const a = Math.min(t.shieldAmt, amt); t.shieldAmt -= a; amt -= a; }
     if (t.type === 'hero' && t.def.passive && t.def.passive.beforeDamage) t.def.passive.beforeDamage(this, t, amt);
     // A floor shield only soaks the part of a hit that would take its owner below `floor` health.
@@ -326,9 +377,26 @@ export class Game {
       if (broke > 0 && src && src.type === 'hero') { src.gold += broke * RULES.tower.plateGold; this.fx({ e: 'gold', x: t.x, y: t.y, n: broke * RULES.tower.plateGold, p: src.pid }); }
     }
     if (src && amt >= 1) this.fx({ e: 'dmg', id: t.id, x: Math.round(t.x), y: Math.round(t.y), n: Math.round(amt),
-      s: src.type === 'hero' ? src.id : 0, k: t.type[0], ty: type[0] });
+      s: src.type === 'hero' ? src.id : 0, k: t.type[0], ty: type[0], ...(o.crit ? { cr: 1 } : {}) });
+    if (hero && !hero.dead) {
+      hero.undo = [];                                 // dealing damage closes the shop's undo history
+      // amt is now what actually came off the target's health, after armor and shields.
+      if (attack) { if (hero.lifesteal) this.heal(hero, amt * hero.lifesteal / 100); }
+      else if (!o.passive) {                          // ability damage
+        const drain = this.has(hero, 'drain'); if (drain && hero.lifesteal) this.heal(hero, amt * hero.lifesteal / 100 * drain.share);
+        const burn = this.has(hero, 'burn');
+        if (burn && t.type === 'hero' && t.team !== hero.team) t.burn = { by: hero, p: burn, left: Math.round(burn.lasts / burn.every), next: this.time + burn.every };   // restarts, never stacks
+      }
+    }
     if (t.type === 'hero') {
-      t.recall = null;
+      t.recall = null; t.undo = [];
+      if (hero && hero.team !== t.team) {
+        t.heroHitAt = this.time;                      // for Recover and Second Wind
+        if (attack) {                                 // what the victim's items do to a hero who attacks it
+          const barbs = this.has(t, 'barbs'); if (barbs) this.damage(t, hero, barbs.base + barbs.bonusArmor * t.bonusArmor, 'magic', false, { passive: true });
+          const chill = this.has(t, 'chill'); if (chill) this.addBuff(hero, 'as', -chill.as, chill.lasts, { tag: 'chill' });
+        }
+      }
       if (src && src.type === 'hero') {
         t.hitBy.set(src.id, this.time);                            // for kill credit and assists
         for (const u of this.units.values()) {
@@ -342,6 +410,7 @@ export class Game {
   }
   kill(src, t) {
     t.dead = true; t.hp = 0; t.windup = null; t.buffs = []; this.leave(t, 'cancel');
+    if (t.type === 'hero') { t.undo = []; t.burn = null; t.potQ = []; t.ambushUntil = 0; }
     this.fx({ e: 'die', x: Math.round(t.x), y: Math.round(t.y), t: t.team[0], k: t.type[0], h: t.hero });
     const enemy = [...this.heroes.values()].filter(h => h.team !== t.team);
     let killer = src && src.type === 'hero' ? src : null;
@@ -388,6 +457,8 @@ export class Game {
     if (c.c === 'lvl') return this.levelUp(h, c.s | 0);
     if (c.c === 'buy') return this.buy(h, c.item);
     if (c.c === 'sell') return this.sell(h, c.i | 0);
+    if (c.c === 'undo') return this.undoShop(h);
+    if (c.c === 'use') return this.useItem(h, c.i | 0);
     if (h.dead) return;
     // A new order cancels an attack that is still winding up, unless that windup is locked in.
     const interrupt = () => { if (h.windup && !h.windup.locked) { h.nextAttack = this.time; h.windup = null; } h.recall = null; };
@@ -408,19 +479,47 @@ export class Game {
     if (h.ranks[s] >= max) return;
     h.ranks[s]++; h.points--;
   }
+  // ---------- the shop ----------
+  // Buying and undoing work at base or while dead. Selling needs the hero alive and standing at base.
+  canShop(h) { return h.dead || this.dist(h, MAP.spawn[h.team]) <= MAP.fountainR; }
+  // Buy through the recipe: owned parts are used up and taken off the price (shared/shop.js works that out).
   buy(h, id) {
-    const it = ITEM[id], s = MAP.spawn[h.team];
-    if (!it || h.gold < it.cost || (this.dist(h, s) > MAP.fountainR && !h.dead)) return;
-    if (it.potion) { h.gold -= it.cost; h.potionUntil = Math.max(this.time, h.potionUntil) + it.potion.over; h.potionRate = it.potion.heal / it.potion.over; return; }
-    if (h.items.length >= 6 || (it.unique && h.items.includes(id))) return;
-    h.gold -= it.cost; h.items.push(id); this.refresh(h);
+    if (!this.canShop(h)) return false;
+    const p = plan(ITEM, h.items, id);
+    if (!p.ok || h.gold < p.price) return false;
+    h.undo.push({ items: h.items.map(s => ({ ...s })), gold: -p.price });
+    if (p.stack >= 0) h.items[p.stack].n++;
+    else {
+      const slot = { id, n: ITEM[id].charges || 1 }, at = p.used.length ? Math.min(...p.used) : -1;   // the new item takes the place of the first part used
+      h.items = h.items.map((s, k) => (k === at ? slot : s)).filter((s, k) => k === at || !p.used.includes(k));
+      if (at < 0) h.items.push(slot);
+    }
+    h.gold -= p.price; this.refresh(h); return true;
   }
-  // Sell the item in bag slot i for RULES.sellBack of its price. Only while standing in shop range (not while dead).
+  // Sell the item in bag slot i for RULES.sellBack of its total price (one potion at a time from a stack).
   sell(h, i) {
-    const it = ITEM[h.items[i]];
-    if (!it || h.dead || this.dist(h, MAP.spawn[h.team]) > MAP.fountainR) return;
-    h.items.splice(i, 1); h.gold += Math.round(it.cost * RULES.sellBack); this.refresh(h);
-    h.hp = Math.min(h.hp, h.mhp); h.mp = Math.min(h.mp, h.mmp);
+    const slot = h.items[i], it = slot && ITEM[slot.id];
+    if (!it || h.dead || this.dist(h, MAP.spawn[h.team]) > MAP.fountainR) return false;
+    const gain = Math.round(it.cost * RULES.sellBack);
+    h.undo.push({ items: h.items.map(s => ({ ...s })), gold: gain });
+    if (it.stack && slot.n > 1) slot.n--; else h.items.splice(i, 1);
+    h.gold += gain; this.refresh(h);
+    h.hp = Math.min(h.hp, h.mhp); h.mp = Math.min(h.mp, h.mmp); return true;
+  }
+  // Take back the last buy or sell: the bag as it was, and exactly the gold that changed hands.
+  undoShop(h) {
+    if (!this.canShop(h) || !h.undo.length) return false;
+    const e = h.undo.pop();
+    h.items = e.items; h.gold -= e.gold; this.refresh(h);
+    h.hp = Math.min(h.hp, h.mhp); h.mp = Math.min(h.mp, h.mmp); return true;
+  }
+  // Drink the potion or flask in bag slot i. A second drink waits its turn behind the first.
+  useItem(h, i) {
+    const slot = h.items[i], it = slot && ITEM[slot.id];
+    if (!it || !it.use || h.dead || slot.n < 1) return false;
+    slot.n--; if (!it.charges && slot.n < 1) h.items.splice(i, 1);
+    h.potQ.push({ rate: it.use.heal / it.use.over, left: it.use.over }); h.undo = [];
+    return true;
   }
   aimFor(h, def, c) {
     let x = Number.isFinite(c.x) ? c.x : h.x, y = Number.isFinite(c.y) ? c.y : h.y;
@@ -459,8 +558,9 @@ export class Game {
     // Target validation: an ability with `pick` chooses what it is aimed at; no valid target, no cast.
     if (def.pick) { aim.target = def.pick(this, h, aim); if (!aim.target) { this.fx({ e: 'say', p: h.pid, m: def.noTarget || 'No target there' }); return; } }
     if (aim.target && aim.target.type === 'hero' && aim.target.team !== h.team) this.callForHelp(h, aim.target);   // targeted ability on a champion
-    h.mp -= cost; h.cds[s] = this.time + def.cd[Math.min(r, def.cd.length - 1)];
-    h.recall = null; h.revealUntil = this.time + RULES.revealFor;
+    h.mp -= cost; h.cds[s] = this.time + def.cd[Math.min(r, def.cd.length - 1)] * 100 / (100 + h.haste);   // ability haste shortens the cooldown as it starts
+    h.recall = null; h.revealUntil = this.time + RULES.revealFor; h.undo = [];
+    const ambush = this.has(h, 'ambush'); if (ambush && this.time >= h.ambushLock) h.ambushUntil = this.time + ambush.window;
     if (h.windup && !h.windup.locked) { h.windup = null; h.nextAttack = this.time; }
     if (def.kind !== 'self') h.face = Math.atan2(aim.dy, aim.dx);
     this.fx({ e: 'cast', id: h.id, s, d: def.castTime || 0 });
@@ -565,12 +665,17 @@ export class Game {
     }
     // A tower shot takes a fixed share of a minion's max health, however much health upgrades have added.
     if (u.type === 'tower' && t.type === 'minion' && kind && kind.towerShot) return this.damage(u, t, kind.towerShot * t.mhp, 'true', true);
+    let crit = false;
     if (u.type === 'hero') {
+      crit = this.drawCrit(u); if (crit) dmg *= u.critDmg;                 // the attack's own damage; the extras below are not multiplied
+      const rend = this.has(u, 'rend'); if (rend && t.type !== 'tower') dmg += t.type === 'minion' ? Math.min(rend.minionCap, rend.share * t.hp) : rend.share * t.hp;
+      const ambush = this.has(u, 'ambush');
+      if (ambush && u.ambushUntil > this.time) { dmg += ambush.base + ambush.bonusAd * u.bonusAd; u.ambushUntil = 0; u.ambushLock = this.time + ambush.lockout; }
       // Empowered next attack: h.emp = { until, hit(target) -> bonus damage }, used up by one attack.
       if (u.emp) { const e = u.emp; u.emp = null; if (e.until > this.time) dmg += e.hit(t) || 0; }
       this.applyOnHit(u, t);
     }
-    this.damage(u, t, dmg, 'phys', true);
+    this.damage(u, t, dmg, 'phys', true, { crit });
   }
   nearestEnemy(u, maxEdgeDist, filter) {
     let best = null, bd = Infinity;
@@ -591,7 +696,19 @@ export class Game {
     }
     if (T >= RULES.goldFrom) h.gold += RULES.goldPerSec * DT;
     const home = this.dist(h, sp) < MAP.fountainR;
-    h.hp = Math.min(h.mhp, h.hp + (h.hpRegen + (home ? h.mhp * RULES.fountainRegen : 0) + (h.potionUntil > T ? h.potionRate : 0)) * DT);
+    // Health coming in this tick: own regen, the fountain, the potion being drunk, and item passives. healAmp scales all of it.
+    let regen = h.hpRegen + (home ? h.mhp * RULES.fountainRegen : 0);
+    const drink = h.potQ[0]; if (drink) { regen += drink.rate; drink.left -= DT; if (drink.left <= 1e-9) h.potQ.shift(); }
+    const recover = this.has(h, 'recover'); if (recover && T - h.heroHitAt >= recover.after) regen += recover.share * h.mhp;
+    const wind = this.has(h, 'secondwind'); if (wind && T - h.heroHitAt < wind.lasts) regen += wind.regen;
+    h.hp = Math.min(h.mhp, h.hp + regen * (1 + h.healAmp / 100) * DT);
+    if (home) { for (const slot of h.items) if (ITEM[slot.id].charges) slot.n = ITEM[slot.id].charges; }   // flasks refill at base
+    else if (h.undo.length) h.undo = [];                                                                   // leaving base closes the undo history
+    if (h.burn) {                                                                                          // Ember Orb's burn, ticking on this hero
+      const b = h.burn;
+      if (b.by.dead || !this.has(b.by, 'burn')) h.burn = null;
+      else if (T >= b.next) { b.next += b.p.every; if (--b.left <= 0) h.burn = null; this.damage(b.by, h, b.p.tick * h.mhp, 'magic', false, { passive: true }); }
+    }
     h.mp = Math.min(h.mmp, h.mp + (h.manaRegen + (home ? h.mmp * RULES.fountainRegen : 0)) * DT);
     const es = MAP.spawn[other(h.team)];
     if (this.dist(h, es) < MAP.fountainR) this.damage(null, h, MAP.fountainBurn * DT, 'true');
@@ -800,6 +917,7 @@ export class Game {
         pn: u.def.passive && u.def.passive.count ? u.def.passive.count(this, u) : 0,
         si: T < u.silenceUntil ? 1 : 0, ku: T < u.airUntil ? 1 : 0, em: u.emp && u.emp.until > T ? 1 : 0,
         cn: u.state && u.state.name === 'channel' ? 1 : 0,
+        ab: u.ambushUntil > T ? 1 : 0, fz: u.buffs.some(b => b.tag === 'chill') ? 1 : 0, bn: u.burn ? 1 : 0,   // Dusk Blade charged, chilled, burning
         // for the client's movement prediction: nm = cannot walk right now, fm = being moved by force, gh = ignores unit collision
         nm: T < u.stunUntil || T < u.rootUntil || (u.state && u.state.lock) || u.casting || u.recall ? 1 : 0,
         fm: u.push || u.dashing ? 1 : 0, gh: u.ghostUntil > T ? 1 : 0,
@@ -823,7 +941,8 @@ export class Game {
       ev: this.events.filter(e => e.p === undefined || e.p === pid), over: this.over };
     if (me) snap.me = { id: me.id, gold: Math.floor(me.gold), xp: r(me.xp), xpn: xpToNext(me.lvl), pts: me.points, ranks: me.ranks,
       cds: me.cds.map(c => Math.max(0, +(c - T).toFixed(1))), sd: Math.max(0, r(me.spellCds.d - T)), sf: Math.max(0, r(me.spellCds.f - T)),
-      items: me.items, ad: r(me.ad), ap: r(me.ap), ar: r(me.armor), mr: r(me.mr), ms: r(this.speed(me)), as: +this.atkSpeed(me).toFixed(2),
+      items: me.items.map(s => ({ id: s.id, n: s.n })), undo: me.undo.length, hs: r(me.haste), cr: r(me.crit), ls: r(me.lifesteal), apn: r(me.armorPen), mpp: r(me.magicPenPct), mpf: r(me.magicPenFlat),
+      ad: r(me.ad), ap: r(me.ap), ar: r(me.armor), mr: r(me.mr), ms: r(this.speed(me)), as: +this.atkSpeed(me).toFixed(2),
       range: me.range, sell: !me.dead && this.dist(me, MAP.spawn[me.team]) <= MAP.fountainR, miss: me.missed, wave: this.waveNo, pv: me.def.passive && me.def.passive.wait ? Math.max(0, +me.def.passive.wait(this, me).toFixed(1)) : 0,
       bt: me.state && me.state.name === 'barrage' ? Math.max(0, +(me.state.until - T).toFixed(1)) : 0, shop: me.dead || this.dist(me, MAP.spawn[me.team]) <= MAP.fountainR };
     return snap;

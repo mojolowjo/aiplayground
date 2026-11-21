@@ -35,16 +35,38 @@
   .slot.nomana::after { content: 'no mana'; position: absolute; left: 0; right: 0; bottom: 14px; font-size: 10px; font-weight: 700; color: #8fc4ff; text-shadow: 0 0 3px #000, 0 0 3px #000; } .slot.up { border-color: #ffd24a; box-shadow: 0 0 8px #ffd24a; }
   .slot .pips { position: absolute; bottom: 1px; text-shadow: 0 0 2px #000; left: 0; right: 0; font-size: 8px; letter-spacing: 1px; color: #ffd24a; }
   #stats { margin-left: 10px; font-size: 12px; color: #b8c7d1; line-height: 1.45; white-space: nowrap; }
-  #tip { display: none; max-width: 300px; pointer-events: none; padding: 8px 10px; font-size: 13px; z-index: 5; }
+  #tip { display: none; max-width: 300px; line-height: 1.4; pointer-events: none; padding: 8px 10px; font-size: 13px; z-index: 5; }
   #top { top: 8px; left: 50%; transform: translateX(-50%); padding: 6px 14px; display: none; font-size: 15px; white-space: nowrap; }
-  #shop { top: 60px; right: 10px; width: 280px; display: none; padding: 10px; }
+  #shop { top: 56px; right: 10px; width: 800px; max-width: calc(100vw - 20px); display: none; padding: 10px; z-index: 3; }
+  .shead small, .sfoot { color: #9fb2bf; font-size: 12px; } .sbody { display: flex; gap: 10px; margin: 8px 0; height: min(430px, 55vh); }
+  .sleft { width: 128px; flex: none; } #shopSearch { width: 100%; box-sizing: border-box; margin-bottom: 6px; user-select: text; }
+  .tab { padding: 5px 8px; border-radius: 4px; cursor: pointer; } .tab:hover { background: #22323d; } .tab.on { background: #2a6fb0; color: #fff; }
+  #shopGrid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; align-content: start; }
+  .cell { border: 1px solid #33485a; border-radius: 6px; padding: 5px 3px; text-align: center; cursor: pointer; background: #101a20; }
+  .cell:hover { border-color: #6f8fa8; } .cell.sel { border-color: #ffd24a; } .cell.no .iic, .cell.no .cn { opacity: .4; }
+  .cell .iic { width: 40px; height: 40px; margin: 0 auto 3px; } .cn { display: block; font-size: 11px; line-height: 1.15; height: 26px; overflow: hidden; }
+  .cp { color: #ffd24a; font-weight: 700; font-size: 12px; } .cp.poor { color: #ff6b6b; } .gold { color: #ffd24a; }
+  .build { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; } .step { display: flex; gap: 4px; align-items: center; padding: 3px; border: 2px solid transparent; border-radius: 8px; }
+  .step .cell { width: 78px; } .step.next { border-color: #6fe08a; background: #16301f; } .arrow, .or { color: #9fb2bf; } .none { grid-column: 1 / -1; color: #9fb2bf; font-size: 12px; padding: 6px 2px; }
+  #shopInfo { width: 230px; flex: none; overflow-y: auto; font-size: 13px; line-height: 1.45; border-left: 1px solid #33485a; padding-left: 10px; }
+  .dhead { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; } .dicon { width: 44px; height: 44px; flex: none; } .dhead small { color: #9fb2bf; }
+  .pas { color: #ffe9a0; margin-top: 5px; } .sub { color: #9fb2bf; font-size: 12px; margin-top: 8px; } .row { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; margin-top: 3px; }
+  .mini-i { width: 32px; height: 32px; position: relative; cursor: pointer; } .mini-i i { position: absolute; right: -4px; bottom: -5px; color: #6fe08a; font-style: normal; font-weight: 700; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .fee { color: #ffd24a; font-size: 12px; } button.buy { width: 100%; margin-top: 10px; } .why { color: #ff8a7a; font-size: 12px; margin-top: 4px; }
+  .sfoot { display: flex; gap: 12px; align-items: center; } #shopGold { color: #e8eee9; }
+  .iic { display: flex; width: 100%; height: 100%; box-sizing: border-box; align-items: center; justify-content: center; border-radius: 7px; border: 2px solid rgba(0, 0, 0, .45); font-weight: 700; font-size: 13px; color: #fff; text-shadow: 0 1px 2px #0009; }
+  .iic.fin { border-color: #ffd24a; box-shadow: 0 0 5px #ffd24a88; }
+  .cat-attack { background: #a8413a; } .cat-magic { background: #3a62b8; } .cat-defense { background: #3c8a4c; } .cat-boots { background: #b8962a; } .cat-starter { background: #6b7480; }
+  .cat-consumable { background: #e8ecef; color: #23303a; text-shadow: none; }
   .item { display: flex; justify-content: space-between; padding: 5px 6px; border-radius: 4px; cursor: pointer; }
   .item:hover { background: #22323d; } .item.no { opacity: .4; } .item small { color: #9fb2bf; display: block; }
   #inv { margin-top: 8px; color: #b8c7d1; font-size: 12px; }
   .item > span:first-of-type { flex: 1; margin-left: 8px; } .ii { width: 36px; height: 36px; border: 1px solid #4a6276; border-radius: 5px; overflow: hidden; flex: none; }
   .item b { align-self: center; }
-  #bag { display: grid; grid-template-columns: repeat(3, 30px); gap: 3px; margin-left: 10px; }
-  .bag { width: 30px; height: 30px; border: 1px solid #3a4c5a; border-radius: 4px; background: #101a20; overflow: hidden; }
+  #bag { display: grid; grid-template-columns: repeat(3, 34px); gap: 2px 4px; margin-left: 10px; }
+  .bagslot { text-align: center; line-height: 1; } .bagslot small { color: #8a9aa5; font-size: 9px; }
+  .bag { width: 34px; height: 34px; border: 1px solid #3a4c5a; border-radius: 6px; background: #101a20; position: relative; box-sizing: border-box; }
+  .bag .cnt { position: absolute; right: 1px; bottom: 0; font-size: 11px; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; }
   #over { top: 35%; left: 50%; transform: translate(-50%, -50%); text-align: center; display: none; padding: 24px 40px; }
   #over h1 { margin: 0 0 8px; font-size: 40px; }
   #feed { position: fixed; top: 60px; left: 12px; font-size: 14px; pointer-events: none; }
@@ -84,13 +106,16 @@
   <div id="slots"></div>
 </div>
 <div id="tip" class="panel"></div>
-<div id="shop" class="panel"><b>Shop</b> <small style="color:#9fb2bf">(P) — buy at your base</small><div id="items"></div><div id="inv"></div></div>
+<div id="shop" class="panel"></div>
 <div id="over" class="panel"><h1 id="ot"></h1><div id="or"></div><p><button id="rematch">Back to lobby</button></p></div>
 <button id="fs" title="Fullscreen also stops browser shortcuts like Ctrl+W (Chrome and Edge)">Fullscreen</button>
-<div id="help">Right-click move/attack · A + click attack-move · S stop · Q W E R abilities (Shift or Ctrl + key, or click the icon, to level up) · D F spells · B recall · P shop · Y camera lock · Space centre · T show minion targets</div>
-<script src="icons.js"></script>
-<script src="predict.js"></script>
-<script src="gfx.js"></script>
-<script src="client.js"></script>
+<div id="help">Right-click move/attack · A + click attack-move · S stop · Q W E R abilities (Shift or Ctrl + key, or click the icon, to level up) · D F spells · B recall · P shop · 1–6 drink the potion in that bag slot · Y camera lock · Space centre · T show minion targets</div>
+<!-- The shared rule modules load first; the game's own scripts follow in order once they are in place. -->
+<script type="module">
+  import * as Shop from './shared/shop.js';
+  window.Shop = Shop;
+  for (const src of ['icons.js', 'predict.js', 'gfx.js', 'shop.js', 'client.js'])
+    await new Promise((ok, fail) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = fail; document.body.appendChild(s); });
+</script>
 </body>
 </html>

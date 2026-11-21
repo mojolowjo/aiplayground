@@ -8,8 +8,10 @@
 //     what is drawn on it: position, health bar, stun / slow / mark, and whether it is mid-cast;
 //   - where it last saw the enemy, which it remembers.
 // It never reads the enemy's cooldowns, mana, orders or anything about a hero it cannot see.
+// Its dice come from the match's own seeded generator (g.rand), so a match with a bot replays exactly.
 // All its tunable numbers are in RULES.bot (sim.js). Each character's plan is in PLANS below.
-import { MAP, RULES, MINION } from './sim.js';
+import { MAP, RULES, MINION, ITEM } from './sim.js';
+import { plan, missing } from '../shared/shop.js';
 
 const other = t => (t === 'blue' ? 'red' : 'blue');
 const R = (arr, r) => arr[Math.min(r, arr.length - 1)];
@@ -36,12 +38,12 @@ function context(g, h) {
     can: s => h.ranks[s] > 0 && h.cds[s] <= T && h.mp >= R(K[s].cost, h.ranks[s] - 1) && h.silenceUntil <= T,
     // Mana discipline for pokes: keep a reserve unless the hero has no mana at all.
     spare: s => !h.mmp || h.mp - R(K[s].cost, h.ranks[s] - 1) >= B.manaReserve * h.mmp,
-    commit: () => Math.random() < cfg.commit,
+    commit: () => g.rand() < cfg.commit,
     ready: () => T >= (mem.castAt || 0),                    // enough time since its last ability
     // Where the enemy will be in `t` seconds if it keeps going the way it is going.
     lead: t => ({ x: foe.x + vx * t, y: foe.y + vy * t }),
     // Turn an aim point by a random error, so its skillshots can be dodged.
-    aim: p => { const d = hyp(p, h), an = Math.atan2(p.y - h.y, p.x - h.x) + (Math.random() * 2 - 1) * cfg.aimErr; return { x: h.x + Math.cos(an) * d, y: h.y + Math.sin(an) * d }; },
+    aim: p => { const d = hyp(p, h), an = Math.atan2(p.y - h.y, p.x - h.x) + (g.rand() * 2 - 1) * cfg.aimErr; return { x: h.x + Math.cos(an) * d, y: h.y + Math.sin(an) * d }; },
     // Is the straight path from the bot to point p free of enemy minions? (They would block a skillshot.)
     clear: (p, width, ignore) => {
       const len = hyp(p, h) || 1, ux = (p.x - h.x) / len, uy = (p.y - h.y) / len;
@@ -101,7 +103,7 @@ const PLANS = {
       if (c.can(2) && d <= K[2].range * c.B.pokeReach) { const p = c.lead(K[2].castTime + d / K[2].speed); if (c.clear(p, K[2].width)) return c.cast(2, c.aim(p)); }
       if (c.can(1) && c.spare(1) && d <= K[1].range) return c.cast(1, c.aim(c.lead(K[1].castTime + K[1].delay)));
       if (c.can(0) && c.spare(0) && c.T >= (c.mem.qAt || 0) && d <= K[0].charge.max * c.B.pokeReach) {
-        c.mem.qAt = c.T + c.cfg.qEvery * (0.7 + 0.6 * Math.random()); c.cmd({ c: 'charge', s: 0 });
+        c.mem.qAt = c.T + c.cfg.qEvery * (0.7 + 0.6 * c.g.rand()); c.cmd({ c: 'charge', s: 0 });
         return !!h.state;
       }
       return false;
@@ -130,7 +132,7 @@ const PLANS = {
       if (!c.ready()) return false;
       if (c.can(0) && c.spare(0) && T >= (mem.qAt || 0) && d <= K[0].range * c.B.pokeReach) {
         const p = c.lead(K[0].castTime + d / K[0].speed);
-        if (c.clear(p, K[0].width) && c.clear(foe, K[0].width)) { mem.qAt = T + c.cfg.qEvery * (0.7 + 0.6 * Math.random()); return c.cast(0, c.aim(p)); }
+        if (c.clear(p, K[0].width) && c.clear(foe, K[0].width)) { mem.qAt = T + c.cfg.qEvery * (0.7 + 0.6 * c.g.rand()); return c.cast(0, c.aim(p)); }
       }
       return false;
     },
@@ -160,7 +162,7 @@ const PLANS = {
       if (c.can(1) && c.spare(1) && d <= K[1].range * c.B.pokeReach) { const p = c.lead(K[1].castTime + d / K[1].speed); if (c.clear(p, K[1].width)) return c.cast(1, c.aim(p)); }
       if (c.can(0) && c.spare(0) && T >= (mem.qAt || 0) && d <= K[0].range * c.B.pokeReach) {
         const p = c.lead(K[0].castTime + d / K[0].speed);
-        if (c.clear(p, K[0].width)) { mem.qAt = T + c.cfg.qEvery * (0.7 + 0.6 * Math.random()); return c.cast(0, c.aim(p)); }
+        if (c.clear(p, K[0].width)) { mem.qAt = T + c.cfg.qEvery * (0.7 + 0.6 * c.g.rand()); return c.cast(0, c.aim(p)); }
       }
       return false;
     },
@@ -203,7 +205,7 @@ const PLANS = {
         if (c.can(0) && d <= K[0].range + foe.radius) c.cast(0, foe);
         return c.attack(foe);
       }
-      if (c.can(0) && c.ready() && T >= (mem.qAt || 0) && d <= K[0].range + foe.radius) { mem.qAt = T + c.cfg.qEvery * (0.5 + 0.5 * Math.random()); return c.cast(0, foe); }
+      if (c.can(0) && c.ready() && T >= (mem.qAt || 0) && d <= K[0].range + foe.radius) { mem.qAt = T + c.cfg.qEvery * (0.5 + 0.5 * c.g.rand()); return c.cast(0, foe); }
       return false;
     },
   },
@@ -219,7 +221,7 @@ const PLANS = {
       if (c.can(1) && c.spare(1) && d <= K[1].range) return c.cast(1, c.aim(c.lead(K[1].castTime + c.B.zoneDelay)));
       if (c.can(0) && c.spare(0) && T >= (mem.qAt || 0) && d <= K[0].range * c.B.pokeReach) {
         const p = c.lead(K[0].castTime + d / c.B.shotSpeed);
-        if (c.clear(p, K[0].width)) { mem.qAt = T + c.cfg.qEvery * (0.7 + 0.6 * Math.random()); return c.cast(0, c.aim(p)); }
+        if (c.clear(p, K[0].width)) { mem.qAt = T + c.cfg.qEvery * (0.7 + 0.6 * c.g.rand()); return c.cast(0, c.aim(p)); }
       }
       return false;
     },
@@ -257,6 +259,31 @@ function dodge(c) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Shopping, with the same buy and sell commands a player uses. It follows the hero's recommended build:
+// the opening items once, then for each step the item itself if it can pay for it, otherwise the cheapest
+// part of it that it can pay for.
+function shop(g, h, cmd) {
+  const B = RULES.bot, mem = h.aiMem, build = h.def.build || [];
+  const foe = [...g.heroes.values()].find(o => o.team !== h.team);          // who it is up against is on the scoreboard
+  const pick = st => (typeof st === 'string' || Array.isArray(st) ? st : st[foe && foe.def.dmgType === 'attack' ? 'attack' : 'ability']);
+  const owns = id => h.items.some(s => s.id === id), count = id => h.items.filter(s => s.id === id).reduce((n, s) => n + s.n, 0);
+  if (!mem.opened) { mem.opened = true; mem.step = 1; for (const id of [].concat(pick(build[0] || []))) cmd({ c: 'buy', item: id }); return; }
+  const finished = h.items.filter(s => ITEM[s.id].tier === 'finished').length;
+  if (finished < B.potionsUntilFinished && count('potion') < B.keepPotions) cmd({ c: 'buy', item: 'potion' });
+  while (mem.step < build.length && owns(pick(build[mem.step]))) mem.step++;
+  const target = mem.step < build.length ? pick(build[mem.step]) : null;
+  if (!target) return;
+  let p = plan(ITEM, h.items, target);
+  if (!p.ok && p.why === 'No free slot' && h.gold >= p.price && !h.dead) {    // make room: the starter item goes first
+    const starter = h.items.findIndex(s => ITEM[s.id].group === 'starter');
+    if (starter >= 0) { cmd({ c: 'sell', i: starter }); p = plan(ITEM, h.items, target); }
+  }
+  if (p.ok && h.gold >= p.price) return cmd({ c: 'buy', item: target });
+  const part = missing(ITEM, h.items, target).map(id => ({ id, p: plan(ITEM, h.items, id) })).filter(c => c.p.ok && c.p.price <= h.gold).sort((a, b) => a.p.price - b.p.price)[0];
+  if (part) cmd({ c: 'buy', item: part.id });
+}
+
+// ---------------------------------------------------------------------------------------------
 export function think(g, h) {
   const T = g.time, B = RULES.bot, cfg = B[h.ai], mem = h.aiMem;
   if (T < (mem.next || 0)) return;
@@ -267,11 +294,10 @@ export function think(g, h) {
 
   // Skill points and shopping (the shop only works at base or while dead, as for a player).
   if (h.points) for (const s of [3, 0, 1, 2]) cmd({ c: 'lvl', s });
-  if (h.dead || atHome) {
-    const next = (h.def.botBuild || [])[mem.bought || 0], n = h.items.length;
-    if (next) { cmd({ c: 'buy', item: next }); if (h.items.length > n) mem.bought = (mem.bought || 0) + 1; }
-  }
+  if (h.dead || atHome) shop(g, h, cmd);
   if (h.dead) return;
+  // Drink a potion (or the flask) when hurt and not already drinking.
+  if (h.hp / h.mhp < B.drinkBelow && !h.potQ.length) { const i = h.items.findIndex(s => ITEM[s.id].use && s.n > 0); if (i >= 0) cmd({ c: 'use', i }); }
 
   const c = context(g, h), plan = PLANS[h.hero] || {}, foe = c.foe;
   c.safe = !c.underFoeTower(h);
@@ -302,7 +328,7 @@ export function think(g, h) {
   // Last hit: attack a minion when one attack will kill it by the time the attack lands.
   const noise = mem.noise || (mem.noise = new Map());
   // How well it judges a minion: a factor on the damage it thinks it will do; 0 means it never tries for it.
-  c.judge = m => { if (!noise.has(m.id)) noise.set(m.id, Math.random() < cfg.skip ? 0 : 1 + (Math.random() * 2 - 1) * cfg.hitErr); return noise.get(m.id); };
+  c.judge = m => { if (!noise.has(m.id)) noise.set(m.id, g.rand() < cfg.skip ? 0 : 1 + (g.rand() * 2 - 1) * cfg.hitErr); return noise.get(m.id); };
   // What a minion's other attackers will do to it per second.
   c.incoming = m => {
     let dps = 0;
@@ -339,7 +365,7 @@ export function think(g, h) {
   if (foe && c.safe) {
     const inRange = g.inRange(h, foe, B.tradeReach);
     if (mem.tradeUntil > T && inRange) return cmd({ c: 'atk', id: foe.id });
-    if (inRange && Math.random() < cfg.trade * cfg.react) { mem.tradeUntil = T + B.tradeFor; return cmd({ c: 'atk', id: foe.id }); }
+    if (inRange && g.rand() < cfg.trade * cfg.react) { mem.tradeUntil = T + B.tradeFor; return cmd({ c: 'atk', id: foe.id }); }
   }
 
   // Otherwise wait at a safe spot: a little behind its most advanced minion and off to one side, never

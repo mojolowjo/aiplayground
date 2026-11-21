@@ -5,6 +5,9 @@
 // onAttackHit (runs when the hero's attack lands), recast / onTick / onLeave (for abilities that put the
 // hero into a state).
 // Optional hero `passive` hooks: onAttack, onKill, beforeDamage, plus wait / count for the HUD.
+// Each hero also has a recommended `build` (the shop's Recommended tab, and what the bot buys): a list of steps,
+// where a step is an item id, a list bought together at the start, or { attack, ability } to choose by what
+// the enemy mostly deals (their `dmgType`).
 // Regen values are per second. "Bonus AD" is attack damage from items (h.bonusAd).
 
 const R = (arr, r) => arr[Math.min(r, arr.length - 1)];
@@ -15,7 +18,7 @@ const list = a => a.join('/'), pct = a => a.map(v => Math.round(v * 100)).join('
 
 export const HEROES = {
   oriel: {
-    name: 'Oriel', botBuild: ['boots', 'tome', 'staff', 'crystal', 'staff', 'staff'], role: 'Mage', color: '#c58bff',
+    name: 'Oriel', build: [['starterring', 'potion', 'potion'], 'codex', 'emberorb', 'casterboots', 'crown', 'voidstaff', 'doomstaff'], dmgType: 'ability', role: 'Mage', color: '#c58bff',
     hp: 560, hpPer: 90, mana: 420, manaPer: 30, ad: 52, adPer: 3, as: 0.63, asPer: 1.5,
     armor: 21, armorPer: 4, mr: 30, mrPer: 1.3, ms: 330, range: 550, melee: false,
     projSpeed: 1600, windup: 0.22, hpRegen: 0.7, manaRegen: 2.2,
@@ -61,7 +64,7 @@ export const HEROES = {
 // Gorrum, the Salvage Hulk: a grab tank. Forced movement, an empowered attack, and one ability
 // with a passive mode and an active mode.
 HEROES.gorrum = {
-  name: 'Gorrum', botBuild: ['boots', 'gem', 'plating', 'cloak', 'gem', 'tome'], role: 'Grab tank', color: '#c9973f',
+  name: 'Gorrum', build: [['startershield', 'potion', 'potion'], 'heartgem', { attack: 'ironboots', ability: 'spiritboots' }, 'frostplate', 'spiritcloak', 'thornmail', 'titanheart'], dmgType: 'attack', role: 'Grab tank', color: '#c9973f',
   hp: 600, hpPer: 109, mana: 267, manaPer: 40, ad: 62, adPer: 3.5, as: 0.625, asPer: 1.13,
   armor: 37, armorPer: 4.7, mr: 32, mrPer: 2.05, ms: 325, range: 125, melee: true,
   windup: 0.25, hpRegen: 1.5, hpRegenPer: 0.15, manaRegen: 1.7, manaRegenPer: 0.16,
@@ -136,7 +139,7 @@ HEROES.gorrum = {
 // (telling the mark what the ability cost, because the mark pays that back).
 const landed = (g, h, t, cost, pop = true) => { HEROES.wren.passive.gain(g, h); if (pop) g.popMark(h, t, { cost }); };
 HEROES.wren = {
-  name: 'Wren Ashby', botBuild: ['boots', 'blade', 'dagger', 'greatblade', 'greatblade', 'dagger'], role: 'Marksman', color: '#f0c05a',
+  name: 'Wren Ashby', build: [['starterblade', 'potion'], 'edge', 'hasteboots', 'duskblade', 'critblade', 'longbow', 'ruinblade'], dmgType: 'attack', role: 'Marksman', color: '#f0c05a',
   hp: 600, hpPer: 102, mana: 375, manaPer: 70, ad: 60, adPer: 3.75, as: 0.625, asPer: 2.5,
   armor: 24, armorPer: 4.2, mr: 33, mrPer: 1.1, ms: 325, range: 550, melee: false,
   projSpeed: 2000, shot: 'light', windup: 0.188, hpRegen: 0.8, hpRegenPer: 0.13, manaRegen: 1.7, manaRegenPer: 0.2,
@@ -215,7 +218,7 @@ const slash = (g, h) => {
 };
 const dropBlade = (g, h, x, y, delay) => g.drop(h, x, y, delay, { kind: 'blade', r: BLADE.r, life: BLADE.life, onTake: () => slash(g, h) });
 HEROES.sable = {
-  name: 'Sable Venn', botBuild: ['boots', 'blade', 'tome', 'greatblade', 'staff', 'gem'], role: 'Assassin', color: '#b9c8ec',
+  name: 'Sable Venn', build: [['startershield', 'potion', 'potion'], 'codex', 'casterboots', 'hexblade', 'emberorb', 'voidstaff', 'doomstaff'], dmgType: 'ability', role: 'Assassin', color: '#b9c8ec',
   manaless: true, mana: 0, manaPer: 0, manaRegen: 0,
   hp: 672, hpPer: 108, ad: 58, adPer: 3.2, as: 0.658, asPer: 2.74,
   armor: 32, armorPer: 4.7, mr: 32, mrPer: 2.05, ms: 335, range: 125, melee: true,
@@ -293,7 +296,7 @@ HEROES.sable = {
 // Kessa is built from two shared pieces in sim.js: g.strike (telegraph -> delay -> resolve) and the ability
 // state machine (g.enter / g.leave). Each ability below is one of those, or both, with different numbers.
 HEROES.kessa = {
-  name: 'Kessa', botBuild: ['boots', 'tome', 'crystal', 'staff', 'staff', 'staff'], role: 'Artillery', color: '#6fb6e8',
+  name: 'Kessa', build: [['starterring', 'potion', 'potion'], 'spellbook', 'crown', 'casterboots', 'voidstaff', 'doomstaff', 'emberorb'], dmgType: 'ability', role: 'Artillery', color: '#6fb6e8',
   hp: 575, hpPer: 106, mana: 400, manaPer: 22, ad: 55, adPer: 3, as: 0.658, asPer: 1.36,
   armor: 22, armorPer: 4.7, mr: 30, mrPer: 1.3, ms: 340, range: 525, melee: false,
   projSpeed: 1500, shot: 'orb', windup: 0.2, hpRegen: 1.1, hpRegenPer: 0.11, manaRegen: 1.37, manaRegenPer: 0.16,
@@ -371,16 +374,93 @@ export const SPELLS = {
     cast(g, h) { g.heal(h, byLevel(this.heal1, this.heal18, h.lvl)); g.addBuff(h, 'haste', this.haste, this.hasteFor); } },
 };
 
+// ---------------------------------------------------------------------------------------------
+// Items. Three tiers that combine: parts -> mid items -> finished items (plus boots, starters, consumables).
+//   cost      the total price when bought from nothing (= the recipe's totals + fee)
+//   recipe    ids of the items it is built from; `fee` is what combining them costs
+//   stats     added to the hero in Game.refresh()
+//   passive   { id, name, desc, ...numbers }: the engine looks effects up by id. `stats` inside a passive are
+//             stats that count once however many copies are owned (passives are unique).
+//   group     only one item of a group fits in the bag (boots / starter / flask)
+//   stack     how many fit in one slot (potions); charges: uses before a refill at base (flask)
+//   use       what drinking it does
+const pc = v => Math.round(v * 1000) / 10;   // 0.06 -> 6
 export const ITEMS = [
-  { id: 'blade', name: 'Blade', cost: 350, desc: '+10 attack damage', stats: { ad: 10 } },
-  { id: 'greatblade', name: 'Greatblade', cost: 1300, desc: '+40 attack damage', stats: { ad: 40 } },
-  { id: 'tome', name: 'Tome', cost: 400, desc: '+20 ability power', stats: { ap: 20 } },
-  { id: 'staff', name: 'Staff', cost: 1200, desc: '+65 ability power', stats: { ap: 65 } },
-  { id: 'dagger', name: 'Dagger', cost: 250, desc: '+10% attack speed', stats: { as: 10 } },
-  { id: 'gem', name: 'Gem', cost: 400, desc: '+150 health', stats: { hp: 150 } },
-  { id: 'crystal', name: 'Crystal', cost: 300, desc: '+300 mana', stats: { mana: 300 } },
-  { id: 'plating', name: 'Plating', cost: 300, desc: '+15 armor', stats: { armor: 15 } },
-  { id: 'cloak', name: 'Cloak', cost: 400, desc: '+20 magic resist', stats: { mr: 20 } },
-  { id: 'boots', name: 'Boots', cost: 300, desc: '+25 move speed (one pair only)', stats: { ms: 25 }, unique: true },
-  { id: 'potion', name: 'Potion', cost: 50, desc: 'Restores 120 health over 15s (used on purchase)', potion: { heal: 120, over: 15 } },
+  // --- parts
+  { id: 'blade', name: 'Blade', cat: 'attack', tier: 'part', cost: 350, stats: { ad: 10 } },
+  { id: 'tome', name: 'Tome', cat: 'magic', tier: 'part', cost: 400, stats: { ap: 20 } },
+  { id: 'dagger', name: 'Dagger', cat: 'attack', tier: 'part', cost: 250, stats: { as: 10 } },
+  { id: 'gem', name: 'Gem', cat: 'defense', tier: 'part', cost: 400, stats: { hp: 150 } },
+  { id: 'crystal', name: 'Crystal', cat: 'magic', tier: 'part', cost: 300, stats: { mana: 300 } },
+  { id: 'plating', name: 'Plating', cat: 'defense', tier: 'part', cost: 300, stats: { armor: 15 } },
+  { id: 'cloak', name: 'Cloak', cat: 'defense', tier: 'part', cost: 400, stats: { mr: 20 } },
+  { id: 'boots', name: 'Boots', cat: 'boots', tier: 'part', cost: 300, stats: { ms: 25 }, group: 'boots' },
+  { id: 'greatblade', name: 'Greatblade', cat: 'attack', tier: 'part', cost: 1300, stats: { ad: 40 } },
+  { id: 'staff', name: 'Staff', cat: 'magic', tier: 'part', cost: 1200, stats: { ap: 65 } },
+  { id: 'bead', name: 'Bead', cat: 'defense', tier: 'part', cost: 300, stats: { hpRegen: 1 } },
+  { id: 'charm', name: 'Charm', cat: 'magic', tier: 'part', cost: 250, stats: { manaRegen: 0.5 } },
+  { id: 'gear', name: 'Gear', cat: 'magic', tier: 'part', cost: 300, stats: { haste: 8 } },
+  { id: 'cape', name: 'Cape', cat: 'attack', tier: 'part', cost: 600, stats: { crit: 15 } },
+  // --- mid items
+  { id: 'leechblade', name: 'Leech Blade', cat: 'attack', tier: 'mid', cost: 900, recipe: ['blade'], fee: 550, stats: { ad: 15, lifesteal: 7 } },
+  { id: 'edge', name: 'Edge', cat: 'attack', tier: 'mid', cost: 1100, recipe: ['blade', 'gear'], fee: 450, stats: { ad: 20, haste: 10 } },
+  { id: 'bow', name: 'Bow', cat: 'attack', tier: 'mid', cost: 1000, recipe: ['dagger', 'dagger'], fee: 500, stats: { as: 25 } },
+  { id: 'spellbook', name: 'Spellbook', cat: 'magic', tier: 'mid', cost: 1200, recipe: ['tome', 'crystal'], fee: 500, stats: { ap: 40, mana: 300, haste: 10 } },
+  { id: 'codex', name: 'Codex', cat: 'magic', tier: 'mid', cost: 900, recipe: ['tome', 'gear'], fee: 200, stats: { ap: 35, haste: 10 } },
+  { id: 'belt', name: 'Belt', cat: 'defense', tier: 'mid', cost: 900, recipe: ['gem'], fee: 500, stats: { hp: 350 } },
+  { id: 'heartgem', name: 'Heart Gem', cat: 'defense', tier: 'mid', cost: 800, recipe: ['gem', 'gear'], fee: 100, stats: { hp: 200, haste: 10 } },
+  { id: 'chainmail', name: 'Chain Mail', cat: 'defense', tier: 'mid', cost: 800, recipe: ['plating'], fee: 500, stats: { armor: 40 } },
+  { id: 'mantle', name: 'Mantle', cat: 'defense', tier: 'mid', cost: 900, recipe: ['cloak'], fee: 500, stats: { mr: 40 } },
+  { id: 'piercer', name: 'Piercer', cat: 'attack', tier: 'mid', cost: 1100, recipe: ['blade'], fee: 750, stats: { ad: 20, armorPen: 15 } },
+  { id: 'voidshard', name: 'Void Shard', cat: 'magic', tier: 'mid', cost: 1000, recipe: ['tome'], fee: 600, stats: { ap: 25, magicPenFlat: 10 } },
+  { id: 'swiftcape', name: 'Swift Cape', cat: 'attack', tier: 'mid', cost: 1100, recipe: ['dagger', 'cape'], fee: 250, stats: { as: 15, crit: 15 } },
+  // --- finished items: magic
+  { id: 'crown', name: 'Crown', cat: 'magic', tier: 'finished', cost: 2900, recipe: ['spellbook', 'codex'], fee: 800, stats: { ap: 90, mana: 300, haste: 20 },
+    passive: { id: 'overflow', name: 'Overflow', apPerMana: 0.02, get desc() { return `gain ability power equal to ${pc(this.apPerMana)}% of max mana.`; } } },
+  { id: 'doomstaff', name: 'Doom Staff', cat: 'magic', tier: 'finished', cost: 3500, recipe: ['staff', 'staff'], fee: 1100, stats: { ap: 120 },
+    passive: { id: 'magnify', name: 'Magnify', mult: 1.3, get desc() { return `your total ability power is increased by ${pc(this.mult - 1)}%.`; } } },
+  { id: 'voidstaff', name: 'Void Staff', cat: 'magic', tier: 'finished', cost: 3000, recipe: ['voidshard', 'staff'], fee: 800, stats: { ap: 90 },
+    passive: { id: 'hollow', name: 'Hollow', stats: { magicPenPct: 35 }, get desc() { return `your magic damage ignores ${this.stats.magicPenPct}% of the target's magic resist.`; } } },
+  { id: 'emberorb', name: 'Ember Orb', cat: 'magic', tier: 'finished', cost: 2800, recipe: ['codex', 'belt'], fee: 1000, stats: { ap: 75, hp: 350, haste: 15 },
+    passive: { id: 'burn', name: 'Burn', tick: 0.005, every: 0.5, lasts: 3,
+      get desc() { return `your abilities set enemy heroes burning for ${pc(this.tick / this.every)}% of their max health as magic damage each second for ${this.lasts}s. Hitting them again restarts it; it does not stack.`; } } },
+  // --- finished items: attack
+  { id: 'critblade', name: 'Crit Blade', cat: 'attack', tier: 'finished', cost: 3350, recipe: ['greatblade', 'cape', 'blade'], fee: 1100, stats: { ad: 60, crit: 25 },
+    passive: { id: 'keen', name: 'Keen', critDmg: 2.15, get desc() { return `your critical strikes deal ${pc(this.critDmg)}% damage instead of 175%.`; } } },
+  { id: 'stormbow', name: 'Storm Bow', cat: 'attack', tier: 'finished', cost: 2800, recipe: ['swiftcape', 'bow'], fee: 700, stats: { as: 40, crit: 25, ms: 20 } },
+  { id: 'ruinblade', name: 'Ruin Blade', cat: 'attack', tier: 'finished', cost: 3200, recipe: ['leechblade', 'bow'], fee: 1300, stats: { ad: 40, as: 25, lifesteal: 10 },
+    passive: { id: 'rend', name: 'Rend', share: 0.06, minionCap: 60,
+      get desc() { return `each basic attack deals extra physical damage equal to ${pc(this.share)}% of the target's current health (at most ${this.minionCap} against minions, none against towers).`; } } },
+  { id: 'longbow', name: 'Long Bow', cat: 'attack', tier: 'finished', cost: 2600, recipe: ['piercer', 'cape'], fee: 900, stats: { ad: 35, crit: 25, armorPen: 30 } },
+  { id: 'duskblade', name: 'Dusk Blade', cat: 'attack', tier: 'finished', cost: 3000, recipe: ['piercer', 'edge'], fee: 800, stats: { ad: 60, haste: 20, armorPen: 20 },
+    passive: { id: 'ambush', name: 'Ambush', window: 4, base: 40, bonusAd: 0.3, lockout: 6,
+      get desc() { return `casting an ability charges the blade for ${this.window}s: your next basic attack deals ${this.base} + ${pc(this.bonusAd)}% bonus AD extra physical damage. It cannot charge again for ${this.lockout}s after that.`; } } },
+  { id: 'hexblade', name: 'Hexblade', cat: 'attack', tier: 'finished', cost: 2900, recipe: ['leechblade', 'codex'], fee: 1100, stats: { ad: 40, ap: 80, haste: 10, lifesteal: 10 },
+    passive: { id: 'drain', name: 'Drain', share: 1 / 3, get desc() { return 'your ability damage also heals you, at one third of your lifesteal.'; } } },
+  // --- finished items: defense
+  { id: 'thornmail', name: 'Thorn Mail', cat: 'defense', tier: 'finished', cost: 2600, recipe: ['chainmail', 'belt'], fee: 900, stats: { armor: 70, hp: 350 },
+    passive: { id: 'barbs', name: 'Barbs', base: 10, bonusArmor: 0.1, get desc() { return `an enemy hero who hits you with a basic attack takes ${this.base} + ${pc(this.bonusArmor)}% of your bonus armor as magic damage.`; } } },
+  { id: 'spiritcloak', name: 'Spirit Cloak', cat: 'defense', tier: 'finished', cost: 2700, recipe: ['mantle', 'heartgem'], fee: 1000, stats: { mr: 60, hp: 400, haste: 10 },
+    passive: { id: 'vigor', name: 'Vigor', stats: { healAmp: 25 }, get desc() { return `all healing and regeneration you receive is increased by ${this.stats.healAmp}%.`; } } },
+  { id: 'titanheart', name: 'Titan Heart', cat: 'defense', tier: 'finished', cost: 3000, recipe: ['belt', 'belt', 'bead'], fee: 900, stats: { hp: 800, hpRegen: 2 },
+    passive: { id: 'recover', name: 'Recover', after: 6, share: 0.004,
+      get desc() { return `after ${this.after}s without damage from an enemy hero, regenerate an extra ${pc(this.share)}% of your max health each second.`; } } },
+  { id: 'frostplate', name: 'Frost Plate', cat: 'defense', tier: 'finished', cost: 2500, recipe: ['chainmail', 'heartgem'], fee: 900, stats: { armor: 60, hp: 300, haste: 15 },
+    passive: { id: 'chill', name: 'Chill', as: 20, lasts: 2, get desc() { return `an enemy hero who hits you with a basic attack loses ${this.as}% attack speed for ${this.lasts}s.`; } } },
+  // --- boots (one pair at a time)
+  { id: 'swiftboots', name: 'Swift Boots', cat: 'boots', tier: 'mid', cost: 1000, recipe: ['boots'], fee: 700, stats: { ms: 55 }, group: 'boots' },
+  { id: 'battleboots', name: 'Battle Boots', cat: 'boots', tier: 'mid', cost: 1000, recipe: ['boots', 'dagger'], fee: 450, stats: { ms: 45, as: 25 }, group: 'boots' },
+  { id: 'casterboots', name: 'Caster Boots', cat: 'boots', tier: 'mid', cost: 1100, recipe: ['boots'], fee: 800, stats: { ms: 45, magicPenFlat: 12 }, group: 'boots' },
+  { id: 'ironboots', name: 'Iron Boots', cat: 'boots', tier: 'mid', cost: 1100, recipe: ['boots', 'plating'], fee: 500, stats: { ms: 45, armor: 25 }, group: 'boots',
+    passive: { id: 'guard', name: 'Guard', less: 0.1, get desc() { return `basic attacks deal ${pc(this.less)}% less damage to you.`; } } },
+  { id: 'spiritboots', name: 'Spirit Boots', cat: 'boots', tier: 'mid', cost: 1100, recipe: ['boots', 'cloak'], fee: 400, stats: { ms: 45, mr: 25, tenacity: 30 }, group: 'boots' },
+  { id: 'hasteboots', name: 'Haste Boots', cat: 'boots', tier: 'mid', cost: 900, recipe: ['boots'], fee: 600, stats: { ms: 45, haste: 15 }, group: 'boots' },
+  // --- starters (one at a time; they do not build into anything)
+  { id: 'starterblade', name: 'Starter Blade', cat: 'starter', tier: 'starter', cost: 450, stats: { ad: 8, hp: 80, lifesteal: 3 }, group: 'starter' },
+  { id: 'starterring', name: 'Starter Ring', cat: 'starter', tier: 'starter', cost: 400, stats: { ap: 18, hp: 90, manaRegen: 0.6 }, group: 'starter' },
+  { id: 'startershield', name: 'Starter Shield', cat: 'starter', tier: 'starter', cost: 450, stats: { hp: 110, hpRegen: 0.8 }, group: 'starter',
+    passive: { id: 'secondwind', name: 'Second Wind', regen: 3, lasts: 6, get desc() { return `after taking damage from an enemy hero, regenerate ${this.regen} extra health each second for ${this.lasts}s.`; } } },
+  // --- consumables (carried, and drunk with the slot's number key)
+  { id: 'potion', name: 'Potion', cat: 'consumable', tier: 'consumable', cost: 50, stack: 5, use: { heal: 120, over: 15 } },
+  { id: 'flask', name: 'Refill Flask', cat: 'consumable', tier: 'consumable', cost: 150, group: 'flask', charges: 3, use: { heal: 100, over: 12 } },
 ];

@@ -92,7 +92,7 @@ $('rematch').onclick = () => send({ t: 'rematch' });
 $('name').onchange = () => { localStorage.ldName = $('name').value; };
 
 // ---------- HUD ----------
-let slotEls = [], myHero = '', bagKey = null;
+let slotEls = [], myHero = '';
 function buildSlots() {
   const el = $('slots'); el.innerHTML = ''; slotEls = [];
   const defs = [...(myDef.passive ? [{ ...myDef.passive, pv: true, key: '' }] : []), ...myDef.abilities.map((a, i) => ({ ...a, i })), ...['KeyD', 'KeyF'].map(k => ({ ...hello.spells[spellKey()[k]], sp: spellKey()[k], key: k[3] }))];
@@ -103,22 +103,13 @@ function buildSlots() {
       const cds = Array.isArray(a.cd) ? a.cd.join('/') : a.cd, range = Array.isArray(a.range) ? a.range.join('/') : a.range;
       t.innerHTML = a.pv ? `<b>${a.name}</b> (passive)<br>${a.desc}` :
         `<b>${a.name}</b> (${a.key})<br>${a.desc}<br><small style="color:#9fb2bf">Cooldown ${cds}s${a.cost && a.cost.some(c => c > 0) ? ' · Mana ' + a.cost.join('/') : ''}${range ? ' · Range ' + range : ''}</small>`;
-      const r = d.getBoundingClientRect(); t.style.left = r.left + 'px'; t.style.bottom = (innerHeight - r.top + 8) + 'px'; };
+      const r = d.getBoundingClientRect(); t.style.left = r.left + 'px'; t.style.bottom = (innerHeight - r.top + 8) + 'px'; t.style.top = 'auto'; };
     d.onmouseleave = () => { $('tip').style.display = 'none'; };
     if (!a.sp && !a.pv) d.onclick = () => cmd({ c: 'lvl', s: a.i });
     el.appendChild(d); slotEls.push({ d, a, sweep: d.children[1], cdEl: d.children[3], pips: d.children[4] });
   }
   const s = document.createElement('div'); s.id = 'stats'; el.appendChild(s);
-  const b = document.createElement('div'); b.id = 'bag'; el.appendChild(b); bagKey = null;
-}
-function buildShop() {
-  $('items').innerHTML = '';
-  for (const it of hello.items) {
-    const d = document.createElement('div'); d.className = 'item'; d.dataset.id = it.id;
-    d.innerHTML = `<div class="ii">${ICON(it.id)}</div><span>${it.name}<small>${it.desc}</small></span><b style="color:#ffd24a">${it.cost}</b>`;
-    d.onclick = () => cmd({ c: 'buy', item: it.id });
-    $('items').appendChild(d);
-  }
+  const b = document.createElement('div'); b.id = 'bag'; b.onclick = bagClick; el.appendChild(b); SHOP.bagDrawn = '';
 }
 function setBar(id, v, m, text) { const b = $(id); b.firstChild.style.width = (m ? 100 * v / m : 0) + '%'; if (text && b.children[1]) b.children[1].textContent = `${Math.max(0, v)} / ${m}`; }
 function updateHud() {
@@ -143,23 +134,17 @@ function updateHud() {
       pips.textContent = '●'.repeat(rank);
     }
   }
-  $('stats').innerHTML = `Lv ${meUnit.lvl} · <b style="color:#ffd24a">${me.gold}g</b> · CS ${meUnit.cs} · missed ${me.miss}<br>AD ${me.ad} · AP ${me.ap} · AS ${me.as}<br>Armor ${me.ar} · MR ${me.mr} · MS ${me.ms}`;
-  if (bagKey !== me.items.join()) {
-    bagKey = me.items.join();
-    $('bag').innerHTML = Array.from({ length: 6 }, (_, i) => { const it = hello.items.find(x => x.id === me.items[i]);
-      const sell = it ? ` — standing at base with the shop open (P), click to sell for ${Math.round(it.cost * hello.rules.sellBack)}g` : '';
-      return `<div class="bag" data-i="${i}" title="${it ? it.name + ': ' + it.desc + sell : ''}">${it ? ICON(it.id) : ''}</div>`; }).join('');
-    $('bag').onclick = e => { const d = e.target.closest('.bag'); if (d && shopOpen && me.sell && me.items[d.dataset.i]) cmd({ c: 'sell', i: +d.dataset.i }); };
-  }
+  // Item stats only take up room once you have some.
+  const extra = [me.hs && `Haste ${me.hs}`, me.cr && `Crit ${me.cr}%`, me.ls && `Lifesteal ${me.ls}%`, me.apn && `Armor pen ${me.apn}%`,
+    (me.mpp || me.mpf) && `Magic pen ${[me.mpp && me.mpp + '%', me.mpf].filter(Boolean).join(' + ')}`].filter(Boolean);
+  $('stats').innerHTML = `Lv ${meUnit.lvl} · <b style="color:#ffd24a">${me.gold}g</b> · CS ${meUnit.cs} · missed ${me.miss}<br>AD ${me.ad} · AP ${me.ap} · AS ${me.as}<br>Armor ${me.ar} · MR ${me.mr} · MS ${me.ms}` +
+    (extra.length ? '<br>' + extra.slice(0, 3).join(' · ') + (extra.length > 3 ? '<br>' + extra.slice(3).join(' · ') : '') : '');
+  renderBag();
   const cur = snaps[snaps.length - 1];
   const sc = t => `<span style="color:${TEAM[t]}">${esc(cur.sc[t].n)} ${cur.sc[t].k}K ${cur.sc[t].cs}CS</span>`;
   const tm = cur.time | 0;
   $('top').innerHTML = `${sc('b')} &nbsp; ${tm / 60 | 0}:${String(tm % 60).padStart(2, '0')} &nbsp; ${sc('r')} &nbsp; <small style="color:#8a9aa5">${ping}ms</small>`;
-  $('shop').style.display = shopOpen ? 'block' : 'none';
-  if (shopOpen) {
-    document.querySelectorAll('.item').forEach(d => { const it = hello.items.find(i => i.id === d.dataset.id); d.classList.toggle('no', !me.shop || me.gold < it.cost); });
-    $('inv').textContent = !me.shop ? 'Return to base to buy or sell' : `Gold: ${me.gold} · ${6 - me.items.length} slots free · ` + (me.sell ? `click an item in your bag to sell it for ${hello.rules.sellBack * 100}%` : 'selling needs you alive at base');
-  }
+  renderShop();
 }
 function feed(text) {
   const d = document.createElement('div'); d.textContent = text; $('feed').appendChild(d); setTimeout(() => d.remove(), 6000);
@@ -251,6 +236,7 @@ addEventListener('mousemove', e => {
 addEventListener('mousedown', e => {
   if (!inGame || !hello || e.target.closest('#over')) return;
   [mouse.wx, mouse.wy] = toWorld(e.clientX, e.clientY);
+  if (e.button === 2 && e.target.closest('[data-item]')) return;                 // right-click on a shop item buys it; it is not a move order
   if (e.button === 2) { mouse.rdown = true; pendingA = false; rightClick(e.shiftKey); }
   else if (e.button === 0 && pendingA && e.target === cv) {
     pendingA = false; Predict.release(pred); const u = unitAt(mouse.wx, mouse.wy);
@@ -263,6 +249,9 @@ addEventListener('keydown', e => {
   if (!inGame || !hello || e.target.tagName === 'INPUT' || e.repeat) return;
   const k = e.code, qi = ['KeyQ', 'KeyW', 'KeyE', 'KeyR'].indexOf(k);
   [mouse.wx, mouse.wy] = toWorld(mouse.x, mouse.y);
+  const digit = /^Digit[1-6]$/.test(k) ? +k[5] - 1 : -1;
+  if (digit >= 0) return cmd({ c: 'use', i: digit });                           // 1-6: drink the potion or flask in that bag slot
+  if (k === 'KeyZ' && (e.ctrlKey || e.metaKey)) { if (shopOpen) cmd({ c: 'undo' }); return; }
   if (qi >= 0) {
     if (e.shiftKey || e.ctrlKey || e.metaKey) return cmd({ c: 'lvl', s: qi });
     const why = blocked(qi); if (why) return say(why);

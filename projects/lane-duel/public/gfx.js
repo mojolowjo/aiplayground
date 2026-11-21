@@ -216,6 +216,9 @@ function drawHero(u, a, now, teamCol, isMe) {
   if (u.em && u.h !== 'gorrum') { ell(0, 0, 68, 68, null, '#ffb84a', 4); }
   if (u.cn) { ctx.save(); ctx.rotate(now * 9); for (let i = 0; i < 6; i++) { ctx.rotate(TAU / 6); for (const [c2, lw] of [[OUT, 9], ['#eaf4ff', 5]]) { ctx.strokeStyle = c2; ctx.lineWidth = lw; ctx.beginPath(); ctx.arc(78, 0, 20, -1.1, 1.1); ctx.stroke(); } } ctx.restore(); glow(0, 0, 120, '#bcd0ff', 0.35); }
   if (u.h === 'wren') for (let i = 0; i < u.pn; i++) ell((i - (u.pn - 1) / 2) * 17, 86, 5.5, 5.5, '#ffd870', OUT, 2);
+  if (u.ab) { glow(0, 0, 105, '#b070ff', 0.45 + 0.2 * Math.sin(now * 9)); ell(0, 0, 74, 74, null, '#c9a0ff', 3); }      // Dusk Blade charged
+  if (u.fz) { for (let i = 0; i < 3; i++) { const an = i * TAU / 3 + 0.4; seg(-Math.cos(an) * 13, -104 - Math.sin(an) * 13, Math.cos(an) * 13, -104 + Math.sin(an) * 13, '#9fe0ff', 3); } }   // chilled: slower attacks
+  if (u.bn && Math.random() < 0.5) burstParts(u.x + (Math.random() - 0.5) * 50, u.y + (Math.random() - 0.5) * 50, 1, { color: '#ff9a4a', speed: 40, life: 0.5, size: 7, glow: true, vy: -70 });   // burning
   if (u.si) { ell(0, -112, 14, 14, '#2a1840', '#c58bff', 3); seg(-9, -103, 9, -121, '#c58bff', 3.5); }
   if (u.pr && u.h === 'kessa') { const pu = 0.5 + 0.5 * Math.sin(now * 6); for (let i = 0; i < 3; i++) { const an = now * 2.4 + i * TAU / 3; ell(Math.cos(an) * 66, Math.sin(an) * 66, 6 + pu * 2, 6 + pu * 2, '#7fb8ff', OUT, 2); } }
   if (u.sh) { const pu = 1 + Math.sin(now * 8) * 0.03; ell(0, 0, 72 * pu, 72 * pu, 'rgba(190,225,255,.18)', 'rgba(230,245,255,.9)', 3); }
@@ -479,7 +482,8 @@ function gfxEvent(e, now, myId) {
     if (e.s || e.n > 40) animGet(e.id).flash = now + 0.06;
     const col = e.ty === 'm' ? '#c9a0ff' : e.ty === 't' ? '#ffffff' : '#ffd9a0';
     burstParts(e.x, e.y, e.s ? 7 : 2, { color: col, speed: 220, life: e.s ? 0.3 : 0.2, size: e.s ? 5 : 3.5, glow: !!e.s, alpha: e.s ? 1 : 0.7 });
-    if (e.s === myId && e.k !== 'm') floater(e.x, e.y, e.n, '#ffffff', e.n > 150 ? 20 : 15);
+    if (e.cr && (e.s === myId || e.id === myId)) floater(e.x, e.y, e.n + '!', '#ffb02e', 26);          // a critical strike: bigger, orange, with a "!"
+    else if (e.s === myId && e.k !== 'm') floater(e.x, e.y, e.n, '#ffffff', e.n > 150 ? 20 : 15);
     else if (e.s === myId) floater(e.x, e.y, e.n, '#d8d8d8', 11);
     else if (e.id === myId) { floater(e.x, e.y, e.n, '#ff6b6b', e.n > 100 ? 19 : 14); if (e.n > 60) GFX.shake = Math.min(10, GFX.shake + e.n / 30); }
   } else if (e.e === 'die') {
