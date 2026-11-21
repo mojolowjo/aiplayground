@@ -62,7 +62,7 @@ The stats panel shows your CS and missed CS, and **T** draws each minion's targe
   enough that a skillshot will not fit between two that stand 100 apart. The numbers are per hero in
   `game/data.js` and per minion kind in `MINION` (`game/sim.js`).
 
-- The first wave spawns at 0:30 and the two waves meet in the middle about 25 seconds later.
+- The first wave spawns at 0:30 and the two waves meet in the middle about 23 seconds later.
 - A tower shot removes 45% of a melee minion's max health, 70% of a caster's and 14% of a
   cannon's, so under your tower a melee minion takes two tower shots and then your last hit.
 - A tower shot on a hero deals flat physical damage: 180 at the start of the game, rising to 350
