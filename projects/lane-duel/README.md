@@ -184,6 +184,7 @@ Only the files in `public/` and `shared/` are served. The limits are in `net/gua
 | Ctrl+Z (shop open) | Undo the last buy or sell |
 | 1–6 | Drink the potion or flask in that bag slot |
 | Y / Space | Toggle camera lock / centre on your character |
+| Mouse wheel | Zoom in (up) and back out (down). The default view is the furthest out; your choice is remembered |
 | Esc | Close the shop or cancel an attack-move; otherwise open **Settings** (also the ⚙ button, bottom left) |
 | T | Show what each minion is targeting (practice aid) |
 | F8 | Debug: show where the server has your hero, next to where your screen predicts it |

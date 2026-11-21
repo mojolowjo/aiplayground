@@ -9,7 +9,22 @@ const pred = Predict.create();   // movement prediction for your own hero
 let predErr = 0, showGhost = false;
 let pendingA = false, shopOpen = false, showAggro = false, fx = [], ping = 0, W = 0, H = 0, scale = 1;
 
-let zoom = 1; const MIN_ZOOM = 0.45;   // how far the camera may pull back
+// ---------- camera ----------
+// The screen always shows a fixed amount of ground from top to bottom, so a wider screen sees more to the
+// sides, never less up and down. `zoom` multiplies the scale: 1 is the default view, above 1 is closer in.
+const VIEW = {
+  height: 1640,      // world units from the top of the screen to the bottom at the default zoom (also the furthest out you can choose)
+  minHeight: 1100,   // the closest you can zoom in with the mouse wheel
+  barrageHeight: 2780, // the furthest the camera pulls back by itself (Kessa's barrage)
+  step: 1.08,        // each notch of the wheel zooms by this factor
+  ease: 5,           // how quickly the camera eases to the wanted zoom, per second
+  barragePad: 250,   // ground shown beyond the barrage's reach
+  panSpeed: 2900,    // world units per second the unlocked camera moves at the default zoom when the cursor is at a screen edge
+  store: 'ldZoom',
+};
+const MAX_ZOOM = VIEW.height / VIEW.minHeight, MIN_ZOOM = VIEW.height / VIEW.barrageHeight;
+let zoom = 1, wantZoom = 1;   // wantZoom: the player's own choice, 1..MAX_ZOOM
+try { const z = parseFloat(localStorage.getItem(VIEW.store)); if (z >= 1 && z <= MAX_ZOOM) zoom = wantZoom = z; } catch { /* storage blocked: default zoom */ }
 // Render scale (a desktop-app setting): the battlefield canvas holds fewer pixels and is stretched to fill the
 // window. Everything is still drawn in window coordinates; the canvas's base transform shrinks it. Health bars,
 // damage numbers and other text then go on a second, full-size canvas (#ui) so they stay sharp.
@@ -18,7 +33,7 @@ let RS = 1;
 function resize() {
   W = innerWidth; H = innerHeight; cv.width = Math.round(W * RS); cv.height = Math.round(H * RS);
   const split = RS < 1; ui.width = split ? W : 1; ui.height = split ? H : 1; ui.style.display = split ? 'block' : 'none';
-  scale = H / 1250 * zoom;
+  scale = H / VIEW.height * zoom;
 }
 // Frame pacing and the performance overlay.
 // samples: snapshots averaged for jitter; every: ms between overlay
@@ -239,7 +254,12 @@ addEventListener('keyup', e => { if (inGame && (e.key === 'Alt' || e.key === 'Me
 addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('dragstart', e => e.preventDefault());
 addEventListener('selectstart', e => { if (e.target.tagName !== 'INPUT') e.preventDefault(); });
-addEventListener('wheel', e => { if (e.ctrlKey || inGame) e.preventDefault(); }, { passive: false });               // no page zoom or scroll
+addEventListener('wheel', e => {
+  if (e.ctrlKey || inGame) e.preventDefault();               // no page zoom or scroll
+  if (!inGame || e.ctrlKey || !e.deltaY || e.target.closest('#shop')) return;      // the shop's lists scroll with the wheel
+  wantZoom = Math.max(1, Math.min(MAX_ZOOM, wantZoom * (e.deltaY < 0 ? VIEW.step : 1 / VIEW.step)));   // wheel up: closer
+  try { localStorage.setItem(VIEW.store, wantZoom.toFixed(3)); } catch { /* not remembered */ }
+}, { passive: false });
 for (const ev of ['mousedown', 'mouseup', 'auxclick']) addEventListener(ev, e => { if (e.button === 1 || e.button > 2) e.preventDefault(); });   // middle-click scroll, back/forward buttons
 addEventListener('beforeunload', e => { if (!Settings.inApp && inGame && !(snaps.length && snaps[snaps.length - 1].over)) { e.preventDefault(); e.returnValue = ''; } });
 async function goFullscreen() {
@@ -415,11 +435,12 @@ function frame(nowMs) {
   const mine = mi >= 0 ? st.units[mi] : undefined; lastDrawn = mine || null;
   // camera (zooms out during a barrage until the whole range fits on screen)
   const ranges = mine && mine.bg && myDef && me ? myDef.abilities[3].range : null, barrage = ranges ? ranges[Math.min(ranges.length, Math.max(1, me.ranks[3])) - 1] : 0;
-  zoom += ((barrage ? Math.max(MIN_ZOOM, Math.min(1, W / 2 / (H / 1250) / (barrage + 250))) : 1) - zoom) * Math.min(1, dt * 5); scale = H / 1250 * zoom;
+  const fit = W / 2 / (H / VIEW.height) / (barrage + VIEW.barragePad);   // the zoom at which the whole barrage range fits across the screen
+  zoom += ((barrage ? Math.max(MIN_ZOOM, Math.min(wantZoom, fit)) : wantZoom) - zoom) * Math.min(1, dt * VIEW.ease); scale = H / VIEW.height * zoom;
   const halfW = W / 2 / scale;
   // During a barrage the range is wider than the screen, so the camera follows the cursor to the screen edges
   // (within the barrage's reach) and snaps back afterwards.
-  const pan = () => { const v = 2200 / zoom * dt; if (mouse.x < 40) cam.x -= v; if (mouse.x > W - 40) cam.x += v; };
+  const pan = () => { const v = VIEW.panSpeed / zoom * dt; if (mouse.x < 40) cam.x -= v; if (mouse.x > W - 40) cam.x += v; };
   if (barrage && mine) { pan(); cam.x = Math.max(mine.x - barrage, Math.min(mine.x + barrage, cam.x)); }
   else if (cam.locked && mine && !mine.d) cam.x = mine.x;
   else if (!cam.locked) pan();
