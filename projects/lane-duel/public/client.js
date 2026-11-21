@@ -24,8 +24,10 @@ function resize() {
 // slack: ms of leeway when skipping frames; samples: snapshots averaged for jitter; every: ms between overlay
 // updates; sleepOver / wakeEarly: with V-Sync off, sleep on a timer when the next frame is more than sleepOver ms
 // away, waking wakeEarly ms before it (timers are only good to a few ms), and count down the rest precisely.
-const PERF = { slack: 1, samples: 60, every: 500, sleepOver: 5, wakeEarly: 1 };
-const perf = { due: 0, frames: 0, since: performance.now(), lastSnap: 0, gaps: [] };
+// A timer that wakes more than `late` ms after it was asked to, `lateLimit` times, is not trusted again: some
+// systems (Windows on battery, notably) only wake timers every 15 ms, which would hold the game near 60 FPS.
+const PERF = { slack: 1, samples: 60, every: 500, sleepOver: 5, wakeEarly: 1, late: 1.5, lateLimit: 3 };
+const perf = { due: 0, lateWakes: 0, wake: 0, frames: 0, since: performance.now(), lastSnap: 0, gaps: [] };
 addEventListener('resize', resize); resize();
 
 // ---------- networking ----------
@@ -288,11 +290,11 @@ Settings.onChange(cfg => {
   $('perf').style.display = cfg.overlay ? 'block' : 'none';
   if (Settings.inApp) { $('fs').textContent = cfg.windowMode === 'windowed' ? 'Fullscreen' : 'Exit fullscreen'; $('fs').title = ''; $('getApp').style.display = 'none'; }
 });
-// The frame cap in frames per second, or 0 for none. Only the desktop app has one.
+// The frame cap in frames per second, or 0 when the monitor is already pacing the frames. Only the desktop app has one.
 function fpsCap() {
   if (!Settings.inApp) return 0;
-  const v = Settings.cfg.fpsLimit;
-  return v === 'auto' ? (Settings.cfg.vsync ? 0 : Settings.meta.refreshRate || 0) : v;   // with V-Sync on the monitor already paces the frames
+  const v = Settings.cfg.fpsLimit, hz = Settings.meta.refreshRate || 0, cap = v === 'auto' ? hz : v === 0 ? Settings.MAX_FPS : v;
+  return vsyncActive() && cap >= hz ? 0 : cap;   // with V-Sync on nothing can be drawn faster than the monitor, so there is nothing to skip
 }
 function showPerf(nowMs) {
   perf.frames++;
@@ -384,10 +386,12 @@ function drawFrame(nowMs) { try { frame(nowMs); } finally { nextFrame(); } }
 function nextFrame() {
   if (!fpsCap() || vsyncActive()) return requestAnimationFrame(syncedFrame);
   const left = perf.due - performance.now();
-  if (left > PERF.sleepOver) setTimeout(clockFrame, left - PERF.wakeEarly); else pacer.port2.postMessage(0);
+  if (left > PERF.sleepOver && perf.lateWakes < PERF.lateLimit) { perf.wake = performance.now() + left - PERF.wakeEarly; setTimeout(clockFrame, left - PERF.wakeEarly); }
+  else { perf.wake = 0; pacer.port2.postMessage(0); }
 }
 function clockFrame() {
   const cap = fpsCap(), nowMs = performance.now();
+  if (perf.wake && nowMs - perf.wake > PERF.late) perf.lateWakes++;
   if (cap && nowMs < perf.due) return nextFrame();          // not yet
   if (cap) frameDue(nowMs, cap);
   drawFrame(nowMs);

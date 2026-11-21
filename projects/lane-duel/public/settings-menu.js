@@ -8,16 +8,17 @@
 const Settings = (() => {
   // The same lists as desktop/lib.js (the desktop test compares them).
   const OPTIONS = {
-    fpsLimit: ['auto', 30, 60, 120, 144, 240, 0],    // 'auto' = the monitor's refresh rate, 0 = unlimited
+    fpsLimit: ['auto', 30, 60, 120, 144, 240, 0],    // 'auto' = the monitor's refresh rate, 0 = the highest (MAX_FPS)
     renderScale: [50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100],
     effects: ['low', 'medium', 'high'],
     windowMode: ['windowed', 'borderless', 'fullscreen'],
     smoothing: [30, 45, 60, 90, 120],
   };
   const DEFAULTS = { fpsLimit: 'auto', vsync: true, renderScale: 100, effects: 'high', windowMode: 'windowed', hwAccel: true, smoothing: 60, overlay: false };
+  const MAX_FPS = 500;   // what the top FPS choice means. It is stored as 0 (it used to be "Unlimited"), so apps already downloaded keep working
   const BROWSER_KEYS = ['smoothing', 'overlay'], STORE = 'ldSettings';
   const TEXT = {
-    fpsLimit: v => (v === 'auto' ? `Monitor refresh${meta.refreshRate ? ` (${meta.refreshRate})` : ''}` : v === 0 ? 'Unlimited' : String(v)),
+    fpsLimit: v => (v === 'auto' ? `Monitor refresh${meta.refreshRate ? ` (${meta.refreshRate})` : ''}` : String(v === 0 ? MAX_FPS : v)),
     renderScale: v => v + '%',
     effects: v => ({ low: 'Low', medium: 'Medium', high: 'High' })[v],
     windowMode: v => ({ windowed: 'Windowed', borderless: 'Borderless fullscreen', fullscreen: 'Fullscreen' })[v],
@@ -112,6 +113,6 @@ const Settings = (() => {
   }
   function close() { if (box) { box.remove(); box = null; } }
 
-  return { OPTIONS, DEFAULTS, SMOOTHING_TIP, inApp: !!app, get cfg() { return cfg; }, get meta() { return meta; },
+  return { OPTIONS, DEFAULTS, MAX_FPS, SMOOTHING_TIP, inApp: !!app, get cfg() { return cfg; }, get meta() { return meta; },
     load, set, open, close, isOpen: () => !!box, onChange: f => { subs.push(f); } };
 })();

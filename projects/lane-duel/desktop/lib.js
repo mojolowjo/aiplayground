@@ -11,7 +11,7 @@ const RELEASE_TAG = /^lane-duel-v(\d+\.\d+\.\d+)$/;
 
 // Every choice the settings screen offers. public/settings-menu.js carries the same lists (the test compares them).
 const OPTIONS = {
-  fpsLimit: ['auto', 30, 60, 120, 144, 240, 0],    // 'auto' = the monitor's refresh rate, 0 = unlimited
+  fpsLimit: ['auto', 30, 60, 120, 144, 240, 0],    // 'auto' = the monitor's refresh rate, 0 = the highest (500, see settings-menu.js)
   renderScale: [50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100],
   effects: ['low', 'medium', 'high'],
   windowMode: ['windowed', 'borderless', 'fullscreen'],

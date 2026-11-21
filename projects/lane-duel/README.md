@@ -243,7 +243,7 @@ hidden.
 
 | Setting | What it does |
 |---|---|
-| FPS limit | 30 / 60 / 120 / 144 / 240 / Unlimited, or your monitor's refresh rate (the default). Going above your monitor's rate needs V-Sync off (and a restart). With V-Sync on, a limit that does not divide evenly into the monitor's rate comes out uneven |
+| FPS limit | 30 / 60 / 120 / 144 / 240 / 500, or your monitor's refresh rate (the default). Going above your monitor's rate needs V-Sync off (and a restart). With V-Sync on, a limit that does not divide evenly into the monitor's rate comes out uneven |
 | V-Sync | On by default. Off lets the game draw faster than the monitor (and can tear). Needs a restart |
 | Render scale | 50–100%. Draws the battlefield with fewer pixels and stretches it; health bars, damage numbers and the HUD stay sharp. The biggest help on a slow PC |
 | Effects quality | Low: no particles, no glow, no screen shake, at most 10 damage numbers. Medium: half the particles, glow on abilities only. High: everything |
