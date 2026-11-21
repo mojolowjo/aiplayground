@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src http: https:">
+<title>Lane Duel</title>
+<link rel="stylesheet" href="start.css">
+</head>
+<body>
+<main>
+  <h1>Lane Duel</h1>
+  <div id="notice" class="notice" hidden></div>
+  <div id="servers"></div>
+  <form id="add">
+    <input id="addName" placeholder="Name (optional)" maxlength="40">
+    <input id="addAddress" placeholder="Address, e.g. 1.2.3.4 or host:3000" maxlength="200" required>
+    <button>Add server</button>
+  </form>
+  <div id="addError" class="error" hidden>That doesn't look like a server address, or it is already on the list.</div>
+  <div class="actions">
+    <button id="showDefault" class="plain" hidden>Show main server</button>
+    <button id="settings" class="plain">Settings</button>
+    <button id="quit" class="plain">Quit</button>
+  </div>
+  <footer><span id="version"></span> <a id="update" href="#" hidden></a></footer>
+</main>
+<script src="settings-menu.js"></script>
+<script src="start.js"></script>
+</body>
+</html>

@@ -5,7 +5,8 @@
 <title>Lane Duel</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1410; color: #e8eee9; font: 14px system-ui, sans-serif; user-select: none; }
-  canvas { display: block; cursor: crosshair; }
+  canvas { display: block; cursor: crosshair; } #c { width: 100vw; height: 100vh; }
+  #ui { position: fixed; inset: 0; pointer-events: none; display: none; }   /* bars and text, when the battlefield is drawn at a lower render scale */
   .panel { position: fixed; background: rgba(12, 20, 26, .94); border: 1px solid #33485a; border-radius: 8px; padding: 16px; }
   #lobby { top: 50%; left: 50%; transform: translate(-50%, -50%); width: 640px; }
   #lobby h1 { margin: 0 0 4px; font-size: 26px; }
@@ -71,11 +72,15 @@
   #over h1 { margin: 0 0 8px; font-size: 40px; }
   #feed { position: fixed; top: 60px; left: 12px; font-size: 14px; pointer-events: none; }
   #fs { position: fixed; left: 10px; bottom: 10px; padding: 4px 10px; font-size: 12px; background: #24323c; z-index: 4; }
+  #gear { position: fixed; left: 104px; bottom: 10px; padding: 4px 10px; font-size: 12px; background: #24323c; z-index: 4; }
+  #perf { position: fixed; right: 10px; top: 42px; padding: 3px 8px; font: 12px ui-monospace, monospace; color: #b8e0c0; background: #0c141acc; border-radius: 4px; pointer-events: none; display: none; z-index: 4; }
+  #getApp { color: #8a9aa5; font-size: 12px; }
   #help { position: fixed; left: 10px; top: 8px; max-width: 30vw; font-size: 11px; color: #8a9aa5; line-height: 1.5; pointer-events: none; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
+<canvas id="ui"></canvas>
 
 <div id="lobby" class="panel">
   <h1>Lane Duel</h1>
@@ -93,6 +98,7 @@
       <option value="dummy">a stationary dummy</option><option value="easy">a bot — easy</option>
       <option value="normal" selected>a bot — normal</option><option value="hard">a bot — hard</option></select></span>
     <span id="hint" style="color:#9fb2bf;margin-left:8px"></span></p>
+  <a id="getApp" href="https://github.com/mojolowjo/aiplayground/releases?q=lane-duel" target="_blank" rel="noopener">Download the app</a>
 </div>
 
 <div id="top" class="panel"></div>
@@ -109,13 +115,15 @@
 <div id="shop" class="panel"></div>
 <div id="over" class="panel"><h1 id="ot"></h1><div id="or"></div><p><button id="rematch">Back to lobby</button></p></div>
 <button id="fs" title="Fullscreen also stops browser shortcuts like Ctrl+W (Chrome and Edge)">Fullscreen</button>
+<button id="gear" title="Settings (Esc)">⚙ Settings</button>
+<div id="perf"></div>
 <div id="help">Right-click move/attack · A + click attack-move · S stop · Q W E R abilities (Shift or Ctrl + key, or click the icon, to level up) · D F spells · B recall · P shop · 1–6 drink the potion in that bag slot · Y camera lock · Space centre · T show minion targets</div>
 <!-- The shared rule modules load first; the game's own scripts follow in order once they are in place. -->
 <script type="module">
   import * as Shop from './shared/shop.js';
   import * as Move from './shared/move.js';
   window.Shop = Shop; window.Move = Move;
-  for (const src of ['icons.js', 'predict.js', 'gfx.js', 'shop.js', 'client.js'])
+  for (const src of ['icons.js', 'predict.js', 'gfx.js', 'shop.js', 'settings-menu.js', 'client.js'])
     await new Promise((ok, fail) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = fail; document.body.appendChild(s); });
 </script>
 </body>

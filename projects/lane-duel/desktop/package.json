@@ -1,0 +1,29 @@
+{
+  "name": "lane-duel-desktop",
+  "productName": "LaneDuel",
+  "version": "0.1.0",
+  "description": "Lane Duel desktop app: a window onto a Lane Duel server, with performance settings.",
+  "author": "Lane Duel",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "sync": "node scripts/sync-shared.js",
+    "start": "node scripts/sync-shared.js && electron .",
+    "test": "node test/desktop.test.js",
+    "build:win": "node scripts/sync-shared.js && electron-builder --win portable --x64",
+    "build:linux": "node scripts/sync-shared.js && electron-builder --linux AppImage --x64"
+  },
+  "devDependencies": {
+    "electron": "^39.2.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "io.github.mojolowjo.laneduel",
+    "productName": "LaneDuel",
+    "artifactName": "LaneDuel-${version}.${ext}",
+    "publish": null,
+    "files": ["main.js", "lib.js", "preload.js", "default-server.json", "start/**"],
+    "win": { "target": [{ "target": "portable", "arch": ["x64"] }] },
+    "linux": { "target": [{ "target": "AppImage", "arch": ["x64"] }], "category": "Game" }
+  }
+}

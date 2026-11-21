@@ -1,0 +1,83 @@
+# Builds the Lane Duel desktop app and publishes it as a GitHub Release.
+# Runs when a tag like lane-duel-v1.2.3 is pushed. The app's version is the tag without "lane-duel-v".
+name: lane-duel-desktop
+
+on:
+  push:
+    tags:
+      - 'lane-duel-v*'
+
+permissions:
+  contents: write   # to create the release and attach the two files
+
+defaults:
+  run:
+    shell: bash
+    working-directory: projects/lane-duel/desktop
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: build:win
+            file: exe
+          - os: ubuntu-latest
+            script: build:linux
+            file: AppImage
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Version from the tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#lane-duel-v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "Tag must look like lane-duel-v1.2.3, got $GITHUB_REF_NAME"; exit 1; fi
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run ${{ matrix.script }}
+
+      - name: Check the file is there
+        run: ls -l "dist/LaneDuel-$VERSION.${{ matrix.file }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: LaneDuel-${{ matrix.file }}
+          path: projects/lane-duel/desktop/dist/LaneDuel-${{ env.VERSION }}.${{ matrix.file }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: files
+          merge-multiple: true
+
+      - name: Create the release with both files
+        working-directory: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#lane-duel-v}"
+          ls -l
+          gh release create "$GITHUB_REF_NAME" "LaneDuel-$VERSION.exe" "LaneDuel-$VERSION.AppImage" \
+            --repo "$GITHUB_REPOSITORY" --title "Lane Duel $VERSION" \
+            --notes "Download one file and double-click it. Windows: LaneDuel-$VERSION.exe. Linux: LaneDuel-$VERSION.AppImage. See the Desktop app section of projects/lane-duel/README.md."

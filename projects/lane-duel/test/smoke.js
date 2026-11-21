@@ -98,7 +98,7 @@ const duel = (a, b = 'oriel') => {
   g.command(1, { c: 'charge', s: 0 }); assert(h.state.name === 'charging' && h.mp === h.mmp - 80, 'the cost is paid when charging starts');
   assert(near(g.speed(h), h.baseMs * 0.9), 'slowed 10% at the start'); run(g, 0.3); assert(near(g.speed(h), h.baseMs * 0.85), '15% after 0.25s');
   g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); const short = beam().len; assert.equal(h.state.name, 'firing'); run(g, 0.7);
-  assert(short > 850 && short < 950 && e.hp === 5000 && !h.state && h.mp < h.mmp - 75, 'a short charge falls short, and costs no more on release: ' + (short | 0));
+  assert(near(short, 700 + 750 * 0.2, 0.03) && e.hp === 5000 && !h.state && h.mp < h.mmp - 75, 'a short charge (range starts at 700) falls short, and costs no more on release: ' + (short | 0));
   reset(1300); g.command(1, { c: 'charge', s: 0 }); run(g, 1.6); assert(near(g.speed(h), h.baseMs * 0.6), 'the slow caps at 40%');
   g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); assert(beam().len === 1450 && beam().w === 145); run(g, 0.45); assert.equal(e.hp, 5000, 'the beam waits 0.528s'); run(g, 0.15);
   assert(near(5000 - e.hp, 70 * mr) && h.cds[0] > g.time, 'a full charge reaches 1450');
@@ -109,7 +109,8 @@ const duel = (a, b = 'oriel') => {
 
   // R: rooted, counted long-range shots; hero hits make LATER shots stronger; unused = half the cooldown back
   reset(1700); g.command(1, { c: 'cast', s: 3 }); assert.equal(h.state.shots, 4);
-  g.command(1, { c: 'move', x: 2000, y: 800 }); run(g, 0.5); assert.equal(h.x, 3000, 'rooted during the barrage');
+  g.command(1, { c: 'move', x: 2000, y: 800 }); run(g, 0.4); assert.equal(h.x, 3000, 'rooted during the barrage');
+  g.command(1, { c: 'cast', s: 3, x: e.x, y: e.y }); assert.equal(h.state.shots, 4, 'no shot before 0.5s'); run(g, 0.15);
   g.command(1, { c: 'cast', s: 3, x: e.x, y: e.y }); g.command(1, { c: 'cast', s: 3, x: e.x, y: e.y });
   assert.equal(h.state.shots, 3, 'shots cannot be fired faster than the interval'); run(g, 0.6); assert.equal(e.hp, 5000, 'each shot lands 0.627s after it is fired'); run(g, 0.1);
   const first = 5000 - e.hp; assert(near(first, 170 * mr), 'first shot: ' + first.toFixed(1));
@@ -118,7 +119,7 @@ const duel = (a, b = 'oriel') => {
   g.command(1, { c: 'cast', s: 3, x: e.x, y: e.y }); assert(!h.state, 'barrage ends with the last shot'); run(g, 1); assert(h.x < 3000, 'free to move again');
   reset(1700); g.command(1, { c: 'cast', s: 3 }); run(g, 1); g.command(1, { c: 'stop' });
   assert(!h.state && near(h.cds[3] - g.time, 130 / 2 - 1, 0.02), 'ended without firing: half the cooldown back');
-  reset(1700); g.command(1, { c: 'cast', s: 3 }); run(g, 0.5); g.command(1, { c: 'cast', s: 3, x: e.x, y: e.y }); g.command(1, { c: 'stop' }); assert(near(h.cds[3] - g.time, 130 - 0.5, 0.02), 'but not once a shot has gone');
+  reset(1700); g.command(1, { c: 'cast', s: 3 }); run(g, 0.6); g.command(1, { c: 'cast', s: 3, x: e.x, y: e.y }); g.command(1, { c: 'stop' }); assert(near(h.cds[3] - g.time, 130 - 0.6, 0.02), 'but not once a shot has gone');
   reset(1700); g.command(1, { c: 'cast', s: 3 }); run(g, 10.1); assert(!h.state, 'barrage times out');
   const br = MAP.brush[0]; reset(0); h.x = br.x + 300; h.y = br.y + 90; e.x = h.x + 2500; e.y = 800;
   g.command(1, { c: 'cast', s: 3 }); run(g, 2); assert(!g.visible(h, 'red'), 'hidden in brush once the cast reveal has worn off');

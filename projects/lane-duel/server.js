@@ -30,6 +30,8 @@ const FILES = staticFiles(path.join(HERE, 'public'), { '/shared': path.join(HERE
 // Only the game's own files are served (public/ and shared/): a fixed list read at start, GET and HEAD only.
 const server = http.createServer((req, res) => {
   let rel = null; try { rel = decodeURIComponent(String(req.url).split('?')[0]); } catch { /* bad escape: not a file */ }
+  // A quick "are you there": the desktop app's server list times this to show each server's ping.
+  if (rel === '/ping' && (req.method === 'GET' || req.method === 'HEAD')) { res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' }); return res.end(); }
   const hit = (req.method === 'GET' || req.method === 'HEAD') && FILES.get(rel);
   if (!hit) { res.writeHead(req.method === 'GET' || req.method === 'HEAD' ? 404 : 405, { 'Content-Type': 'text/plain' }); return res.end('not found'); }
   fs.readFile(hit.file, (err, data) => {

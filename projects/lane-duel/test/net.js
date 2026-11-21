@@ -180,6 +180,7 @@ const connect = port => new Promise((res, rej) => { const ws = new WebSocket(`ws
   for (const path of ['/../server.js', '/%2e%2e/server.js', '/..%2fserver.js', '/game/sim.js', '/server.js', '/public', '/public/', '/nope.js', '/%zz', '/.', '//client.js', '/index.html/'])
     assert.equal((await get(s.port, path)).status, 404, path + ' is not served');
   assert.equal((await get(s.port, '/', 'POST')).status, 405);
+  const pong = await get(s.port, '/ping'); assert(pong.status === 204 && pong.body === '', 'GET /ping answers 204 with no body'); assert.equal((await get(s.port, '/ping', 'POST')).status, 405);
 
   // the host sees the join address; rubbish is ignored; the server keeps running
   const ws = await connect(s.port); ws.send(JSON.stringify({ t: 'join', room: 'r1', name: 'Host' })); await until(() => ws.msgs.some(m => m.t === 'lobby'));

@@ -10,7 +10,19 @@ let predErr = 0, showGhost = false;
 let pendingA = false, shopOpen = false, showAggro = false, fx = [], ping = 0, W = 0, H = 0, scale = 1;
 
 let zoom = 1; const MIN_ZOOM = 0.45;   // how far the camera may pull back
-function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; scale = H / 1250 * zoom; }
+// Render scale (a desktop-app setting): the battlefield canvas holds fewer pixels and is stretched to fill the
+// window. Everything is still drawn in window coordinates; the canvas's base transform shrinks it. Health bars,
+// damage numbers and other text then go on a second, full-size canvas (#ui) so they stay sharp.
+const worldCtx = ctx, ui = $('ui'), uiCtx = ui.getContext('2d');
+let RS = 1;
+function resize() {
+  W = innerWidth; H = innerHeight; cv.width = Math.round(W * RS); cv.height = Math.round(H * RS);
+  const split = RS < 1; ui.width = split ? W : 1; ui.height = split ? H : 1; ui.style.display = split ? 'block' : 'none';
+  scale = H / 1250 * zoom;
+}
+// Frame pacing and the performance overlay.
+const PERF = { slack: 1, samples: 60, every: 500 };   // ms of leeway when skipping frames; snapshots averaged for jitter; ms between overlay updates
+const perf = { due: 0, frames: 0, since: performance.now(), lastSnap: 0, gaps: [] };
 addEventListener('resize', resize); resize();
 
 // ---------- networking ----------
@@ -27,7 +39,7 @@ function connect() {
     if (m.t === 'snap') return onSnap(m);
     if (m.t === 'pong') ping = Math.round(performance.now() - m.c);
     else if (m.t === 'hello') { hello = m; myId = m.id; Predict.configure(m.rules.predict); buildHeroes(); }
-    else if (m.t === 'lobby') { lobbyState = m; inGame = m.inGame; if (!inGame) { snaps = []; offset = null; Predict.release(pred); lastDrawn = null; } renderLobby(); }
+    else if (m.t === 'lobby') { lobbyState = m; inGame = m.inGame; if (!inGame) { snaps = []; offset = null; perf.lastSnap = 0; perf.gaps = []; Predict.release(pred); lastDrawn = null; } renderLobby(); }
     else if (m.t === 'full') $('status').textContent = 'This room is full.';
     else if (m.t === 'left') feed('The other player left.');
   };
@@ -153,6 +165,8 @@ function feed(text) {
 // ---------- snapshots ----------
 function onSnap(s) {
   const now = performance.now() / 1000, o = s.time - now;
+  if (perf.lastSnap) { perf.gaps.push((now - perf.lastSnap) * 1000); if (perf.gaps.length > PERF.samples) perf.gaps.shift(); }
+  perf.lastSnap = now;
   offset = offset === null || Math.abs(o - offset) > 0.5 ? o : offset + (o - offset) * 0.05;
   s.at = now; snaps.push(s); if (snaps.length > 20) snaps.shift();
   me = s.me; meUnit = s.units.find(u => u.id === (me && me.id));
@@ -167,7 +181,7 @@ function onSnap(s) {
 }
 function interp() {
   if (!snaps.length) return null;
-  const rt = performance.now() / 1000 + offset - 0.06;
+  const rt = performance.now() / 1000 + offset - Settings.cfg.smoothing / 1000;   // how far behind the server other units are drawn
   let b = snaps.length - 1; while (b > 0 && snaps[b - 1].time > rt) b--;
   const B = snaps[b], A = snaps[b - 1] || B, k = B.time > A.time ? Math.max(0, Math.min(1, (rt - A.time) / (B.time - A.time))) : 1;
   const lerp = (la, lb) => { const m = new Map(la.map(u => [u.id, u]));
@@ -222,8 +236,9 @@ addEventListener('dragstart', e => e.preventDefault());
 addEventListener('selectstart', e => { if (e.target.tagName !== 'INPUT') e.preventDefault(); });
 addEventListener('wheel', e => { if (e.ctrlKey || inGame) e.preventDefault(); }, { passive: false });               // no page zoom or scroll
 for (const ev of ['mousedown', 'mouseup', 'auxclick']) addEventListener(ev, e => { if (e.button === 1 || e.button > 2) e.preventDefault(); });   // middle-click scroll, back/forward buttons
-addEventListener('beforeunload', e => { if (inGame && !(snaps.length && snaps[snaps.length - 1].over)) { e.preventDefault(); e.returnValue = ''; } });
+addEventListener('beforeunload', e => { if (!Settings.inApp && inGame && !(snaps.length && snaps[snaps.length - 1].over)) { e.preventDefault(); e.returnValue = ''; } });
 async function goFullscreen() {
+  if (Settings.inApp) return;   // the app's window mode setting decides
   try {
     if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
     if (navigator.keyboard && navigator.keyboard.lock) await navigator.keyboard.lock();   // hands Esc, Ctrl+W and friends to the game
@@ -234,7 +249,35 @@ document.addEventListener('fullscreenchange', () => {
   $('fs').textContent = on ? 'Exit fullscreen' : 'Fullscreen';
   if (!on && navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock();
 });
-$('fs').onclick = () => (document.fullscreenElement ? document.exitFullscreen() : goFullscreen());
+$('fs').onclick = () => {
+  if (Settings.inApp) window.laneDuelApp.setFullscreen(Settings.cfg.windowMode === 'windowed' ? 'borderless' : 'windowed');
+  else if (document.fullscreenElement) document.exitFullscreen(); else goFullscreen();
+};
+// ---------- settings ----------
+function openMenu() { Settings.open(Settings.inApp ? [{ label: 'Back to server list', onClick: () => window.laneDuelApp.backToStart() }] : []); }
+$('gear').onclick = openMenu;
+// Is the player in the middle of aiming something? (Esc cancels that first; only otherwise does it open the menu.)
+const aiming = () => pendingA || Object.values(held).some(Boolean) || !!(meUnit && (meUnit.hl > 0 || meUnit.bg));
+Settings.onChange(cfg => {
+  const rs = Settings.inApp ? cfg.renderScale / 100 : 1; if (rs !== RS) { RS = rs; resize(); }
+  GFX.fx = Settings.inApp ? cfg.effects : 'high';
+  $('perf').style.display = cfg.overlay ? 'block' : 'none';
+  if (Settings.inApp) { $('fs').textContent = cfg.windowMode === 'windowed' ? 'Fullscreen' : 'Exit fullscreen'; $('fs').title = ''; $('getApp').style.display = 'none'; }
+});
+// The frame cap in frames per second, or 0 for none. Only the desktop app has one.
+function fpsCap() {
+  if (!Settings.inApp) return 0;
+  const v = Settings.cfg.fpsLimit;
+  return v === 'auto' ? (Settings.cfg.vsync ? 0 : Settings.meta.refreshRate || 0) : v;   // with V-Sync on the monitor already paces the frames
+}
+function showPerf(nowMs) {
+  perf.frames++;
+  if (nowMs - perf.since < PERF.every) return;
+  const fps = perf.frames * 1000 / (nowMs - perf.since), g = perf.gaps, mean = g.reduce((a, b) => a + b, 0) / (g.length || 1);
+  const jitter = g.length ? g.reduce((a, b) => a + Math.abs(b - mean), 0) / g.length : 0;   // how unevenly snapshots arrive
+  perf.frames = 0; perf.since = nowMs;
+  if (Settings.cfg.overlay) $('perf').textContent = `${Math.round(fps)} FPS · ping ${ping} ms · jitter ${jitter.toFixed(1)} ms`;
+}
 // Mouse input is taken from the whole window, not just the canvas, so the cursor is tracked and right-clicks
 // still move you when it is over the HUD, the shop or the score bar. Left-clicks on those panels still use them.
 addEventListener('mousemove', e => {
@@ -254,6 +297,7 @@ addEventListener('mousedown', e => {
 });
 addEventListener('mouseup', e => { if (e.button === 2) mouse.rdown = false; });
 addEventListener('keydown', e => {
+  if (Settings.isOpen()) { if (e.code === 'Escape' && !e.repeat) Settings.close(); return; }
   if (!inGame || !hello || e.target.tagName === 'INPUT' || e.repeat) return;
   const k = e.code, qi = ['KeyQ', 'KeyW', 'KeyE', 'KeyR'].indexOf(k);
   [mouse.wx, mouse.wy] = toWorld(mouse.x, mouse.y);
@@ -276,7 +320,7 @@ addEventListener('keydown', e => {
   else if (k === 'KeyT') showAggro = !showAggro;
   else if (k === 'F8') showGhost = !showGhost;      // hidden debug view: where the server has your hero
   else if (k === 'Space') { e.preventDefault(); if (meUnit) cam.x = meUnit.x; }
-  else if (k === 'Escape') { pendingA = false; shopOpen = false; }
+  else if (k === 'Escape') { if (shopOpen || aiming()) { pendingA = false; shopOpen = false; } else openMenu(); }
 });
 
 const held = {};
@@ -306,8 +350,17 @@ const sx = x => (x - cam.x) * scale + W / 2, sy = y => (y - hello.map.h / 2) * s
 let lastFrame = performance.now();
 function frame() {
   requestAnimationFrame(frame);
-  const nowMs = performance.now(), dt = Math.min(0.1, (nowMs - lastFrame) / 1000), now = nowMs / 1000; lastFrame = nowMs;
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = '#0b1410'; ctx.fillRect(0, 0, W, H);
+  const nowMs = performance.now(), cap = fpsCap();
+  if (cap) {   // FPS limit: skip this frame if the next one is not due yet
+    const gap = 1000 / cap;
+    if (nowMs < perf.due - PERF.slack) return;
+    perf.due = nowMs - perf.due > gap ? nowMs + gap : perf.due + gap;
+  }
+  const dt = Math.min(0.1, (nowMs - lastFrame) / 1000), now = nowMs / 1000; lastFrame = nowMs;
+  showPerf(nowMs);
+  const top = RS < 1 ? uiCtx : worldCtx;   // where bars and text go
+  if (top !== worldCtx) { uiCtx.setTransform(1, 0, 0, 1, 0, 0); uiCtx.clearRect(0, 0, W, H); }
+  ctx = worldCtx; ctx.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0); ctx.fillStyle = '#0b1410'; ctx.fillRect(0, 0, W, H);
   if (!hello || !inGame) return;
   const st = interp(); if (!st) return;
   const M = hello.map, my = hello.team[0];
@@ -330,9 +383,10 @@ function frame() {
   else if (cam.locked && mine && !mine.d) cam.x = mine.x;
   else if (!cam.locked) pan();
   cam.x = halfW * 2 >= M.w ? M.w / 2 : Math.max(halfW, Math.min(M.w - halfW, cam.x));
-  GFX.shake *= Math.exp(-dt * 9);
-  ctx.save(); if (GFX.shake > 0.3) ctx.translate((Math.random() - 0.5) * GFX.shake, (Math.random() - 0.5) * GFX.shake);
-  drawGround(M, now, cam.x, halfW);
+  GFX.shake = EFFECTS[GFX.fx].shake ? GFX.shake * Math.exp(-dt * 9) : 0;
+  const shaking = GFX.shake > 0.3, shx = shaking ? (Math.random() - 0.5) * GFX.shake : 0, shy = shaking ? (Math.random() - 0.5) * GFX.shake : 0;
+  ctx.save(); ctx.translate(shx, shy);
+  GFX.ambient = true; drawGround(M, now, cam.x, halfW); GFX.ambient = false;
   for (const z of st.zones) drawZone(z, now, z.t === my);
   for (const b of st.pk) drawPickup(b, now, b.t === my);
   // click markers sit on the ground
@@ -346,7 +400,7 @@ function frame() {
   const live = st.units.filter(u => !u.d).sort((a, b) => (a.k === 't' ? -1e5 : a.y) - (b.k === 't' ? -1e5 : b.y));
   const anims = new Map(), byId = new Map(st.units.map(u => [u.id, u]));
   for (const u of live) {
-    const a = animUpdate(u, now, dt), col = TEAM[u.t]; anims.set(u.id, a);
+    const a = animUpdate(u, now, dt), col = TEAM[u.t]; anims.set(u.id, a); GFX.ambient = true;
     if (u.k === 't') {
       drawTower(u, a, now, col, !!mine && Math.hypot(mine.x - u.x, mine.y - u.y) < 1100);
       const tg = st.units.find(o => o.id === u.tg);
@@ -356,6 +410,7 @@ function frame() {
       }
     } else if (u.k === 'm') drawMinion(u, a, now, col);
     else drawHero(u, a, now, col, u.id === (me && me.id));
+    GFX.ambient = false;
   }
   if (showAggro) for (const u of live) {   // debug: a line from each minion to whatever it is targeting
     const tg = u.k === 'm' && byId.get(u.tg); if (!tg || tg.d) continue;
@@ -366,6 +421,8 @@ function frame() {
   for (const s of st.shots) drawShot(s, now, TEAM[s.t], byId);
   drawTrees(M, now, cam.x, halfW);
   drawParts(dt, now);
+  ctx.restore(); ctx = top; ctx.save(); ctx.translate(shx, shy);   // from here on: bars, numbers and text, at full sharpness
+  drawFloaters(now);
   for (const u of live) {
     const a = anims.get(u.id), mineTeam = u.t === my;
     if (u.k === 't') { smallBar(u, a, 120, 10, 128, TEAM[u.t]);
@@ -409,4 +466,4 @@ function frame() {
     ctx.fillText(`Respawning in ${meUnit.d}`, W / 2, H * 0.3); }
   updateHud();
 }
-connect(); frame();
+Settings.load().then(() => { connect(); frame(); });

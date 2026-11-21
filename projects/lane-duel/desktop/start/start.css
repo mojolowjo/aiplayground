@@ -1,0 +1,17 @@
+html, body { margin: 0; height: 100%; background: #0b1410; color: #e8eee9; font: 14px system-ui, sans-serif; user-select: none; }
+main { max-width: 640px; margin: 0 auto; padding: 6vh 20px 20px; }
+h1 { font-size: 40px; margin: 0 0 18px; letter-spacing: .02em; }
+button { background: #2c6e49; color: #fff; border: 0; border-radius: 6px; padding: 7px 14px; font: inherit; cursor: pointer; }
+button.plain { background: #24323c; } button.mini { padding: 3px 8px; font-size: 12px; background: #24323c; }
+input { background: #0f181e; color: #e8eee9; border: 1px solid #3a4c5a; border-radius: 5px; padding: 7px 8px; font: inherit; user-select: text; }
+.server { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 6px; background: #16212a; border: 1px solid #2a3b48; border-radius: 8px; cursor: default; }
+.server:hover { border-color: #4a6276; }
+.server .who { flex: 1; min-width: 0; } .server .who b { display: block; } .server .who small { color: #8a9aa5; }
+.server .ping { width: 70px; text-align: right; font-variant-numeric: tabular-nums; color: #7fd89a; }
+.server .ping.off { color: #8a9aa5; }
+#add { display: flex; gap: 8px; margin-top: 14px; } #addName { width: 150px; } #addAddress { flex: 1; }
+.error { color: #ff8a7a; margin-top: 6px; }
+.notice { background: #3a2c14; border: 1px solid #b7791f; border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
+.actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 22px; }
+footer { margin-top: 26px; color: #8a9aa5; font-size: 12px; } footer a { color: #ffd24a; margin-left: 10px; }
+.empty { color: #8a9aa5; padding: 10px 0; }

@@ -1,7 +1,15 @@
 'use strict';
 // Procedural art, animation state and particles. Everything is drawn in code.
 // Uses globals defined in client.js at call time: ctx, scale, sx, sy, hello, W, H.
-const GFX = { parts: [], floaters: [], beams: [], zaps: [], anim: new Map(), trails: new Map(), shake: 0, scenery: null };
+const GFX = { parts: [], floaters: [], beams: [], zaps: [], anim: new Map(), trails: new Map(), shake: 0, scenery: null, fx: 'high', ambient: false };
+// Effects quality (a player setting, see settings-menu.js). parts = share of particles drawn; glow = which
+// glows are drawn ('abilities' leaves out the ones that are just decoration on heroes, minions, towers and
+// the ground); floaters = most damage numbers on screen at once.
+const EFFECTS = {
+  low: { parts: 0, glow: 'none', floaters: 10, shake: false },
+  medium: { parts: 0.5, glow: 'abilities', floaters: Infinity, shake: true },
+  high: { parts: 1, glow: 'all', floaters: Infinity, shake: true },
+};
 const TAU = Math.PI * 2, OUT = '#10141a';
 const clamp01 = v => Math.max(0, Math.min(1, v));
 const ease = t => t * t * (3 - 2 * t);
@@ -41,6 +49,7 @@ function atkPose(a, now) {
 
 // ---------- particles ----------
 function burstParts(x, y, n, o) {
+  n = Math.ceil(n * EFFECTS[GFX.fx].parts);
   for (let i = 0; i < n; i++) {
     const ang = o.dir !== undefined ? o.dir + (Math.random() - 0.5) * (o.spread ?? 1) : Math.random() * TAU, sp = (o.speed || 100) * (0.4 + Math.random() * 0.8);
     const r0 = o.ring ? o.ring : 0;
@@ -50,7 +59,10 @@ function burstParts(x, y, n, o) {
   }
   if (GFX.parts.length > 900) GFX.parts.splice(0, GFX.parts.length - 900);
 }
-function floater(x, y, text, color, size) { GFX.floaters.push({ x: x + (Math.random() - 0.5) * 40, y, text, color, size: size || 15, t0: performance.now() / 1000, dur: 0.9 }); }
+function floater(x, y, text, color, size) {
+  GFX.floaters.push({ x: x + (Math.random() - 0.5) * 40, y, text, color, size: size || 15, t0: performance.now() / 1000, dur: 0.9 });
+  while (GFX.floaters.length > EFFECTS[GFX.fx].floaters) GFX.floaters.shift();
+}
 // Ground particles (dust) are drawn before the units so they sit under them; everything else goes on top.
 function drawGroundParts(dt) { drawPartLayer(dt, true); }
 function drawPartLayer(dt, ground) {
@@ -87,6 +99,10 @@ function drawParts(dt, now) {
     }
   }
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+}
+// Damage numbers and other floating text. Separate from the particles so it can be drawn at full sharpness
+// when the battlefield itself is drawn at a lower render scale.
+function drawFloaters(now) {
   GFX.floaters = GFX.floaters.filter(f => now - f.t0 < f.dur);
   ctx.textAlign = 'center';
   for (const f of GFX.floaters) {
@@ -108,10 +124,13 @@ function poly(pts, fill, stroke, lw) {
   if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw || 3; ctx.lineJoin = 'round'; ctx.stroke(); }
 }
 function glow(x, y, r, col, a) {
+  const which = EFFECTS[GFX.fx].glow; if (which === 'none' || (which === 'abilities' && GFX.ambient)) return;
   const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.globalAlpha = a; ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
 }
+// A glow that belongs to an ability even though it is drawn as part of a unit.
+function abilityGlow(x, y, r, col, a) { const was = GFX.ambient; GFX.ambient = false; glow(x, y, r, col, a); GFX.ambient = was; }
 function begin(u, rot) { ctx.save(); ctx.translate(sx(u.x), sy(u.y)); ctx.scale(scale, scale); if (rot !== undefined) ctx.rotate(rot); }
 
 // ---------- heroes ----------
@@ -124,7 +143,7 @@ function drawHero(u, a, now, teamCol, isMe) {
   begin(u);
   ell(10, 16, 52, 34, 'rgba(0,0,0,.32)');
   ctx.globalAlpha = isMe ? 0.95 : 0.75; ell(0, 0, hello.rules.heroRadius, hello.rules.heroRadius, null, teamCol, isMe ? 5 : 4); ctx.globalAlpha = 1;
-  if (castP > 0) glow(0, 0, 70 + 60 * (1 - castP), col, castP * 0.7);
+  if (castP > 0) abilityGlow(0, 0, 70 + 60 * (1 - castP), col, castP * 0.7);
   if (u.ku) { ctx.translate(0, -34 - 6 * Math.sin(now * 12)); ctx.scale(1.1, 1.1); }   // knocked into the air: lifted off its shadow
   ctx.rotate(f);
   if (u.br) ctx.globalAlpha = 0.6;
@@ -182,7 +201,7 @@ function drawHero(u, a, now, teamCol, isMe) {
     poly([62, -43, 82, -37, 62, -31], '#dfe6ee', OUT, 2); seg(30, -37, 58, -37, '#8a939e', 3);
     ctx.save(); ctx.translate(4, 41); ctx.rotate(s < 0 ? 0.25 + (-s) * 1.2 : 0.25 - s * 1.1);        // anchor fist
     seg(0, 0, 30, 0, dull, 13); ell(40, 0, 16, 16, u.em ? '#ffd27a' : '#9aa3ad', OUT, 3); seg(34, -8, 34, 8, OUT, 2);
-    if (u.em) glow(40, 0, 44, '#ffb84a', 0.85);
+    if (u.em) abilityGlow(40, 0, 44, '#ffb84a', 0.85);
     ctx.restore();
     ell(4, 0, 21, 21, col, OUT, 3.5);                                                               // helmet and porthole
     for (let i = 0; i < 6; i++) { const an = i * TAU / 6; ell(4 + Math.cos(an) * 17, Math.sin(an) * 17, 2, 2, dull); }
@@ -216,7 +235,7 @@ function drawHero(u, a, now, teamCol, isMe) {
   if (u.em && u.h !== 'gorrum') { ell(0, 0, 68, 68, null, '#ffb84a', 4); }
   if (u.cn) { ctx.save(); ctx.rotate(now * 9); for (let i = 0; i < 6; i++) { ctx.rotate(TAU / 6); for (const [c2, lw] of [[OUT, 9], ['#eaf4ff', 5]]) { ctx.strokeStyle = c2; ctx.lineWidth = lw; ctx.beginPath(); ctx.arc(78, 0, 20, -1.1, 1.1); ctx.stroke(); } } ctx.restore(); glow(0, 0, 120, '#bcd0ff', 0.35); }
   if (u.h === 'wren') for (let i = 0; i < u.pn; i++) ell((i - (u.pn - 1) / 2) * 17, 86, 5.5, 5.5, '#ffd870', OUT, 2);
-  if (u.ab) { glow(0, 0, 105, '#b070ff', 0.45 + 0.2 * Math.sin(now * 9)); ell(0, 0, 74, 74, null, '#c9a0ff', 3); }      // Dusk Blade charged
+  if (u.ab) { abilityGlow(0, 0, 105, '#b070ff', 0.45 + 0.2 * Math.sin(now * 9)); ell(0, 0, 74, 74, null, '#c9a0ff', 3); }      // Dusk Blade charged
   if (u.fz) { for (let i = 0; i < 3; i++) { const an = i * TAU / 3 + 0.4; seg(-Math.cos(an) * 13, -104 - Math.sin(an) * 13, Math.cos(an) * 13, -104 + Math.sin(an) * 13, '#9fe0ff', 3); } }   // chilled: slower attacks
   if (u.bn && Math.random() < 0.5) burstParts(u.x + (Math.random() - 0.5) * 50, u.y + (Math.random() - 0.5) * 50, 1, { color: '#ff9a4a', speed: 40, life: 0.5, size: 7, glow: true, vy: -70 });   // burning
   if (u.si) { ell(0, -112, 14, 14, '#2a1840', '#c58bff', 3); seg(-9, -103, 9, -121, '#c58bff', 3.5); }

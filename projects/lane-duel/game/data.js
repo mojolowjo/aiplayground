@@ -313,7 +313,7 @@ HEROES.kessa = {
   abilities: [
     // IDLE -> CHARGING (hold) -> FIRING (release). The charge itself lives in sim.js (startCharge / cast).
     { key: 'Q', name: 'Rail Lance', kind: 'line', range: 1450,
-      charge: { full: 1.5, hold: 3, min: 750, max: 1450, width: 145, delay: 0.528, slow: { start: 0.1, step: 0.05, every: 0.25, max: 0.4 } },
+      charge: { full: 1.5, hold: 3, min: 700, max: 1450, width: 145, delay: 0.528, slow: { start: 0.1, step: 0.05, every: 0.25, max: 0.4 } },
       cd: [9, 8, 7, 6, 5], cost: [80, 90, 100, 110, 120], dmg: [70, 110, 150, 190, 230], ap: 0.9,
       get desc() { const c = this.charge; return `Hold to charge (the cost is paid when you start): range grows from ${c.min} to ${c.max} over ${c.full}s while you slow down, from ${c.slow.start * 100}% to ${c.slow.max * 100}%. Release to fire a beam that, after ${c.delay}s, hits every enemy in a line for ${list(this.dmg)} + ${this.ap * 100}% AP. Holding for more than ${c.hold}s, or being interrupted, cancels it and refunds half the cost.`; },
       cast(g, h, r, aim) {
@@ -345,9 +345,9 @@ HEROES.kessa = {
     // IDLE -> BARRAGE. Each recast while in the state is one more W-style strike; the state ends when the
     // shots or the time run out, when she is stunned, or on Stop.
     { key: 'R', name: 'Fire Mission', kind: 'self', range: [5000], radius: 200, cd: [130, 115, 100], cost: [100],
-      lasts: 10, shots: [4, 5, 6], firstShotAfter: 0.4, between: 0.5, delay: 0.627, dmg: [170, 220, 270], ap: 0.45,
+      lasts: 10, shots: [4, 5, 6], firstShotAfter: 0.5, between: 0.5, delay: 0.627, dmg: [170, 220, 270], ap: 0.45,
       maxStacks: [3, 4, 5], stackDmg: [20, 25, 30], stackAp: 0.05, revealNear: 600, unusedRefund: 0.5,
-      get desc() { return `Root yourself for up to ${this.lasts}s and gain ${list(this.shots)} shots with ${this.range[0]} range. Press R again to drop each one at the cursor: after ${this.delay}s it hits an area for ${list(this.dmg)} + ${this.ap * 100}% AP. Each hero hit makes your later shots deal ${list(this.stackDmg)} + ${this.stackAp * 100}% AP more (up to ${list(this.maxStacks)} times). A shot landing near an enemy hero reveals you. Press S to end early; if you fire nothing, half the cooldown is refunded.`; },
+      get desc() { return `Root yourself for up to ${this.lasts}s and gain ${list(this.shots)} shots with ${this.range[0]} range. From ${this.firstShotAfter}s in, press R again to drop each one at the cursor: after ${this.delay}s it hits an area for ${list(this.dmg)} + ${this.ap * 100}% AP. Each hero hit makes your later shots deal ${list(this.stackDmg)} + ${this.stackAp * 100}% AP more (up to ${list(this.maxStacks)} times). A shot landing near an enemy hero reveals you. Press S to end early; if you fire nothing, half the cooldown is refunded.`; },
       cast(g, h, r) {
         g.enter(h, 3, 'barrage', this.lasts, { lock: true, stopEnds: true, shots: R(this.shots, r), fired: 0, stacks: 0, next: g.time + this.firstShotAfter, range: R(this.range, r) });
       },

@@ -184,6 +184,7 @@ Only the files in `public/` and `shared/` are served. The limits are in `net/gua
 | Ctrl+Z (shop open) | Undo the last buy or sell |
 | 1–6 | Drink the potion or flask in that bag slot |
 | Y / Space | Toggle camera lock / centre on your character |
+| Esc | Close the shop or cancel an attack-move; otherwise open **Settings** (also the ⚙ button, bottom left) |
 | T | Show what each minion is targeting (practice aid) |
 | F8 | Debug: show where the server has your hero, next to where your screen predicts it |
 
@@ -198,9 +199,99 @@ Ctrl+N, Ctrl+Tab) on its own. Use the **Fullscreen** button, or start the game (
 fullscreen for whoever presses Start): in Chrome and Edge that hands those keys to the game
 too. Hold Esc to leave fullscreen. Firefox and Safari do not support this part.
 
+## Settings
+
+Press **Esc** (with the shop closed and nothing being aimed) or the **⚙ Settings** button. In a browser
+there are two, remembered by that browser:
+
+- **Smoothing** (30 / 45 / 60 / 90 / 120 ms, default 60): how far behind the server other units are
+  drawn. Lower feels snappier but can stutter on a bad connection. Higher is smoother but shows other
+  units slightly later.
+- **Performance overlay**: FPS, ping and jitter (how unevenly the server's updates arrive) in a corner.
+
+The desktop app adds performance settings; see below.
+
+## Desktop app
+
+An optional way to play: one file for Windows or Linux that opens the game in its own window, with a
+server list and performance settings. It does not contain the game. It loads it from the server you
+pick, exactly like a browser, so it does not need updating when the game changes. The browser version
+keeps working as before.
+
+### For players
+
+1. **Download** the newest file from
+   [the releases page](https://github.com/mojolowjo/aiplayground/releases?q=lane-duel):
+   `LaneDuel-<version>.exe` for Windows, `LaneDuel-<version>.AppImage` for Linux. Put it in a folder of
+   its own (the Desktop is fine).
+2. **Run it.**
+   - **Windows:** double-click. The first time, Windows shows a blue "Windows protected your PC" box,
+     because the app is not signed (signing costs money every year). Click **More info**, then
+     **Run anyway**.
+   - **Linux:** right-click the file → **Properties** → tick **Allow executing as program** (or
+     `chmod +x LaneDuel-*.AppImage`), then double-click. If nothing happens, your system is missing
+     FUSE; run it from a terminal with `--appimage-extract-and-run` added.
+3. **Pick a server** and press **Connect** (or double-click it). The list shows each server's ping, or
+   "offline" if it does not answer.
+
+**Adding a server.** Type what the host sent you into the box under the list and press **Add server**.
+`1.2.3.4`, `1.2.3.4:3000`, `my-name.duckdns.org` and `http://1.2.3.4:3000` all work; port 3000 is
+assumed if you leave it out. Servers you added can be renamed or removed. The main server can only be
+hidden.
+
+**Settings** (start screen, the ⚙ button in a game, or Esc):
+
+| Setting | What it does |
+|---|---|
+| FPS limit | 30 / 60 / 120 / 144 / 240 / Unlimited, or your monitor's refresh rate (the default). Going above your monitor's rate needs V-Sync off |
+| V-Sync | On by default. Off lets the game draw faster than the monitor (and can tear). Needs a restart |
+| Render scale | 50–100%. Draws the battlefield with fewer pixels and stretches it; health bars, damage numbers and the HUD stay sharp. The biggest help on a slow PC |
+| Effects quality | Low: no particles, no glow, no screen shake, at most 10 damage numbers. Medium: half the particles, glow on abilities only. High: everything |
+| Window mode | Windowed, borderless fullscreen or fullscreen. Both fullscreen modes are borderless windows that cover the screen (the app cannot take the screen over exclusively the way some games do); "Fullscreen" uses the system's kiosk mode |
+| Hardware acceleration | On by default. Turn off only if the picture is wrong. Needs a restart |
+| Smoothing, Performance overlay | As in the browser |
+
+When a setting needs a restart, a **Restart to apply** button appears.
+
+**Deleting everything.** The app keeps its settings and server list in a folder called `LaneDuel-data`
+next to the file you downloaded, and nowhere else. To remove the app completely, delete the file and
+that folder. (If the folder could not be created there, for example on a read-only drive, the app uses
+your normal user folder instead and Settings shows where.) While it runs, the Windows build unpacks
+itself into your temporary folder and removes that copy when it closes.
+
+The app never downloads updates. If a newer version exists, the start screen shows a link to it.
+
+### For the owner
+
+- **Default server.** The first row of everyone's list comes from `desktop/default-server.json`:
+  `{ "name": "Main server", "address": "http://73.157.4.152:3000" }`. Change it there and make a new
+  release. A home connection's address can change; a DuckDNS name (above) does not.
+- **Making a release.** Push a tag named `lane-duel-vX.Y.Z`:
+
+  ```bash
+  git tag lane-duel-v1.0.0
+  ```
+
+  ```bash
+  git push origin lane-duel-v1.0.0
+  ```
+
+  GitHub Actions (`.github/workflows/lane-duel-desktop.yml`) then builds the `.exe` on Windows and the
+  `.AppImage` on Linux, with the version taken from the tag, and publishes both in a GitHub Release.
+  The lobby's "Download the app" link and the app's own update check both look at those releases.
+  The tag must be on a commit that contains the workflow file.
+- **Trying it without a build:** `cd desktop`, `npm install`, `npm start`.
+- **Building by hand:** `npm run build:linux` or `npm run build:win` in `desktop/` (output in
+  `desktop/dist/`).
+- **What the window may do.** Pages run with no Node access (`contextIsolation`, `sandbox`). They get
+  six functions on `window.laneDuelApp` (`getSettings`, `setSettings`, `restartApp`, `setFullscreen`,
+  `openExternal`, `backToStart`). The window only navigates to the start screen and the server picked
+  there; any other link opens in the system browser. A server's page can change performance settings
+  but cannot read or change the server list.
+
 ## Layout
 
-- `server.js` — web server and WebSocket rooms; runs the game at 30 ticks/s.
+- `server.js` — web server and WebSocket rooms; runs the game at 30 ticks/s. `GET /ping` answers 204 (the app's server list times it).
 - `net/upnp.js` — asks the router to forward the port (SSDP search, then SOAP calls). No dependencies.
 - `net/duckdns.js` — the optional DuckDNS updater.
 - `net/guard.js` — connection and message limits, and the list of files the web server may hand out.
@@ -232,3 +323,7 @@ too. Hold Esc to leave fullscreen. Firefox and Safari do not support this part.
 - `test/smoke.js` — rules check without a network.
 - `test/net.js` — hosting checks: the limits, the UPnP client against a stand-in router, and the real
   server started on a spare port. `npm test` runs both; nothing leaves your machine.
+- `public/settings-menu.js` — player settings and the menu that edits them (browser and desktop app).
+- `desktop/` — the desktop app (Electron): `main.js` (window, data folder, navigation rules),
+  `lib.js` (the same decisions as plain functions, for the test), `preload.js` (the six functions a page
+  gets), `start/` (the server list), `default-server.json`, `test/desktop.test.js`.
