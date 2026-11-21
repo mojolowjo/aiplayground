@@ -217,12 +217,14 @@ function interp() {
 
 // ---------- input ----------
 const toWorld = (sx, sy) => [(sx - W / 2) / scale + cam.x, (sy - H / 2) / scale + hello.map.h / 2];
+// A unit's hit radius, from the sizes the server sent.
+const unitRadius = u => (u.k === 't' ? hello.rules.tower.radius : u.k === 'h' ? hello.heroes[u.h].radius : hello.minions[u.m].radius);
 function unitAt(wx, wy, heroOnly) {
   const cur = snaps[snaps.length - 1]; if (!cur) return null;
   let best = null, bd = 1e9;
   for (const u of cur.units) {
     if (u.t === hello.team[0] || u.d || (heroOnly && u.k !== 'h')) continue;
-    const r = u.k === 't' ? 90 : u.k === 'h' ? hello.rules.heroRadius : 32, d = Math.hypot(u.x - wx, u.y - wy);
+    const r = unitRadius(u), d = Math.hypot(u.x - wx, u.y - wy);
     if (d <= r + (heroOnly ? 180 : 25) && d < bd) { bd = d; best = u; }
   }
   return best;
@@ -233,7 +235,7 @@ function unitAt(wx, wy, heroOnly) {
 function minionsAhead(now) {
   const B = snaps[snaps.length - 1], A = snaps[snaps.length - 2]; if (!B) return [];
   const prev = A ? new Map(A.units.map(u => [u.id, u])) : new Map(), dt = A ? B.time - A.time : 0, ahead = Math.min(0.4, ping / 1000 + (now - B.at));
-  return B.units.filter(u => u.k === 'm').map(u => { const a = dt > 0 && prev.get(u.id); return { x: u.x + (a ? (u.x - a.x) / dt * ahead : 0), y: u.y + (a ? (u.y - a.y) / dt * ahead : 0), gh: u.gh }; });
+  return B.units.filter(u => u.k === 'm').map(u => { const a = dt > 0 && prev.get(u.id); return { x: u.x + (a ? (u.x - a.x) / dt * ahead : 0), y: u.y + (a ? (u.y - a.y) / dt * ahead : 0), gh: u.gh, r: hello.minions[u.m].collisionRadius }; });
 }
 let lastDrawn = null;                       // your hero as it was last drawn (predicted or interpolated)
 const drawnMe = () => lastDrawn || meUnit;
@@ -436,7 +438,7 @@ function frame(nowMs) {
   const mi = st.units.findIndex(u => u.id === (me && me.id));
   if (mi >= 0 && pred.mode === 'predict' && me && meUnit) {
     Predict.step(pred, dt, { now, speed: me.ms, canMove: !meUnit.nm && !meUnit.d, ghosted: !!meUnit.gh, odd: me.id % 2 === 1,
-      minions: minionsAhead(now), map: M, coll: hello.rules.collision });
+      radius: myDef.collisionRadius, minions: minionsAhead(now), map: M, coll: hello.rules.collision });
     st.units[mi] = { ...st.units[mi], x: pred.x, y: pred.y, ...(pred.order ? { f: pred.face } : {}) };
   }
   const mine = mi >= 0 ? st.units[mi] : undefined; lastDrawn = mine || null;
@@ -497,7 +499,7 @@ function frame(nowMs) {
     if (u.k === 't') { smallBar(u, a, 120, 10, 128, TEAM[u.t]);
       if (u.pl) { ctx.fillStyle = '#0b0e12'; const bx = Math.round(sx(u.x) - 60), by = Math.round(sy(u.y) - 128 * scale - 10); for (let i = 1; i < u.pl; i++) ctx.fillRect(bx + 120 * i / u.pl - 1, by, 2, 10); }   // plate marks
     }
-    else if (u.k === 'm') smallBar(u, a, u.m === 2 ? 62 : 46, u.m === 2 ? 6 : 5, u.m === 2 ? 56 : 44, mineTeam ? '#4aa3ff' : '#ff5a5a');
+    else if (u.k === 'm') smallBar(u, a, u.m === 2 ? 76 : 56, u.m === 2 ? 6 : 5, minionBarAt(u), mineTeam ? '#4aa3ff' : '#ff5a5a');
     else heroBar(u, a, mineTeam ? (u.id === me.id ? '#3fd06a' : '#4aa3ff') : '#ff5a5a', u.id === (me && me.id));
   }
   if (barrage) {   // barrage: range ring, and where the next shot would land
@@ -513,7 +515,7 @@ function frame(nowMs) {
     ctx.fillStyle = mine.hl > 0.8 ? '#ff8a6a44' : '#8fd0ff44'; ctx.strokeStyle = '#dff2ff'; ctx.lineWidth = 3; ctx.fillRect(0, -c.width / 2, len, c.width); ctx.strokeRect(0, -c.width / 2, len, c.width);
     ctx.restore();
   }
-  if (mine && pendingA && me) { ctx.strokeStyle = '#ffffffaa'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), (me.range + hello.rules.heroRadius) * scale, 0, 7); ctx.stroke(); }
+  if (mine && pendingA && me) { ctx.strokeStyle = '#ffffffaa'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx(mine.x), sy(mine.y), (me.range + myDef.radius) * scale, 0, 7); ctx.stroke(); }
   ctx.restore();
   gfxCleanup(now);
   // minimap strip
@@ -526,7 +528,7 @@ function frame(nowMs) {
     const txt = `${mine.bg} shot${mine.bg > 1 ? 's' : ''} left · ${me.bt.toFixed(1)}s · R to fire, S to end`; ctx.strokeText(txt, W / 2, H * 0.2); ctx.fillText(txt, W / 2, H * 0.2); }
   // death overlay
   if (showGhost && meUnit && mine) {   // debug: the server's position for your hero, and how far the prediction is from it
-    ctx.strokeStyle = '#ff4fd8'; ctx.lineWidth = 2; ctx.setLineDash([6, 5]); ctx.beginPath(); ctx.arc(sx(meUnit.x), sy(meUnit.y), hello.rules.heroRadius * scale, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = '#ff4fd8'; ctx.lineWidth = 2; ctx.setLineDash([6, 5]); ctx.beginPath(); ctx.arc(sx(meUnit.x), sy(meUnit.y), myDef.radius * scale, 0, 7); ctx.stroke(); ctx.setLineDash([]);
     ctx.beginPath(); ctx.moveTo(sx(meUnit.x), sy(meUnit.y)); ctx.lineTo(sx(mine.x), sy(mine.y)); ctx.stroke();
     ctx.fillStyle = '#ff4fd8'; ctx.font = '12px system-ui'; ctx.textAlign = 'left';
     ctx.fillText(`${pred.mode} · ahead of server ${Math.hypot(mine.x - meUnit.x, mine.y - meUnit.y) | 0} · last error ${predErr.toFixed(1)} · ping ${ping}ms`, sx(meUnit.x) + 70 * scale, sy(meUnit.y) + 90 * scale);

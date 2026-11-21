@@ -16,9 +16,11 @@ const byLevel = (at1, at18, lvl) => at1 + (at18 - at1) * (Math.min(18, lvl) - 1)
 const tier = lvl => (lvl >= 16 ? 3 : lvl >= 11 ? 2 : lvl >= 6 ? 1 : 0);                   // steps up at levels 6, 11 and 16
 const list = a => a.join('/'), pct = a => a.map(v => Math.round(v * 100)).join('/');     // for tooltips
 
+// Sizes: `radius` is the hit radius (what attacks, ranges and skillshots measure to) and `collisionRadius` is
+// what the hero bumps into while walking (smaller, so units look as if they almost touch).
 export const HEROES = {
   oriel: {
-    name: 'Oriel', build: [['starterring', 'potion', 'potion'], 'codex', 'emberorb', 'casterboots', 'crown', 'voidstaff', 'doomstaff'], dmgType: 'ability', role: 'Mage', color: '#c58bff',
+    name: 'Oriel', radius: 65, collisionRadius: 35, build: [['starterring', 'potion', 'potion'], 'codex', 'emberorb', 'casterboots', 'crown', 'voidstaff', 'doomstaff'], dmgType: 'ability', role: 'Mage', color: '#c58bff',
     hp: 560, hpPer: 90, mana: 420, manaPer: 30, ad: 52, adPer: 3, as: 0.63, asPer: 1.5,
     armor: 21, armorPer: 4, mr: 30, mrPer: 1.3, ms: 330, range: 550, melee: false,
     projSpeed: 1600, windup: 0.22, hpRegen: 0.7, manaRegen: 2.2,
@@ -64,7 +66,7 @@ export const HEROES = {
 // Bliknarczt, the Salvage Hulk: a grab tank. Forced movement, an empowered attack, and one ability
 // with a passive mode and an active mode.
 HEROES.gorrum = {
-  name: 'Bliknarczt', build: [['startershield', 'potion', 'potion'], 'heartgem', { attack: 'ironboots', ability: 'spiritboots' }, 'frostplate', 'spiritcloak', 'thornmail', 'titanheart'], dmgType: 'attack', role: 'Grab tank', color: '#c9973f',
+  name: 'Bliknarczt', radius: 80, collisionRadius: 50, build: [['startershield', 'potion', 'potion'], 'heartgem', { attack: 'ironboots', ability: 'spiritboots' }, 'frostplate', 'spiritcloak', 'thornmail', 'titanheart'], dmgType: 'attack', role: 'Grab tank', color: '#c9973f',
   hp: 600, hpPer: 109, mana: 267, manaPer: 40, ad: 62, adPer: 3.5, as: 0.625, asPer: 1.13,
   armor: 37, armorPer: 4.7, mr: 32, mrPer: 2.05, ms: 325, range: 125, melee: true,
   windup: 0.25, hpRegen: 1.5, hpRegenPer: 0.15, manaRegen: 1.7, manaRegenPer: 0.16,
@@ -139,7 +141,7 @@ HEROES.gorrum = {
 // (telling the mark what the ability cost, because the mark pays that back).
 const landed = (g, h, t, cost, pop = true) => { HEROES.wren.passive.gain(g, h); if (pop) g.popMark(h, t, { cost }); };
 HEROES.wren = {
-  name: 'Ezrlae', build: [['starterblade', 'potion'], 'edge', 'hasteboots', 'duskblade', 'critblade', 'longbow', 'ruinblade'], dmgType: 'attack', role: 'Marksman', color: '#f0c05a',
+  name: 'Ezrlae', radius: 65, collisionRadius: 35, build: [['starterblade', 'potion'], 'edge', 'hasteboots', 'duskblade', 'critblade', 'longbow', 'ruinblade'], dmgType: 'attack', role: 'Marksman', color: '#f0c05a',
   hp: 600, hpPer: 102, mana: 375, manaPer: 70, ad: 60, adPer: 3.75, as: 0.625, asPer: 2.5,
   armor: 24, armorPer: 4.2, mr: 33, mrPer: 1.1, ms: 325, range: 550, melee: false,
   projSpeed: 2000, shot: 'light', windup: 0.188, hpRegen: 0.8, hpRegenPer: 0.13, manaRegen: 1.7, manaRegenPer: 0.2,
@@ -220,7 +222,7 @@ const slash = (g, h) => {
 };
 const dropBlade = (g, h, x, y, delay) => g.drop(h, x, y, delay, { kind: 'blade', r: BLADE.r, life: BLADE.life, landSfx: 'bladeLand', onTake: () => slash(g, h) });
 HEROES.sable = {
-  name: 'Katanira', build: [['startershield', 'potion', 'potion'], 'codex', 'casterboots', 'hexblade', 'emberorb', 'voidstaff', 'doomstaff'], dmgType: 'ability', role: 'Assassin', color: '#b9c8ec',
+  name: 'Katanira', radius: 65, collisionRadius: 35, build: [['startershield', 'potion', 'potion'], 'codex', 'casterboots', 'hexblade', 'emberorb', 'voidstaff', 'doomstaff'], dmgType: 'ability', role: 'Assassin', color: '#b9c8ec',
   manaless: true, mana: 0, manaPer: 0, manaRegen: 0,
   hp: 672, hpPer: 108, ad: 58, adPer: 3.2, as: 0.658, asPer: 2.74,
   armor: 32, armorPer: 4.7, mr: 32, mrPer: 2.05, ms: 335, range: 125, melee: true,
@@ -298,7 +300,7 @@ HEROES.sable = {
 // Xerhta is built from two shared pieces in sim.js: g.strike (telegraph -> delay -> resolve) and the ability
 // state machine (g.enter / g.leave). Each ability below is one of those, or both, with different numbers.
 HEROES.kessa = {
-  name: 'Xerhta', build: [['starterring', 'potion', 'potion'], 'spellbook', 'crown', 'casterboots', 'voidstaff', 'doomstaff', 'emberorb'], dmgType: 'ability', role: 'Artillery', color: '#6fb6e8',
+  name: 'Xerhta', radius: 65, collisionRadius: 35, build: [['starterring', 'potion', 'potion'], 'spellbook', 'crown', 'casterboots', 'voidstaff', 'doomstaff', 'emberorb'], dmgType: 'ability', role: 'Artillery', color: '#6fb6e8',
   hp: 575, hpPer: 106, mana: 400, manaPer: 22, ad: 55, adPer: 3, as: 0.658, asPer: 1.36,
   armor: 22, armorPer: 4.7, mr: 30, mrPer: 1.3, ms: 340, range: 525, melee: false,
   projSpeed: 1500, shot: 'orb', windup: 0.2, hpRegen: 1.1, hpRegenPer: 0.11, manaRegen: 1.37, manaRegenPer: 0.16,

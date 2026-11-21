@@ -55,6 +55,13 @@ The stats panel shows your CS and missed CS, and **T** draws each minion's targe
 
 ## Lane rules worth knowing
 
+- **Sizes.** Every unit has a hit radius (what attacks, ranges and skillshots measure to) and a smaller
+  collision radius (what it bumps into while walking). Heroes: 65 / 35, except Bliknarczt at 80 / 50.
+  Melee and caster minions: 48 / 36. Cannon minions: 65 / 56. Towers: 88. Ranges are edge to edge, so a
+  110-range attack reaches a melee minion whose centre is 110 + 65 + 48 = 223 away. Minions are wide
+  enough that a skillshot will not fit between two that stand 100 apart. The numbers are per hero in
+  `game/data.js` and per minion kind in `MINION` (`game/sim.js`).
+
 - The first wave spawns at 0:30 and the two waves meet in the middle about 25 seconds later.
 - A tower shot removes 45% of a melee minion's max health, 70% of a caster's and 14% of a
   cannon's, so under your tower a melee minion takes two tower shots and then your last hit.

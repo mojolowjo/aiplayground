@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { Game, TICK, MAP, RULES } from './game/sim.js';
+import { Game, TICK, MAP, RULES, MINION, MINION_KINDS } from './game/sim.js';
 import { HEROES, SPELLS, ITEMS } from './game/data.js';
 import { PortMapping, isPublicAddress } from './net/upnp.js';
 import { duckName, startDuck } from './net/duckdns.js';
@@ -104,7 +104,8 @@ wss.on('connection', (ws, req) => {
       me = { id: nextPid++, ws, team, hero: null, name: String(m.name || 'Player').slice(0, 16) || 'Player', host: isThisMachine(ip) };
       room.players.push(me);
       const strip = o => JSON.parse(JSON.stringify(o));
-      send(ws, { t: 'hello', id: me.id, team, heroes: strip(HEROES), spells: strip(SPELLS), items: ITEMS, map: MAP, rules: RULES });
+      send(ws, { t: 'hello', id: me.id, team, heroes: strip(HEROES), spells: strip(SPELLS), items: ITEMS, map: MAP, rules: RULES,
+        minions: MINION_KINDS.map(k => ({ radius: MINION[k].radius, collisionRadius: MINION[k].collisionRadius })) });   // sizes by the snapshot's minion number
       return lobby(room);
     }
     if (!me) return;

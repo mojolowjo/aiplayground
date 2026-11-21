@@ -132,6 +132,11 @@ function glow(x, y, r, col, a) {
 // A glow that belongs to an ability even though it is drawn as part of a unit.
 function abilityGlow(x, y, r, col, a) { const was = GFX.ambient; GFX.ambient = false; glow(x, y, r, col, a); GFX.ambient = was; }
 function begin(u, rot) { ctx.save(); ctx.translate(sx(u.x), sy(u.y)); ctx.scale(scale, scale); if (rot !== undefined) ctx.rotate(rot); }
+// The art is drawn at one size per kind of unit and scaled to the unit's real hit radius, so a bigger unit looks bigger.
+const ART = { hero: 65, minion: [22, 22, 29] };   // the hit radius each drawing was made for (minions: caster, melee, cannon)
+const heroSize = u => hello.heroes[u.h].radius / ART.hero, minionSize = u => hello.minions[u.m].radius / ART.minion[u.m];
+// How far above a minion its health bar sits, in world units.
+const minionBarAt = u => (u.m === 2 ? 56 : 44) * minionSize(u) * 0.8;
 
 // ---------- heroes ----------
 const SKIN = '#e9c8a2';
@@ -140,9 +145,9 @@ function drawHero(u, a, now, teamCol, isMe) {
   const { s, p } = atkPose(a, now), castT = now - a.cast0, castP = castT >= 0 && castT < 0.45 ? 1 - castT / 0.45 : 0;
   const step = Math.sin(a.walk) * a.moving, breathe = Math.sin(now * 2.2 + u.id) * 0.6 * (1 - a.moving);
   const f = a.f ?? 0, flash = now - a.flash < 0.09;
-  begin(u);
+  begin(u); { const k = heroSize(u); ctx.scale(k, k); }
   ell(10, 16, 52, 34, 'rgba(0,0,0,.32)');
-  ctx.globalAlpha = isMe ? 0.95 : 0.75; ell(0, 0, hello.rules.heroRadius, hello.rules.heroRadius, null, teamCol, isMe ? 5 : 4); ctx.globalAlpha = 1;
+  ctx.globalAlpha = isMe ? 0.95 : 0.75; ell(0, 0, ART.hero, ART.hero, null, teamCol, isMe ? 5 : 4);   // the ring is the hit radius (the whole drawing is scaled to it) ctx.globalAlpha = 1;
   if (castP > 0) abilityGlow(0, 0, 70 + 60 * (1 - castP), col, castP * 0.7);
   if (u.ku) { ctx.translate(0, -34 - 6 * Math.sin(now * 12)); ctx.scale(1.1, 1.1); }   // knocked into the air: lifted off its shadow
   ctx.rotate(f);
@@ -257,7 +262,7 @@ function star(x, y, r, col) {
 // ---------- minions ----------
 function drawMinion(u, a, now, col) {
   const { s, p } = atkPose(a, now), step = Math.sin(a.walk) * a.moving, dark = shade(col, -0.45), flash = now - a.flash < 0.08;
-  begin(u); ell(6, 9, 30, 20, 'rgba(0,0,0,.3)'); ctx.rotate(a.f ?? 0);
+  begin(u); { const k = minionSize(u); ctx.scale(k, k); } ell(6, 9, 30, 20, 'rgba(0,0,0,.3)'); ctx.rotate(a.f ?? 0);
   if (u.m === 2) {   // cannon: a wheeled gun carriage
     const kick = -Math.max(0, s) * 10, gl = p >= 0 ? p : 0.15;
     for (const k of [-1, 1]) { ell(-6, k * 30, 17, 9, '#3a2c1c', OUT, 3); ell(-6, k * 30, 6, 3.5, '#8a6a3c'); }
@@ -472,7 +477,7 @@ function drawTrees(M, now, cam, halfW) {
 
 // ---------- bars ----------
 function heroBar(u, a, col, isMe) {
-  const w = 108, h = 11, x = Math.round(sx(u.x) - w / 2), y = Math.round(sy(u.y) - 92 * scale - h);
+  const w = 108, h = 11, x = Math.round(sx(u.x) - w / 2), y = Math.round(sy(u.y) - 92 * heroSize(u) * scale - h);
   ctx.fillStyle = '#0b0e12'; ctx.fillRect(x - 2, y - 2, w + 4, h + 9);
   ctx.fillStyle = '#f0e0c0'; ctx.fillRect(x, y, w * clamp01(a.hp / u.mhp), h);
   ctx.fillStyle = col; ctx.fillRect(x, y, w * clamp01(u.hp / u.mhp), h);

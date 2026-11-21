@@ -26,8 +26,9 @@ const Predict = (() => {
   function stop(p) { p.order = null; }                 // Stop or recall: stand still, keep predicting
   function release(p) { p.mode = 'follow'; p.order = null; p.hist = []; p.corrX = p.corrY = 0; }   // hand the hero back to the snapshots
 
-  // Advance the prediction by dt seconds. env = { now, speed, canMove, ghosted, minions: [{x, y}], map, coll }
-  // where map is the server's MAP and coll its RULES.collision.
+  // Advance the prediction by dt seconds. env = { now, speed, canMove, ghosted, radius, minions: [{x, y, r}], map, coll }
+  // where radius is the hero's collision radius, each minion's r is its own, map is the server's MAP and coll
+  // its RULES.collision.
   function step(p, dt, env) {
     if (p.mode !== 'predict') return;
     // Blend in whatever correction the last snapshot asked for, and move the history with it so the same
@@ -40,7 +41,7 @@ const Predict = (() => {
     }
     // The same walking step the server takes (shared/move.js): steer around minions, slide along their edges.
     if (p.order && env.canMove && env.now >= p.lockUntil) {
-      const C = env.coll, blockers = env.ghosted ? [] : env.minions.filter(m => !m.gh).map(m => ({ x: m.x, y: m.y, r: C.hero + C.minion }));
+      const C = env.coll, blockers = env.ghosted ? [] : env.minions.filter(m => !m.gh).map(m => ({ x: m.x, y: m.y, r: env.radius + m.r }));
       const res = Move.step(p, p.order, env.speed * dt, blockers, { now: env.now, look: C.look, keep: C.keepSide, margin: C.margin, odd: env.odd });
       if (res.arrived) p.order = null;
     }

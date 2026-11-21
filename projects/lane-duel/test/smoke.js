@@ -253,7 +253,7 @@ const duel = (a, b = 'oriel') => {
     assert.deepEqual([WAVES.every(0), WAVES.every(900), WAVES.every(1900)], [30, 25, 20]);
     g.time = 900; g.waveNo = 31; g.spawnQ = []; g.queueWave(); assert.equal(g.spawnQ.filter(q => q.team === 'blue' && q.kind === 'melee').length, 2, 'late cannon waves have 2 melee'); }
   // first wave: ignores a champion standing beside the lane, pairs off melee, both sides' melee die together
-  { const { g, e } = fresh(); e.x = 3000; e.y = 1000; e.hp = e.mhp = 9000; e.bot = false; e.order = { type: 'hold' }; run(g, 37.5);
+  { const { g, e } = fresh(); e.x = 3000; e.y = 1150; e.hp = e.mhp = 9000; e.bot = false; e.order = { type: 'hold' }; run(g, 37.5);
     assert(minions(g, 'blue').every(m => !tgt(g, m) || tgt(g, m).type !== 'hero'), 'first wave walks past an idle champion'); e.x = MAP.spawn.red.x; e.y = 800;
     let met = 0; while (!g.wavesMet && g.time < 90) g.step(); met = g.time - RULES.firstWave;
     assert(met >= 22 && met <= 28, `first clash ${met.toFixed(1)}s after the wave spawns (want 22-28)`);
@@ -265,7 +265,7 @@ const duel = (a, b = 'oriel') => {
   { const { g, h, e } = fresh(); g.nextWave = Infinity; g.wavesMet = true;
     const add = (team, kind, x, y) => g.spawnMinion({ team, kind, wave: 2, slot: 1 }) && Object.assign([...g.units.values()].at(-1), { x, y, laneY: y, hp: 5000, mhp: 5000 });
     h.x = 3000; h.y = 800; e.x = 3900; e.y = 800; e.hp = e.mhp = h.hp = h.mhp = 9000; h.order = e.order = { type: 'hold' }; e.cds[3] = 1e9;
-    const red = [add('red', 'caster', 3500, 700), add('red', 'caster', 3500, 900)], blue = add('blue', 'melee', 3300, 800); run(g, 1);
+    const red = [add('red', 'caster', 3500, 640), add('red', 'caster', 3500, 960)], blue = add('blue', 'melee', 3300, 800); run(g, 1);
     assert(red.every(m => tgt(g, m) === blue), 'minions pick the closest enemy minion over a champion');
     const nearer = add('blue', 'melee', 3420, 800); run(g, 1.2); assert(red.every(m => tgt(g, m) === blue), 'and do not switch to an equal-priority target');
     g.units.delete(nearer.id);
@@ -333,7 +333,7 @@ const duel = (a, b = 'oriel') => {
 }
 // 10. Unit collision: nothing is ever shoved by a bump. Movers steer around and slide; standing units stay put.
 {
-  const C = RULES.collision, gap = C.hero + C.minion;
+  const C = RULES.collision, gap = HEROES.wren.collisionRadius + MINION.melee.collisionRadius;   // how close a hero's centre and a melee minion's can get
   const scene = () => { const g = mk('wren', 'gorrum'), h = g.heroes.get(1); g.nextWave = Infinity; g.wavesMet = true; h.x = 3000; h.y = 800; h.face = 0; h.order = { type: 'hold' }; return { g, h }; };
   const still = (g, kind, x, y, team = 'blue') => Object.assign(g.spawnMinion({ team, kind, wave: 2, slot: 1 }), { x, y, laneY: y, ms: 0, range: 0, lookAt: Infinity });
   const march = (g, x, y, wave = 2) => Object.assign(g.spawnMinion({ team: 'blue', kind: 'melee', wave, slot: 1 }), { x, y, laneY: y });
@@ -344,7 +344,7 @@ const duel = (a, b = 'oriel') => {
     return { t: ticks / TICK, step, back, near, arrived: !h.order }; };
 
   // A standing hero is never moved: a whole wave walks through where it stands, and goes around it.
-  { const { g, h } = scene(); const wave = []; for (let i = 0; i < 6; i++) wave.push(march(g, 2700 - (i >> 1) * 90, 760 + (i % 3) * 40)); wave.push(march(g, 2500, 800));
+  { const { g, h } = scene(); const wave = []; for (let i = 0; i < 6; i++) wave.push(march(g, 2700 - (i >> 1) * 160, 700 + (i % 3) * 100)); wave.push(march(g, 2300, 800));
     let moved = 0; for (let i = 0; i < 4 * TICK; i++) { const px = h.x, py = h.y; g.step(); moved += Math.hypot(h.x - px, h.y - py); for (const m of wave) assert(g.dist(m, h) > gap - 1.5, 'no minion walks into the hero'); }
     assert(moved < 1, `a wave walked through a standing hero, who moved ${moved.toFixed(3)} units in total`); assert(wave.every(m => m.x > 3300), 'the minions went around and kept going: ' + wave.map(m => m.x | 0)); }
   // One minion walking straight at a standing hero goes around and loses little time.
@@ -355,31 +355,31 @@ const duel = (a, b = 'oriel') => {
     m.x = 3300; m.ms = 0; const w = walk(g, h, 3600, 800); assert(w.arrived && w.near < 10 && Math.abs(w.t - 600 / 325) < 0.1, 'and the hero walks through it'); }
 
   // Walking into a wave: steered around it, at its own speed, never thrown anywhere.
-  { const { g, h } = scene(); const wall = [740, 800, 860].map(y => still(g, 'melee', 3300, y)), before = wall.map(m => [m.x, m.y]);
+  { const { g, h } = scene(); const wall = [720, 800, 880].map(y => still(g, 'melee', 3300, y)), before = wall.map(m => [m.x, m.y]);
     for (const m of wall) m.x = 9000; const open = walk(g, h, 3600, 800); assert(open.arrived && Math.abs(open.t - 600 / 325) < 0.1, 'open ground: straight there');
     wall.forEach((m, i) => { m.x = before[i][0]; }); h.x = 3000; h.y = 800; const w = walk(g, h, 3600, 800), stepMax = g.speed(h) / TICK;
     assert(w.arrived && w.t > open.t && w.t < open.t + 1, `a wave in the way costs a little time: ${w.t.toFixed(2)}s against ${open.t.toFixed(2)}s`);
     assert(w.step <= stepMax + 1e-6, `never more than one step per tick: ${w.step.toFixed(2)} of ${stepMax.toFixed(2)}`); assert(w.back < 5, `never backward: at most ${w.back.toFixed(2)} units away from the target`);
     assert(w.near > gap - 1.5, 'never inside a minion: closest ' + w.near.toFixed(1)); assert.deepEqual(wall.map(m => [m.x, m.y]), before, 'and no minion moved'); }
   // Surrounded, with many minions overlapping the hero at once: still at most one step per tick, and nobody else moves.
-  { const { g, h } = scene(); const ring = []; for (let i = 0; i < 8; i++) ring.push(still(g, 'melee', 3000 + Math.cos(i * Math.PI / 4) * 48, 800 + Math.sin(i * Math.PI / 4) * 48));   // inside the hero's circle, not inside each other
-    for (let i = 0; i < 12; i++) ring.push(still(g, 'caster', 3000 + Math.cos(i * Math.PI / 6) * 90, 800 + Math.sin(i * Math.PI / 6) * 90));
+  { const { g, h } = scene(); const ring = []; for (let i = 0; i < 5; i++) ring.push(still(g, 'melee', 3000 + Math.cos(i * Math.PI / 2.5) * 62, 800 + Math.sin(i * Math.PI / 2.5) * 62));   // inside the hero's circle, not inside each other
+    for (let i = 0; i < 12; i++) ring.push(still(g, 'caster', 3000 + Math.cos(i * Math.PI / 6) * 140, 800 + Math.sin(i * Math.PI / 6) * 140));
     const before = ring.map(m => [m.x, m.y]); h.ghostUntil = 0; run(g, 0.5); assert(h.x === 3000 && h.y === 800, 'standing in a crowd: not moved at all');
     const w = walk(g, h, 3600, 800, 3); assert(w.step <= g.speed(h) / TICK + 1e-6, `one step per tick at most: ${w.step.toFixed(2)}`); assert.deepEqual(ring.map(m => [m.x, m.y]), before, 'the minions stay where they are'); }
   // A blink into a wave lands on the nearest free spot; the minions do not move.
-  { const { g, h } = scene(); const wall = [740, 800, 860].map(y => still(g, 'melee', 3300, y)), before = wall.map(m => [m.x, m.y]);
+  { const { g, h } = scene(); const wall = [720, 800, 880].map(y => still(g, 'melee', 3300, y)), before = wall.map(m => [m.x, m.y]);
     g.blink(h, 3300, 800); const off = Math.hypot(h.x - 3300, h.y - 800); assert(off > 1 && off <= C.unstick && wall.every(m => g.dist(h, m) >= gap - 1e-6), `moved ${off.toFixed(0)} units to where it fits`);
     assert.deepEqual(wall.map(m => [m.x, m.y]), before, 'no minion moved'); const at = [h.x, h.y]; run(g, 1); assert.deepEqual([h.x, h.y], at, 'and nothing pushes it afterwards');
     for (let i = 0; i < 40; i++) still(g, 'melee', 5000 + (i % 8) * 30, 700 + (i >> 3) * 30); g.blink(h, 5100, 760); run(g, 1); assert(Number.isFinite(h.x), 'a spot with no room within reach leaves the hero where it landed'); }
   // Dashes and forced movement still ignore collision; a hero leaving them is set down where it fits.
-  { const { g, h } = scene(); const wall = [740, 800, 860].map(y => still(g, 'melee', 3300, y));
+  { const { g, h } = scene(); const wall = [720, 800, 880].map(y => still(g, 'melee', 3300, y));
     g.dash(h, { x: 3600, y: 800, speed: 1500 }); let near = 1e9; for (let i = 0; i < TICK; i++) { g.step(); near = Math.min(near, g.dist(h, wall[1])); } assert(Math.abs(h.x - 3600) < 1 && Math.abs(h.y - 800) < 1 && near < 30, 'a dash goes straight through');
     h.x = 3000; h.y = 800; g.shove(h, 1000, 0, 0.3); run(g, 0.6); assert(wall.every(m => g.dist(h, m) >= gap - 1e-6) && h.x > 3250, 'a shove carries it into the wave, and it is set down in a free spot'); }
   // Minions still block skillshots, and minions that spawn on top of each other are eased apart slowly.
   { const { g, h } = scene(); const e = g.heroes.get(2); e.x = 3700; e.y = 800; e.hp = e.mhp = 5000; e.order = { type: 'hold' }; const red = still(g, 'melee', 3400, 800, 'red');
     h.ranks[0] = 1; h.cds[0] = 0; g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); run(g, 0.8); assert(red.hp < red.mhp && e.hp === 5000, 'an enemy minion still blocks a skillshot');
-    const a = still(g, 'melee', 6000, 800), b = still(g, 'melee', 6002, 800); g.step(); assert(near(g.dist(a, b), 2 + 2 * C.nudge, 0.01), `overlapping minions part by at most ${C.nudge} units each per tick`); run(g, 1); assert(g.dist(a, b) >= 2 * C.minion - 0.01); }
-  assert.deepEqual(Object.keys(C).sort(), ['hero', 'keepSide', 'look', 'margin', 'minion', 'minionPad', 'nudge', 'unstick', 'walkingFor'], 'heroShare and slide are gone');
+    const a = still(g, 'melee', 6000, 800), b = still(g, 'melee', 6002, 800); g.step(); assert(near(g.dist(a, b), 2 + 2 * C.nudge, 0.01), `overlapping minions part by at most ${C.nudge} units each per tick`); run(g, 1); assert(g.dist(a, b) >= 2 * MINION.melee.collisionRadius - 0.01); }
+  assert.deepEqual(Object.keys(C).sort(), ['keepSide', 'look', 'margin', 'minionPad', 'nudge', 'unstick', 'walkingFor'], 'sizes are per unit now, not in here');
   console.log('collision ok');
 }
 // 11. Practice opponent: last-hits, backs off and recalls, respects vision; the dummy is still there
@@ -516,8 +516,8 @@ const duel = (a, b = 'oriel') => {
   const Predict = new Function('Move', fs.readFileSync(new URL('../public/predict.js', import.meta.url), 'utf8') + '; return Predict;')(Move);
   Predict.configure(RULES.predict);
   const setup = wallX => { const g = mk('wren', 'gorrum'), h = g.heroes.get(1); g.nextWave = Infinity; h.x = 3000; h.y = 800; h.face = 0;
-    g.wavesMet = true; const ms = [740, 800, 860].map(y => { const m = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 }); return Object.assign(m, { x: wallX, y, laneY: y, ms: 0, lookAt: Infinity }); });
-    const env = () => ({ now: g.time, speed: g.speed(h), canMove: true, ghosted: false, odd: h.id % 2 === 1, minions: ms, map: MAP, coll: RULES.collision });
+    g.wavesMet = true; const ms = [720, 800, 880].map(y => { const m = g.spawnMinion({ team: 'blue', kind: 'melee', wave: 2, slot: 1 }); return Object.assign(m, { x: wallX, y, laneY: y, ms: 0, lookAt: Infinity }); });
+    const env = () => ({ now: g.time, speed: g.speed(h), canMove: true, ghosted: false, odd: h.id % 2 === 1, radius: h.coll, minions: ms.map(m => ({ x: m.x, y: m.y, r: m.coll })), map: MAP, coll: RULES.collision });
     return { g, h, ms, env }; };
   // (a) Same orders, same world, same steps: the prediction lands where the server does, on open ground and around a wave.
   for (const wallX of [9000, 3300]) { const { g, h, env } = setup(wallX), p = Predict.create(); let worst = 0, steps = 0;
@@ -526,7 +526,7 @@ const duel = (a, b = 'oriel') => {
     assert(!h.order && !p.order && worst < 0.01, `prediction matches the server step for step ${wallX < 9000 ? 'around a wave' : 'on open ground'}: worst gap ${worst.toFixed(4)} over ${steps} steps`); }
   // Walking through a marching wave for 3s: the client's prediction and the server end within 5 units of each other.
   { const { g, h } = setup(9000), p = Predict.create(); const wave = []; for (let i = 0; i < 6; i++) wave.push(Object.assign(g.spawnMinion({ team: 'blue', kind: i < 3 ? 'melee' : 'caster', wave: 2, slot: i % 3 }), { x: 3500 + (i < 3 ? 0 : 180), y: 740 + (i % 3) * 60, laneY: 740 + (i % 3) * 60 }));
-    const env = () => ({ now: g.time, speed: g.speed(h), canMove: true, ghosted: false, odd: h.id % 2 === 1, minions: wave.map(m => ({ x: m.x, y: m.y })), map: MAP, coll: RULES.collision });
+    const env = () => ({ now: g.time, speed: g.speed(h), canMove: true, ghosted: false, odd: h.id % 2 === 1, radius: h.coll, minions: wave.map(m => ({ x: m.x, y: m.y, r: m.coll })), map: MAP, coll: RULES.collision });
     Predict.moveTo(p, 4200, 800, { x: h.x, y: h.y, f: h.face }, g.time); g.command(1, { c: 'move', x: 4200, y: 800 }); let worst = 0;
     for (let i = 0; i < 3 * TICK; i++) { const e = env(); g.step(); Predict.step(p, 1 / TICK, { ...e, now: g.time }); worst = Math.max(worst, Math.hypot(p.x - h.x, p.y - h.y)); }
     assert(Math.hypot(p.x - h.x, p.y - h.y) < 5 && worst < 5 && h.x > 3700, `prediction and server agree walking through a moving wave: ${Math.hypot(p.x - h.x, p.y - h.y).toFixed(2)} apart after 3s, ${worst.toFixed(2)} at worst`); }
@@ -722,5 +722,46 @@ const duel = (a, b = 'oriel') => {
     const g2 = new Game([{ id: 1, team: 'blue', hero: 'kessa', name: 'A' }, { id: -1, team: 'red', hero: 'gorrum', name: 'Bot', bot: true, ai: 'normal' }], { seed: 3 }); g2.nextWave = Infinity; const b2 = g2.heroes.get(-1);
     for (let i = 0; i < 200; i++) { b2.gold += 60; b2.x = MAP.spawn.red.x; g2.step(); } assert(bag(b2).includes('spiritboots') && !bag(b2).includes('ironboots'), 'against an ability hero Bliknarczt buys Spirit Boots'); }
   console.log('items ok');
+}
+// 17. Unit sizes: a hit radius (attacks, ranges, skillshots) and a smaller collision radius (walking), per unit
+{
+  assert.deepEqual(Object.fromEntries(Object.entries(HEROES).map(([k, h]) => [k, [h.radius, h.collisionRadius]])),
+    { oriel: [65, 35], gorrum: [80, 50], wren: [65, 35], sable: [65, 35], kessa: [65, 35] });
+  assert.deepEqual(['melee', 'caster', 'cannon'].map(k => [MINION[k].radius, MINION[k].collisionRadius]), [[48, 36], [48, 36], [65, 56]]);
+  assert.equal(RULES.tower.radius, 88); assert.equal(WAVES.ms, 350); assert(!('heroRadius' in RULES) && !('hero' in RULES.collision) && !('minion' in RULES.collision));
+  const scene = (a, b) => { const g = mk(a, b), h = g.heroes.get(1), e = g.heroes.get(2); g.nextWave = Infinity; g.wavesMet = true; h.x = 3000; h.y = 800; e.x = 3900; e.y = 800; e.hp = e.mhp = 9000; h.order = e.order = { type: 'hold' }; return { g, h, e }; };
+  const still = (g, kind, x, y, team = 'red') => Object.assign(g.spawnMinion({ team, kind, wave: 2, slot: 1 }), { x, y, laneY: y, ms: 0, range: 0, ad: 0, lookAt: Infinity, hp: 5000, mhp: 5000 });
+  // units carry their sizes
+  { const { g, h, e } = scene('gorrum', 'kessa'); assert.deepEqual([h.radius, h.coll, e.radius, e.coll], [80, 50, 65, 35]);
+    const c = still(g, 'cannon', 5000, 800); assert.deepEqual([c.radius, c.coll], [65, 56]);
+    assert(g.blockersFor(h).some(b => b.r === 50 + 56) && g.blockersFor(c).some(b => b.r === 56 + 50), 'collision uses both units\' own radii');
+    const m = still(g, 'melee', 5300, 800); assert(g.blockersFor(m).some(b => near(b.r, 36 + 56 * 1.2, 1e-9)), 'a minion treats another minion as 20% bigger');
+    const tw = [...g.units.values()].find(u => u.type === 'tower'); assert.equal(tw.radius, 88);
+    const snap = g.snapshot(1).units; assert.deepEqual([snap.find(u => u.id === c.id).m, snap.find(u => u.id === m.id).m], [2, 1]); }
+  // a skillshot fired along the gap between two melee minions 100 apart is blocked: the gap is narrower than it looks
+  { const { g, h, e } = scene('oriel', 'kessa'); const pair = [still(g, 'melee', 3400, 750), still(g, 'melee', 3400, 850)];
+    h.ranks[0] = 1; g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); run(g, 1.2);
+    assert(pair.some(m => m.hp < m.mhp) && e.hp === 9000, 'the bolt hits a minion and never reaches the champion');
+    for (const m of pair) m.hp = m.mhp; pair[0].y = 800 - 85; pair[1].y = 800 + 85; h.cds[0] = 0; h.mp = h.mmp; g.command(1, { c: 'cast', s: 0, x: e.x, y: e.y }); run(g, 1.2);
+    assert(pair.every(m => m.hp === m.mhp) && e.hp < 9000, 'a gap wider than the bolt (70) plus both bodies lets it through'); }
+  // attack range is edge to edge: range 110 + hero 65 + melee minion 48 = 223
+  { const { g, h } = scene('kessa', 'oriel'); const m = still(g, 'melee', 3223, 800); h.range = 110;
+    assert(g.inRange(h, m), 'at 223 the hero can attack it'); g.command(1, { c: 'atk', id: m.id }); run(g, 1); assert(m.hp < m.mhp && h.x === 3000, 'and does, without stepping closer');
+    m.x = 3225; m.hp = m.mhp; assert(!g.inRange(h, m), 'at 225 it cannot'); g.command(1, { c: 'stop' });
+    const foe = Object.assign(g.spawnMinion({ team: 'red', kind: 'melee', wave: 2, slot: 1 }), { x: 3223, y: 300, laneY: 300 }); h.y = 300;
+    assert(g.inRange(foe, h), 'the same holds for the minion\'s own 110 range'); foe.x = 3225; assert(!g.inRange(foe, h)); }
+  // Bliknarczt is wider: a thin line passing 75 units from a hero's centre hits him and nobody else
+  for (const [hero, hit] of [['gorrum', true], ['kessa', false], ['oriel', false], ['wren', false], ['sable', false]]) {
+    const { g, h, e } = scene('oriel', hero); let struck = 0; e.x = 3500;
+    g.line(h, { dx: 1, dy: 0 }, { speed: 1500, range: 900, width: 10, color: '#fff', onHit: () => { struck++; } }); g.shots.at(-1).y = e.y + 75; run(g, 1);
+    assert.equal(struck > 0, hit, `${hero} ${hit ? 'is' : 'is not'} hit by a line 75 units from the centre`);
+    let area = 0; g.strike(h, { x: e.x + 300, y: e.y, r: 225, delay: 0.1, onHit: () => { area++; } }); run(g, 0.3);
+    assert.equal(area > 0, hit, 'and the same for the edge of an area 300 away with radius 225'); }
+  // waves: three rows that do not overlap, and the first clash still comes 22-28s after the spawn
+  { const g = mk('wren', 'gorrum'); run(g, 36); const first = [...g.units.values()].filter(u => u.type === 'minion' && u.team === 'blue');
+    assert.deepEqual([...new Set(first.map(m => m.laneY))].sort(), [MAP.mid - WAVES.rowGap, MAP.mid, MAP.mid + WAVES.rowGap]);
+    for (const a of first) for (const b of first) if (a !== b) assert(g.dist(a, b) >= a.radius + b.radius, 'bodies in a wave do not overlap');
+    while (!g.wavesMet && g.time < 90) g.step(); const met = g.time - RULES.firstWave; assert(met >= 22 && met <= 28, `first clash ${met.toFixed(1)}s after the spawn`); }
+  console.log('sizes ok');
 }
 console.log('all checks passed');

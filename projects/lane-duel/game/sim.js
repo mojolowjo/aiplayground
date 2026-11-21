@@ -33,7 +33,7 @@ export const RULES = {
   // deck of critDeck cards per hero, so 25% crit is exactly 5 crits in every 20 attacks, in a random order.
   critDmg: 1.75, critDeck: 20,
   respawn: [10, 10, 12, 12, 14, 16, 20, 25, 28, 32.5, 35, 37.5, 40, 42.5, 45, 47.5, 50, 52.5],   // seconds dead, by level 1-18
-  heroRadius: 65, recallTime: 8, revealFor: 1.5,    // revealFor: seconds a hero stays visible in brush after acting
+  recallTime: 8, revealFor: 1.5,    // revealFor: seconds a hero stays visible in brush after acting
   fountainRegen: 0.1,                               // share of max health and mana restored per second at base
   chargeRefund: 0.5,                                // share of a charged ability's cost returned if the charge is cancelled
   // Client-side prediction of your own hero's movement (public/predict.js). blend: seconds over which a small
@@ -49,16 +49,16 @@ export const RULES = {
   // heatReset seconds after the tower last hit a hero. With no attacking minions within guardRange a tower
   // takes only guardedMult of the damage dealt to it.
   tower: { hp: 5000, innerHp: 4000, plates: 5, plateGold: 120, ad: 150, armor: 40, mr: 40, range: 750, as: 0.83, windupT: 0.15,
-    projSpeed: 1300, radius: 90, heroAd: 180, heroAdLate: 350, heroAdRamp: 1500,
+    projSpeed: 1300, radius: 88, heroAd: 180, heroAdLate: 350, heroAdRamp: 1500,
     heatPerShot: 0.4, maxHeat: 3, heatReset: 3, guardRange: 900, guardedMult: 0.2 },
-  // Unit collision (the rules are in shared/move.js). hero / minion: collision radii, smaller than the hit
-  // radii on purpose so units look as if they almost touch. minionPad: minions treat each other as this much
+  // Unit collision (the rules are in shared/move.js). Each unit's own collision radius is with its other numbers
+  // (heroes in data.js, minions in MINION below): smaller than the hit radius on purpose. minionPad: minions treat each other as this much
   // bigger, which leaves gaps a hero can slip through. look: how far ahead a walking unit checks its path;
   // keepSide: seconds it sticks to the side it chose to go round; margin: extra angle it clears an edge by.
   // nudge: the most an overlapping minion is moved per tick to separate it from another minion.
   // unstick: how far a hero that landed on top of units may be moved to the nearest free spot.
   // walkingFor: a hero counts as walking for this long after its last step; minions do not steer around a walking hero.
-  collision: { hero: 34, minion: 18, minionPad: 1.2, look: 200, keepSide: 0.5, margin: 0.05, nudge: 3, unstick: 150, walkingFor: 0.15 },
+  collision: { minionPad: 1.2, look: 200, keepSide: 0.5, margin: 0.05, nudge: 3, unstick: 150, walkingFor: 0.15 },
   // Practice bot. Per difficulty: react = seconds between decisions; hitErr = how far off its judgement of
   // "one attack will kill it" can be; skip = share of minions it does not try for at all; trade = chance per
   // second of attacking a player in range; qEvery = seconds between Q pokes; aimErr = aim error in radians;
@@ -92,14 +92,18 @@ export const WAVES = {
   upgradeEvery: 90,                                                   // newly spawned minions grow this often (amounts are per type, below)
   vsHero: 0.6, vsTower: 0.6,                                          // damage dealt: x0.6 to heroes and to towers (bonus vs minions is per type, below)
   sight: 500, keep: 750, helpRange: 1000, look: 0.5, xpRange: 1500,
+  ms: 350,                                                            // minion move speed
+  rowGap: 120,                                                        // distance between the three rows a wave walks in
 };
+// The number a snapshot uses for each minion kind (o.m), and the sizes the client needs for each.
+export const MINION_KINDS = ['caster', 'melee', 'cannon'];
 // hpPer / adPer / goldPer: flat amount added per upgrade (every WAVES.upgradeEvery seconds) to newly spawned minions.
 // vsMinionHp: bonus damage to other minions, as a share of the target's CURRENT health.
 // towerShot: share of this minion's MAX health one tower shot removes.
 export const MINION = {
-  melee:  { hp: 465, hpPer: 20, ad: 12, adPer: 0.4, range: 110, as: 1.25, windupT: 0.3, radius: 22, gold: 20, goldPer: 0, xp: 62, projSpeed: 0, vsMinionHp: 0.02, towerShot: 0.45 },
-  caster: { hp: 275, hpPer: 9, ad: 23, adPer: 0.7, range: 550, as: 0.67, windupT: 0.4, radius: 22, gold: 14, goldPer: 0, xp: 31, projSpeed: 650, vsMinionHp: 0.035, towerShot: 0.7 },
-  cannon: { hp: 750, hpPer: 85, ad: 36, adPer: 1.5, range: 300, as: 1.0, windupT: 0.35, radius: 29, gold: 50, goldPer: 1, xp: 75, projSpeed: 1200, vsMinionHp: 0.05, towerShot: 0.14 },
+  melee:  { hp: 465, hpPer: 20, ad: 12, adPer: 0.4, range: 110, as: 1.25, windupT: 0.3, radius: 48, collisionRadius: 36, gold: 20, goldPer: 0, xp: 62, projSpeed: 0, vsMinionHp: 0.02, towerShot: 0.45 },
+  caster: { hp: 275, hpPer: 9, ad: 23, adPer: 0.7, range: 550, as: 0.67, windupT: 0.4, radius: 48, collisionRadius: 36, gold: 14, goldPer: 0, xp: 31, projSpeed: 650, vsMinionHp: 0.035, towerShot: 0.7 },
+  cannon: { hp: 750, hpPer: 85, ad: 36, adPer: 1.5, range: 300, as: 1.0, windupT: 0.35, radius: 65, collisionRadius: 56, gold: 50, goldPer: 1, xp: 75, projSpeed: 1200, vsMinionHp: 0.05, towerShot: 0.14 },
 };
 
 const other = t => (t === 'blue' ? 'red' : 'blue');
@@ -130,12 +134,13 @@ export class Game {
   add(u) {
     u.id = this.nextId++; u.buffs = []; u.atkId = 0; u.atkAt = -9; u.nextAttack = 0; u.windup = null; u.dead = false;
     u.stunUntil = 0; u.rootUntil = 0; u.silenceUntil = 0; u.airUntil = 0; u.shieldAmt = 0; u.shieldUntil = 0; u.face = u.team === 'blue' ? 0 : Math.PI;
+    if (u.coll == null) u.coll = u.type === 'minion' ? (MINION[u.kind] || MINION.melee).collisionRadius : 0;   // collision radius (towers are never walked into: the lane ends before them)
     this.units.set(u.id, u); return u;
   }
   addHero(p) {
     const d = HEROES[p.hero], s = MAP.spawn[p.team], mates = [...this.heroes.values()].filter(o => o.team === p.team).length;
     const h = this.add({ type: 'hero', team: p.team, pid: p.id, name: p.name, hero: p.hero, def: d, x: s.x, y: s.y + mates * 130 - (this.teamSize - 1) * 65,
-      radius: RULES.heroRadius, melee: d.melee, projSpeed: d.projSpeed, lvl: 1, xp: 0, points: 1, ranks: [0, 0, 0, 0],
+      radius: d.radius, coll: d.collisionRadius, melee: d.melee, projSpeed: d.projSpeed, lvl: 1, xp: 0, points: 1, ranks: [0, 0, 0, 0],
       cds: [0, 0, 0, 0], spellCds: { d: 0, f: 0 }, gold: RULES.startGold, items: [], kills: 0, deaths: 0, cs: 0, missed: 0,
       order: null, casting: null, dashing: null, recall: null, state: null, respawnAt: 0, revealUntil: 0, bot: !!p.bot, ai: p.ai || null, aiMem: {},
       potQ: [], undo: [], deck: [], deckCrit: -1, heroHitAt: -1e9, ambushUntil: 0, ambushLock: 0, burn: null, hitBy: new Map() });
@@ -634,10 +639,10 @@ export class Game {
   }
   spawnMinion(q) {
     const k = MINION[q.kind], dir = q.team === 'blue' ? 1 : -1, up = Math.floor(this.time / WAVES.upgradeEvery);
-    const hp = k.hp + k.hpPer * up, y = MAP.mid + (q.slot - 1) * 90;
+    const hp = k.hp + k.hpPer * up, y = MAP.mid + (q.slot - 1) * WAVES.rowGap;
     return this.add({ type: 'minion', team: q.team, kind: q.kind, melee: q.kind === 'melee', wave: q.wave, slot: q.slot,
-      x: MAP.spawn[q.team].x + dir * MAP.minionOffset, y, laneY: y, radius: k.radius, hp, mhp: hp, ad: k.ad + k.adPer * up,
-      armor: 0, mr: 0, ms: 325, range: k.range, as: k.as, windupT: k.windupT, projSpeed: k.projSpeed, gold: k.gold + k.goldPer * up, xp: k.xp,
+      x: MAP.spawn[q.team].x + dir * MAP.minionOffset, y, laneY: y, radius: k.radius, coll: k.collisionRadius, hp, mhp: hp, ad: k.ad + k.adPer * up,
+      armor: 0, mr: 0, ms: WAVES.ms, range: k.range, as: k.as, windupT: k.windupT, projSpeed: k.projSpeed, gold: k.gold + k.goldPer * up, xp: k.xp,
       targetId: 0, mode: 'walk', lookAt: this.time + (this.nextId % 5) * 0.1 });
   }
   // ---------- walking and collision (the rules themselves are in shared/move.js) ----------
@@ -649,13 +654,13 @@ export class Game {
     const C = RULES.collision, out = [];
     if (u.type === 'hero') {
       if (u.ghostUntil > this.time) return out;
-      for (const m of this.units.values()) if (m.type === 'minion' && !m.dead && !this.ghostMinion(m)) out.push({ x: m.x, y: m.y, r: C.hero + C.minion });
+      for (const m of this.units.values()) if (m.type === 'minion' && !m.dead && !this.ghostMinion(m)) out.push({ x: m.x, y: m.y, r: u.coll + m.coll });
     } else if (u.type === 'minion') {
       const ghost = this.ghostMinion(u);
       for (const o of this.units.values()) {
         if (o === u || o.dead) continue;
-        if (o.type === 'minion') out.push({ x: o.x, y: o.y, r: C.minion + C.minion * C.minionPad });
-        else if (o.type === 'hero' && !ghost && !(o.ghostUntil > this.time)) out.push({ x: o.x, y: o.y, r: C.minion + C.hero, walking: this.time - (o.walkedAt ?? -9) < C.walkingFor });   // a walking hero steers; the minion only slides
+        if (o.type === 'minion') out.push({ x: o.x, y: o.y, r: u.coll + o.coll * C.minionPad });   // other minions count as a little bigger
+        else if (o.type === 'hero' && !ghost && !(o.ghostUntil > this.time)) out.push({ x: o.x, y: o.y, r: u.coll + o.coll, walking: this.time - (o.walkedAt ?? -9) < C.walkingFor });   // a walking hero steers; the minion only slides
       }
     }
     return out;
@@ -888,9 +893,9 @@ export class Game {
   // Minions that overlap each other (right after spawning, mostly) are eased apart a little each tick.
   // Only minions are moved here, and never by more than RULES.collision.nudge. Heroes are never pushed.
   separate() {
-    const C = RULES.collision, ms = [...this.units.values()].filter(u => u.type === 'minion'), min = C.minion * 2;
+    const C = RULES.collision, ms = [...this.units.values()].filter(u => u.type === 'minion');
     for (let i = 0; i < ms.length; i++) for (let j = i + 1; j < ms.length; j++) {
-      const a = ms[i], b = ms[j]; let dx = b.x - a.x, dy = b.y - a.y; const d = Math.hypot(dx, dy);
+      const a = ms[i], b = ms[j], min = a.coll + b.coll; let dx = b.x - a.x, dy = b.y - a.y; const d = Math.hypot(dx, dy);
       if (d >= min || a.push || b.push) continue;
       if (d < 0.01) { dx = 1; dy = (a.id % 2 ? 1 : -1); }
       const len = Math.hypot(dx, dy), k = Math.min(C.nudge, (min - d) / 2) / len;
@@ -942,7 +947,7 @@ export class Game {
     for (const u of this.units.values()) {
       if (!this.visible(u, team) && !u.dead) continue;
       const o = { id: u.id, k: u.type[0], t: u.team[0], x: r(u.x), y: r(u.y), hp: Math.ceil(u.hp), mhp: r(u.mhp) };
-      if (u.type === 'minion') { o.m = u.kind === 'melee' ? 1 : u.kind === 'cannon' ? 2 : 0; o.f = +u.face.toFixed(2); o.tg = u.targetId; if (this.ghostMinion(u)) o.gh = 1; }
+      if (u.type === 'minion') { o.m = Math.max(0, MINION_KINDS.indexOf(u.kind)); o.f = +u.face.toFixed(2); o.tg = u.targetId; if (this.ghostMinion(u)) o.gh = 1; }
       if (u.type === 'tower') { o.tg = u.targetId; if (u.plates) o.pl = u.plates; }
       if (u.type === 'hero') Object.assign(o, { h: u.hero, n: u.name, lvl: u.lvl, mp: r(u.mp), mmp: r(u.mmp), f: +u.face.toFixed(2),
         d: u.dead ? Math.ceil(u.respawnAt - T) : 0, st: T < u.stunUntil ? 1 : 0, rt: T < u.rootUntil ? 1 : 0,
