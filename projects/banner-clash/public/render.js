@@ -55,6 +55,7 @@ export class Renderer {
     const now = performance.now();
     for (const e of evs) {
       if (e.e === 'hurt') this.flash.set(e.id, now + 90);
+      else if (e.e === 'attack') { this.fired = this.fired || new Map(); this.fired.set(e.id, now + 140); }
       else if (e.e === 'spell') this.fx.push({ k: 'ring', x: e.x, y: e.y, r: e.r, t: now, d: 450, c: e.card === 'frost' ? '#bff' : e.card === 'gust' ? '#fff' : '#ffb040' });
       else if (e.e === 'splash') this.fx.push({ k: 'ring', x: e.x, y: e.y, r: e.r, t: now, d: 250, c: '#ff8030' });
       else if (e.e === 'root') this.fx.push({ k: 'ring', x: e.x, y: e.y, r: e.r, t: now, d: 600, c: '#6a4' });
@@ -196,6 +197,12 @@ export class Renderer {
       g.strokeStyle = '#fff'; g.lineWidth = 3; g.beginPath();
       g.arc(x, y, 14, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - u.deploy / 10)); g.stroke();
     }
+    const shot = this.fired && this.fired.get(u.id);
+    if (u.kind === 'building' && shot && shot > now) {           // muzzle flash, so a firing building is easy to see
+      const fy = u.side === me ? -1 : 1;
+      g.fillStyle = '#fff4b0'; g.fillRect(x - 6, y + fy * (spr.height / 2 - 2) - 6, 12, 12);
+      g.fillStyle = '#ffb030'; g.fillRect(x - 3, y + fy * (spr.height / 2 - 2) - 3, 6, 6);
+    }
     if (u.kind === 'building') this.hpBar(x, y - spr.height / 2 - 10, 40, u.hp, u.maxHp, TEAM[u.side], false);
     else this.hpBar(x, y - spr.height / 2 - 8 + bob, Math.max(20, spr.width * 0.8), u.hp, u.maxHp, TEAM[u.side], false);
     if (u.shield > 0) { g.fillStyle = '#c8d0d8'; g.fillRect(x - spr.width * 0.4, y - spr.height / 2 - 14 + bob, spr.width * 0.8 * Math.min(1, u.shield / 200), 4); }
@@ -208,6 +215,8 @@ export class Renderer {
     else if (c === 'hermit') { g.fillStyle = '#fff860'; g.fillRect(x - 4, y - 4, 8, 8); }
     else if (c === 'tide') { g.fillStyle = '#80e0ff'; g.fillRect(x - 5, y - 5, 10, 10); }
     else if (c === 'harpoon') { g.fillStyle = '#d0d0d8'; g.fillRect(x - 2, y - 8, 4, 16); }
+    else if (c === 'turret') { g.fillStyle = '#2a2a34'; g.fillRect(x - 6, y - 6, 12, 12); g.fillStyle = '#9a9aa6'; g.fillRect(x - 4, y - 4, 8, 8); g.fillStyle = '#c8c8d0'; g.fillRect(x - 3, y - 3, 3, 3); }
+    else if (c === 'loft') { g.fillStyle = '#e8d8a8'; g.fillRect(x - 1, y - 7, 3, 14); g.fillStyle = '#c84030'; g.fillRect(x - 2, y - 8, 5, 3); }
     else if (c === 'wyvern') { g.fillStyle = '#c0f8ff'; g.fillRect(x - 5, y - 5, 10, 10); }
     else if (c.startsWith('tower')) { g.fillStyle = TEAM[sh.side]; g.fillRect(x - 4, y - 4, 8, 8); g.fillStyle = '#fff'; g.fillRect(x - 2, y - 2, 4, 4); }
     else { g.fillStyle = '#e8d8b0'; g.fillRect(x - 3, y - 3, 6, 6); }
