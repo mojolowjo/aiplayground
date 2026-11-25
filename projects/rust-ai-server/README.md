@@ -14,7 +14,7 @@ If Windows blocks them, start with `powershell -ExecutionPolicy Bypass -File .\s
 | `start.ps1` | Copies config and plugins, then starts the server. |
 | `rcon.ps1 "status"` | Sends one console command. `rcon.ps1 "quit"` saves and stops. |
 | `deploy-plugins.ps1 [-Watch]` | Copies `plugins\*.cs` into `carbon\plugins`. Carbon hot-reloads them. |
-| `upnp.ps1 [-Add] [-Remove] [-IncludeQueryPort]` | Shows router mappings. Changes them only with a switch. |
+| `upnp.ps1 [-Add] [-Remove] [-Renew]` | Shows router mappings. Changes them only with a switch. |
 
 Change map size, seed, ports or name in `settings.ps1`, or override them in
 `settings.local.ps1` (ignored by git).
@@ -42,9 +42,11 @@ If the plugin is unloaded or fails to compile, the server is open, so check `c.p
 Rust+ (`app.port`) is off. The RCON password is generated into `rcon-password.txt` in the
 server folder.
 
-By hand: in the router admin page, forward UDP 28015 to this PC's LAN address and reserve
-that address in DHCP. Windows Firewall needs an inbound allow rule for `RustDedicated.exe`
-on Private networks.
+The router here offers no port forwarding, so the mapping uses UPnP. It has a 24 hour lease, and
+start.ps1 re-adds it every hour while the server runs (see upnp.log in the server folder).
+After the server stops, the mapping stays until the lease ends, or until upnp.ps1 -Remove.
+
+Windows Firewall needs an inbound allow rule for RustDedicated.exe on Private networks.
 
 ## Vanilla AI
 
