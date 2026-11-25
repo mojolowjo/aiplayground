@@ -80,11 +80,15 @@ if it was roaming. `/bot stop`, `roam`, `here` or `kill` cancel an action.
 
 Everything goes through the game's own code, so it behaves as it does for a player:
 
-- Swings: picks the best tool on the belt for the target, switches to it, plays the attack
-  animation and swing sound, and after 0.3 s hands a player-style hit to the tool's own attack
-  code (`BaseMelee.DoAttackShared`). That damages the target, gathers into the inventory, wears
-  the tool and plays impact effects. The swing rate is the tool's own cooldown. It aims at the
-  tree's X marker or the ore's bonus spot when there is one.
+- Swings: picks the best tool on the belt for the target, switches to it, turns its head to aim
+  (at the tree's X marker or the ore's bonus spot when there is one), plays the attack animation
+  and swing sound, and 0.3 s later traces the hit from its eyes along its view, within the tool's
+  reach. Whatever is first in the way gets hit, including a player standing in front of it. A
+  player's client does that trace; the bot uses the game's own server-side melee trace
+  (`BaseMelee.ServerUse_Strike`, used by its AI), which also keeps it inside the server's
+  anti-cheat rules for distance and line of sight. The hit then goes to the tool's own attack
+  code (`BaseMelee.DoAttackShared`): damage, gathering, tool wear, impact effects. The swing rate
+  is the tool's own cooldown. After two misses it steps 0.6 m closer; after eight it gives up.
 - Crates: opens the loot the way a player's "open" does (`PlayerOpenLoot`), takes one item every
   0.35 s, then closes it, which is what makes an empty crate despawn.
 - Pickups: takes the item out of the world and gives it to the player, as the pickup button does.
