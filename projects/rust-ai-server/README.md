@@ -59,10 +59,38 @@ Windows Firewall needs an inbound allow rule for RustDedicated.exe on Private ne
 | `/bot roam` / `/bot stop` | `aibot.roam` / `aibot.stop` | Start or stop wandering. |
 | `/bot here` | | Moves it in front of you and stops it. |
 | `/bot kill` | `aibot.kill` | Removes it. |
+| `/bot chop` | `aibot.chop` | Walks to the nearest tree (or wood pile) and chops it down with the hatchet. |
+| `/bot mine` | `aibot.mine` | Walks to the nearest ore node and mines it out with the pickaxe. |
+| `/bot barrel` | `aibot.barrel` | Breaks the nearest barrel and picks up what drops. |
+| `/bot loot` | `aibot.loot` | Opens the nearest unlocked crate and takes everything. |
+| `/bot inv` | `aibot.inv` | Lists belt, main inventory and clothing, with amounts and tool condition. |
 
 The bot is saved to `carbon\data\AiBot.json` on every server save and on plugin unload, and comes
-back at the same spot after a restart or hot reload. If it dies it leaves a normal corpse and
-respawns 30 s later at a random spawn point with fresh gear. `/bot kill` removes it for good.
+back at the same spot with the same inventory after a restart or hot reload. If it dies it leaves
+a normal corpse with its items and respawns 30 s later at a random spawn point with fresh gear.
+`/bot kill` removes it for good.
+
+### Actions
+
+Actions run only when you give the command; the bot makes no decisions of its own yet. It looks
+within 120 m, tries the 8 nearest targets until one has a walkable path, walks there (the last
+few metres straight, since the navmesh stops short of trees and rocks), then works it. When it
+finishes, the admin who asked gets a chat line with what it gained, and it goes back to roaming
+if it was roaming. `/bot stop`, `roam`, `here` or `kill` cancel an action.
+
+Everything goes through the game's own code, so it behaves as it does for a player:
+
+- Swings: picks the best tool on the belt for the target, switches to it, plays the attack
+  animation and swing sound, and after 0.3 s hands a player-style hit to the tool's own attack
+  code (`BaseMelee.DoAttackShared`). That damages the target, gathers into the inventory, wears
+  the tool and plays impact effects. The swing rate is the tool's own cooldown. It aims at the
+  tree's X marker or the ore's bonus spot when there is one.
+- Crates: opens the loot the way a player's "open" does (`PlayerOpenLoot`), takes one item every
+  0.35 s, then closes it, which is what makes an empty crate despawn.
+- Pickups: takes the item out of the world and gives it to the player, as the pickup button does.
+
+Gathering sends the "+wood" popup as a client command; for a bot the game runs that on the
+server, so the plugin registers an empty `note.inv` command to keep it out of the log.
 
 Each name owns one bot ID (Dusty 9000001, Marlow 9000002, Kestrel 9000003, and so on), so a bot
 keeps its name, face and body through deaths and restarts. The game gives its own bots IDs
