@@ -565,7 +565,9 @@ namespace Oxide.Plugins
                     {
                         walker.Halt();
                         walker.Face(drop.transform.position);
-                        if (!PickUp(drop)) { EndJob(name + "'s inventory is full."); return; }
+                        var refused = PickUp(drop);
+                        if (refused != null) Puts(name + " could not pick up " + drop.ShortPrefabName + ": " + refused);
+                        if (refused == "its inventory is full") { EndJob(name + "'s inventory is full."); return; }
                         j.Drops.RemoveAt(0);
                         j.Approached = false;
                         j.Next = Time.time + 0.5f;
@@ -584,23 +586,21 @@ namespace Oxide.Plugins
                     if (!j.Opened)
                     {
                         j.Opened = true;
-                        // The same call a player's "open" makes. The bot has no client, so nothing shows.
-                        try { sc.PlayerOpenLoot(bot, "", false); }
-                        catch (Exception ex) { Puts("PlayerOpenLoot failed, taking items directly: " + ex.Message); }
+                        var refusedOpen = OpenLoot(t);
+                        if (refusedOpen != null) { EndJob(name + " could not open the crate: " + refusedOpen + "."); return; }
                         j.Next = Time.time + 0.6f;
                         return;
                     }
                     var items = sc.inventory.itemList;
                     if (items.Count > 0)
                     {
-                        if (!bot.inventory.GiveItem(items[0])) { EndJob(name + "'s inventory is full."); return; }
+                        var refusedTake = TakeItem(items[0], t);
+                        if (refusedTake != null) { EndJob(name + " stopped looting: " + refusedTake + "."); return; }
                         j.Taken++;
                         j.Next = Time.time + 0.35f;
                         return;
                     }
-                    // Closing the loot is what makes an empty crate go away, as for a player.
-                    if (bot.inventory.loot.IsLooting() && bot.inventory.loot.entitySource == t) bot.inventory.loot.Clear();
-                    else sc.PlayerStoppedLooting(bot);
+                    CloseLoot();
                     EndJob(name + " looted the crate" + (t.IsDestroyed ? " and it despawned, empty." : "; it is empty but still there."));
                     return;
             }
@@ -725,31 +725,93 @@ namespace Oxide.Plugins
             return list;
         }
 
-        // Same steps as a player's pickup: take the item out of the world, then give it to the player.
-        private bool PickUp(BaseEntity drop)
+        #region Player messages
+
+        // A player's client asks the server to do things with short messages (RPCs): "open this",
+        // "pick this up", "move this item". The bot has no client, so it calls the same server
+        // handlers with itself as the sender, after the same checks the server runs before a
+        // handler (the [RPC_Server.IsVisible(3)] style rules: within 3 m and in plain sight).
+        private const System.Reflection.BindingFlags AnyInstance = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+        private static readonly System.Reflection.MethodInfo CanMoveFrom = typeof(PlayerInventory).GetMethod("CanMoveItemsFrom", AnyInstance);
+
+        // Private methods are not inherited for reflection, so look through the base classes too.
+        private static System.Reflection.MethodInfo FindMethod(Type type, string name)
+        {
+            for (var t = type; t != null; t = t.BaseType)
+            {
+                var m = t.GetMethod(name, AnyInstance | System.Reflection.BindingFlags.DeclaredOnly);
+                if (m != null) return m;
+            }
+            return null;
+        }
+
+        private BaseEntity.RPCMessage FromBot() => new BaseEntity.RPCMessage { player = bot, connection = null, read = null };
+
+        // The crate's "open" handler (StorageContainer.RPC_OpenLoot, rule IsVisibleTwoWay(3)).
+        // Returns null when the loot is open, otherwise why not.
+        private string OpenLoot(BaseEntity box)
+        {
+            if (!BaseEntity.RPC_Server.IsVisibleTwoWay.Test(0u, "RPC_OpenLoot", box, bot, 3f)) return "it is not within 3 m in plain sight";
+            var handler = FindMethod(box.GetType(), "RPC_OpenLoot");
+            if (handler == null) return "it has no open handler";
+            handler.Invoke(box, new object[] { FromBot() });
+            return bot.inventory.loot.IsLooting() && bot.inventory.loot.entitySource == box ? null : "the game refused to open it";
+        }
+
+        // A quick-move out of the open loot into the bot's own inventory. That is the "move item"
+        // handler (PlayerInventory.MoveItem) with no target container: the same refusals (locked
+        // item or container, restrained, container's own move rule, not looting it), then the
+        // same GiveItem. The handler itself reads its arguments from network bytes the bot can't
+        // send, so its steps are repeated here. Returns null on success, otherwise why not.
+        private string TakeItem(Item item, BaseEntity from)
+        {
+            if (item.IsLocked() || (item.parent != null && item.parent.IsLocked())) return "it is locked";
+            if (bot.IsRestrainedOrSurrendering) return "it is restrained";
+            if (!bot.inventory.loot.IsLooting() || bot.inventory.loot.entitySource != from) return "the loot is not open";
+            if (CanMoveFrom != null)
+            {
+                var response = CanMoveFrom.Invoke(CanMoveFrom.IsStatic ? null : bot.inventory, new object[] { from, item });
+                var allowed = response?.GetType().GetField("allowed");
+                if (allowed != null && !(bool)allowed.GetValue(response)) return "the container does not allow it";
+            }
+            return bot.inventory.GiveItem(item) ? null : "its inventory is full";
+        }
+
+        // Closing the loot panel, which is what makes an empty crate or bag go away.
+        private void CloseLoot()
+        {
+            if (bot.inventory.loot.IsLooting()) bot.inventory.loot.Clear();
+        }
+
+        // The pickup button: WorldItem.Pickup, rule IsVisible(3). A dropped bag is opened and
+        // emptied instead, as a player would. Returns null on success, otherwise why not.
+        private string PickUp(BaseEntity drop)
         {
             var w = drop as WorldItem;
             if (w != null)
             {
-                var item = w.item;
-                if (item == null) return true;
-                w.RemoveItem();
-                bot.GiveItem(item, BaseEntity.GiveItemReason.PickedUp);
-                if (!w.IsDestroyed) w.Kill();
-                bot.SignalBroadcast(BaseEntity.Signal.Gesture, "pickup_item", null);
+                if (w.item == null) return null;
+                if (!BaseEntity.RPC_Server.IsVisible.Test(0u, "Pickup", w, bot, 3f)) return "it is not within 3 m in plain sight";
+                w.Pickup(FromBot());
+                if (w.item != null && !w.IsDestroyed) return "the game refused the pickup";
                 job.Taken++;
-                return true;
+                return null;
             }
             var bag = drop as DroppedItemContainer;
-            if (bag == null || bag.inventory == null) return true;
+            if (bag == null || bag.inventory == null) return null;
+            var why = OpenLoot(bag);
+            if (why != null) return why;
             while (bag.inventory.itemList.Count > 0)
             {
-                if (!bot.inventory.GiveItem(bag.inventory.itemList[0])) return false;
+                why = TakeItem(bag.inventory.itemList[0], bag);
+                if (why != null) { CloseLoot(); return why; }
                 job.Taken++;
             }
-            bag.Kill();
-            return true;
+            CloseLoot();
+            return null;
         }
+
+        #endregion
 
         private string Inventory()
         {
