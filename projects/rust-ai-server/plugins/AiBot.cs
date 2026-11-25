@@ -11,8 +11,11 @@ namespace Oxide.Plugins
     // One player-like bot. The body is a plain BasePlayer with no connection, so it looks and dies
     // like a real player. It finds paths on the game's own navmesh (the one NPC2 uses), but this
     // plugin moves the body itself, because a BasePlayer has no navigator.
-    // Chat (admins): /bot spawn|info|roam|stop|here|kill      Console/RCON: aibot.<same>
-    [Info("AiBot", "mojolowjo", "0.3.0")]
+    // Actions (chop, mine, barrel, loot) use the game's own melee, gather and loot code, so they
+    // work the way they do for a player. There is no decision making: each runs only on command.
+    // Chat (admins): /bot spawn|info|roam|stop|here|kill|chop|mine|barrel|loot|inv
+    // Console/RCON: aibot.<same>
+    [Info("AiBot", "mojolowjo", "0.4.0")]
     public class AiBot : RustPlugin
     {
         private const string PlayerPrefab = "assets/prefabs/player/player.prefab";
@@ -33,12 +36,22 @@ namespace Oxide.Plugins
             public ulong Id;
             public float X, Y, Z, Yaw, Health;
             public bool Roaming = true;
+            public List<SavedItem> Items; // null means a fresh kit
+        }
+
+        private class SavedItem
+        {
+            public string Name, Where;
+            public int Amount, Slot;
+            public ulong Skin;
+            public float Condition;
         }
 
         private Saved saved;
         private BasePlayer bot;
         private Walker walker;
-        private Timer respawnTimer;
+        private Timer respawnTimer, jobTimer;
+        private Job job;
 
         private static bool OurId(ulong id) => id >= FirstId && id < FirstId + (ulong)Names.Length;
 
@@ -55,6 +68,7 @@ namespace Oxide.Plugins
         {
             try { saved = Interface.Oxide.DataFileSystem.ReadObject<Saved>(FileName); } catch { saved = null; }
             KeepIdsReserved();
+            jobTimer = timer.Every(0.2f, TickJob);
             if (saved == null || string.IsNullOrEmpty(saved.Name)) { saved = null; return; }
             var index = Array.IndexOf(Names, saved.Name);
             if (index < 0) { Puts("Unknown bot name " + saved.Name + ", not restoring it."); saved = null; return; }
@@ -73,8 +87,10 @@ namespace Oxide.Plugins
 
         private void Unload()
         {
+            EndJob(null);
             Save();
             respawnTimer?.Destroy();
+            jobTimer?.Destroy();
             RemoveBody();
         }
 
@@ -89,6 +105,7 @@ namespace Oxide.Plugins
                 saved.Yaw = bot.viewAngles.y;
                 saved.Health = bot.health;
                 saved.Roaming = walker.Roaming;
+                saved.Items = SaveItems(bot);
             }
             Interface.Oxide.DataFileSystem.WriteObject(FileName, saved ?? new Saved());
         }
@@ -116,8 +133,12 @@ namespace Oxide.Plugins
             player.metabolism.calories.value = player.metabolism.calories.max;
             player.metabolism.hydration.value = player.metabolism.hydration.max;
 
-            foreach (var item in Clothes) Give(player, item, player.inventory.containerWear);
-            foreach (var item in Belt) Give(player, item, player.inventory.containerBelt);
+            if (saved.Items == null || saved.Items.Count == 0)
+            {
+                foreach (var item in Clothes) Give(player, item, player.inventory.containerWear);
+                foreach (var item in Belt) Give(player, item, player.inventory.containerBelt);
+            }
+            else LoadItems(player, saved.Items);
             var held = player.inventory.containerBelt.GetSlot(0);
             if (held != null) player.UpdateActiveItem(held.uid);
 
@@ -134,8 +155,37 @@ namespace Oxide.Plugins
             if (item != null && !item.MoveToContainer(where)) item.Remove();
         }
 
+        private static ItemContainer[] Containers(BasePlayer p) =>
+            new[] { p.inventory.containerBelt, p.inventory.containerMain, p.inventory.containerWear };
+        private static readonly string[] ContainerNames = { "belt", "main", "wear" };
+
+        // Plain items only (no contents or ammo), which is all the bot gets: tools, clothes, resources.
+        private static List<SavedItem> SaveItems(BasePlayer p)
+        {
+            var list = new List<SavedItem>();
+            var cs = Containers(p);
+            for (var c = 0; c < cs.Length; c++)
+                foreach (var i in cs[c].itemList)
+                    list.Add(new SavedItem { Name = i.info.shortname, Where = ContainerNames[c], Amount = i.amount, Slot = i.position, Skin = i.skin, Condition = i.hasCondition ? i.condition : -1f });
+            return list;
+        }
+
+        private static void LoadItems(BasePlayer p, List<SavedItem> list)
+        {
+            var cs = Containers(p);
+            foreach (var s in list)
+            {
+                var c = Array.IndexOf(ContainerNames, s.Where);
+                var item = ItemManager.CreateByName(s.Name, Math.Max(1, s.Amount), s.Skin);
+                if (item == null || c < 0) { item?.Remove(); continue; }
+                if (s.Condition >= 0f && item.hasCondition) item.condition = s.Condition;
+                if (!item.MoveToContainer(cs[c], s.Slot) && !item.MoveToContainer(cs[c])) item.Remove();
+            }
+        }
+
         private void RemoveBody()
         {
+            EndJob(null);
             if (walker != null) UnityEngine.Object.DestroyImmediate(walker);
             if (bot != null && !bot.IsDestroyed) bot.Kill();
             bot = null;
@@ -149,11 +199,13 @@ namespace Oxide.Plugins
         {
             if (player == null || player != bot) return;
             Puts(saved?.Name + " died at " + player.transform.position);
+            EndJob(saved?.Name + " died.");
             if (walker != null) UnityEngine.Object.Destroy(walker);
             bot = null;
             walker = null;
             saved.Health = 0f;
             saved.Roaming = true;
+            saved.Items = null; // the corpse keeps them; respawn with a fresh kit
             Save();
             timer.Once(5f, KeepIdsReserved);
             respawnTimer?.Destroy();
@@ -216,19 +268,22 @@ namespace Oxide.Plugins
             if (!Alive) return "No bot. Use /bot spawn.";
             switch (verb)
             {
-                case "roam": walker.SetRoaming(true); Save(); return saved.Name + " is roaming.";
-                case "stop": walker.SetRoaming(false); Save(); return saved.Name + " stopped.";
+                case "roam": EndJob(null); walker.SetRoaming(true); Save(); return saved.Name + " is roaming.";
+                case "stop": EndJob(null); walker.SetRoaming(false); Save(); return saved.Name + " stopped.";
+                case "inv": return Inventory();
+                case "chop": case "mine": case "barrel": case "loot": return StartJob(verb, user);
                 case "here":
                     if (user == null) return "Only works in game.";
                     Vector3 to;
                     if (!Walker.Nearest(InFrontOf(user), 10f, out to)) return "No walkable ground in front of you.";
+                    EndJob(null);
                     walker.SetRoaming(false);
                     walker.TeleportTo(to);
                     walker.Face(user.transform.position);
                     Save();
                     return saved.Name + " is here, standing still.";
             }
-            return "Use spawn, info, roam, stop, here or kill.";
+            return "Use spawn, info, roam, stop, here, kill, chop, mine, barrel, loot or inv.";
         }
 
         private static Vector3 InFrontOf(BasePlayer user)
@@ -245,6 +300,7 @@ namespace Oxide.Plugins
             sb.AppendLine(saved.Name + "  id " + bot.UserIDString + "  health " + bot.health.ToString("0"));
             sb.AppendLine("pos " + bot.transform.position + " (" + MapHelper.PositionToString(bot.transform.position) + ")  water " + Walker.WaterDepth(bot.transform.position).ToString("0.0") + " m");
             sb.AppendLine("wearing " + ItemNames(bot.inventory.containerWear) + "; belt " + ItemNames(bot.inventory.containerBelt));
+            sb.AppendLine(job != null ? "job: " + job.Describe(bot) : "job: none");
             sb.Append(walker.Describe());
             sb.Append("\nserver fps " + Performance.current.frameRate);
             return sb.ToString();
@@ -276,6 +332,409 @@ namespace Oxide.Plugins
         [ConsoleCommand("aibot.stop")] private void ConStop(ConsoleSystem.Arg arg) => FromConsole(arg, "stop");
         [ConsoleCommand("aibot.here")] private void ConHere(ConsoleSystem.Arg arg) => FromConsole(arg, "here");
         [ConsoleCommand("aibot.kill")] private void ConKill(ConsoleSystem.Arg arg) => FromConsole(arg, "kill");
+        [ConsoleCommand("aibot.chop")] private void ConChop(ConsoleSystem.Arg arg) => FromConsole(arg, "chop");
+        [ConsoleCommand("aibot.mine")] private void ConMine(ConsoleSystem.Arg arg) => FromConsole(arg, "mine");
+        [ConsoleCommand("aibot.barrel")] private void ConBarrel(ConsoleSystem.Arg arg) => FromConsole(arg, "barrel");
+        [ConsoleCommand("aibot.loot")] private void ConLoot(ConsoleSystem.Arg arg) => FromConsole(arg, "loot");
+        [ConsoleCommand("aibot.inv")] private void ConInv(ConsoleSystem.Arg arg) => FromConsole(arg, "inv");
+
+        // The game runs a bot's client commands on the server (BasePlayer.BotCommand). Gathering and
+        // pickups send "note.inv" (the item popup), which the server doesn't know, so every hit
+        // would log "Command 'note.inv' not found". This swallows it. Real clients are unaffected:
+        // theirs goes over the network, not through the server's command list.
+        [ConsoleCommand("note.inv")] private void BotNote(ConsoleSystem.Arg arg) { }
+
+        #endregion
+
+        #region Actions
+
+        private const float SearchRadius = 120f, Reach = 2.4f;
+
+        // One action at a time. Phases: walk to the target, then work it (swing at it, or take
+        // what is inside), then for a barrel pick up what it dropped.
+        private class Job
+        {
+            public string Kind, Phase = "walk", Note = "";
+            public BaseEntity Target;
+            public Vector3 Spot;
+            public BasePlayer Asker;
+            public Dictionary<string, int> Before;
+            public float Next, Until, Started;
+            public bool Approached, Opened;
+            public int Swings, Taken;
+            public List<BaseEntity> Drops;
+
+            public string Describe(BasePlayer bot)
+            {
+                var d = Target != null && !Target.IsDestroyed ? ", " + Vector3.Distance(bot.transform.position, Target.transform.position).ToString("0") + " m away" : "";
+                return Kind + " " + Phase + d + ", " + Swings + " swings, " + Taken + " items taken, " + (Time.time - Started).ToString("0") + " s";
+            }
+        }
+
+        private static ResourceDispenser.GatherType GatherOf(BaseEntity e)
+        {
+            var d = e.GetComponent<ResourceDispenser>();
+            return d != null ? d.gatherType : ResourceDispenser.GatherType.UNSET;
+        }
+
+        private static string Noun(string kind) =>
+            kind == "chop" ? "tree" : kind == "mine" ? "ore node" : kind == "barrel" ? "barrel" : "crate";
+
+        private static bool Matches(string kind, BaseEntity e)
+        {
+            if (e.HasParent()) return false;
+            switch (kind)
+            {
+                // By what the node gives, not its class: wood piles are ore entities that give wood.
+                case "chop": return e is ResourceEntity && GatherOf(e) == ResourceDispenser.GatherType.Tree;
+                case "mine": return e is ResourceEntity && GatherOf(e) == ResourceDispenser.GatherType.Ore;
+                case "barrel": return e is LootContainer && e.ShortPrefabName.Contains("barrel");
+                case "loot":
+                    var lc = e as LootContainer;
+                    return lc != null && e.ShortPrefabName.Contains("crate") && !e.ShortPrefabName.Contains("hack")
+                        && !lc.IsLocked() && lc.inventory != null && lc.inventory.itemList.Count > 0;
+            }
+            return false;
+        }
+
+        private string StartJob(string kind, BasePlayer asker)
+        {
+            EndJob(null);
+            var from = bot.transform.position;
+            var found = new List<BaseEntity>();
+            foreach (var net in BaseNetworkable.serverEntities)
+            {
+                var e = net as BaseEntity;
+                if (e == null || e.IsDestroyed || !Matches(kind, e)) continue;
+                if ((e.transform.position - from).sqrMagnitude > SearchRadius * SearchRadius) continue;
+                if (Walker.WaterDepth(e.transform.position) > Walker.MaxWater) continue;
+                found.Add(e);
+            }
+            if (found.Count == 0) return "No " + Noun(kind) + " within " + SearchRadius + " m.";
+            found.Sort((a, b) => (a.transform.position - from).sqrMagnitude.CompareTo((b.transform.position - from).sqrMagnitude));
+
+            var j = new Job { Kind = kind, Asker = asker, Before = Counts(bot), Started = Time.time };
+            var tried = 0;
+            foreach (var e in found)
+            {
+                if (++tried > 8) break;
+                j.Target = e;
+                if (InReach(j)) break;
+                Vector3 spot;
+                if (!Walker.Nearest(e.transform.position, 4f, out spot)) { j.Target = null; continue; }
+                if (walker.GoTo(spot, Vector3.Distance(from, spot) > 20f)) { j.Spot = spot; break; }
+                j.Target = null;
+            }
+            if (j.Target == null) return "Found " + found.Count + " " + Noun(kind) + "s, but could not find a path to the nearest " + Math.Min(found.Count, 8) + ".";
+            job = j;
+            walker.Working = true;
+            var dist = Vector3.Distance(from, j.Target.transform.position);
+            j.Until = Time.time + 20f + dist / 2f;
+            return saved.Name + " is going to the " + Noun(kind) + " " + dist.ToString("0") + " m away (" + j.Target.ShortPrefabName + ").";
+        }
+
+        // Stops the job; with a message, reports what it gained to the admin who asked and the log.
+        private void EndJob(string why)
+        {
+            var j = job;
+            if (j == null) return;
+            job = null;
+            if (Alive)
+            {
+                if (bot.inventory.loot.IsLooting()) bot.inventory.loot.Clear();
+                walker.Working = false;
+                walker.Halt();
+            }
+            if (why == null) return;
+            var gained = new List<string>();
+            if (Alive)
+            {
+                foreach (var kv in Counts(bot))
+                {
+                    int had;
+                    j.Before.TryGetValue(kv.Key, out had);
+                    if (kv.Value > had) gained.Add("+" + (kv.Value - had) + " " + kv.Key);
+                }
+            }
+            var msg = why + (gained.Count > 0 ? " Got " + string.Join(", ", gained) + "." : " Got nothing.") + " (" + (Time.time - j.Started).ToString("0") + " s, " + j.Swings + " swings)";
+            Puts(msg);
+            if (j.Asker != null && j.Asker.IsConnected) SendReply(j.Asker, msg);
+        }
+
+        private static Dictionary<string, int> Counts(BasePlayer p)
+        {
+            var d = new Dictionary<string, int>();
+            foreach (var c in Containers(p))
+                foreach (var i in c.itemList)
+                {
+                    int n;
+                    d.TryGetValue(i.info.displayName.english, out n);
+                    d[i.info.displayName.english] = n + i.amount;
+                }
+            return d;
+        }
+
+        private bool InReach(Job j)
+        {
+            var t = j.Target;
+            if (t is TreeEntity)
+            {
+                var flat = t.transform.position - bot.transform.position;
+                flat.y = 0f;
+                return flat.magnitude <= Reach + 0.6f;
+            }
+            var eyes = bot.eyes.position;
+            return Vector3.Distance(eyes, t.ClosestPoint(eyes)) <= Reach;
+        }
+
+        private void TickJob()
+        {
+            var j = job;
+            if (j == null) return;
+            if (!Alive) { job = null; return; }
+            if (Time.time < j.Next) return;
+            var t = j.Target;
+            var gone = t == null || t.IsDestroyed;
+            var name = saved.Name;
+
+            switch (j.Phase)
+            {
+                case "walk":
+                    if (gone) { EndJob(name + ": the " + Noun(j.Kind) + " was gone before it got there."); return; }
+                    if (InReach(j))
+                    {
+                        walker.Halt();
+                        j.Phase = j.Kind == "loot" ? "take" : "work";
+                        j.Until = Time.time + 120f;
+                        j.Next = Time.time + 0.3f;
+                        return;
+                    }
+                    if (walker.Busy)
+                    {
+                        if (Time.time > j.Until) EndJob(name + " took too long getting to the " + Noun(j.Kind) + ".");
+                        return;
+                    }
+                    var flat = t.transform.position - bot.transform.position;
+                    flat.y = 0f;
+                    if (!j.Approached && flat.magnitude < 10f)
+                    {
+                        // The navmesh stops short of trees, rocks and crates; walk the last bit straight.
+                        j.Approached = true;
+                        walker.WalkStraight(t.transform.position - flat.normalized * 1f);
+                        return;
+                    }
+                    EndJob(name + " could not reach the " + Noun(j.Kind) + " (" + flat.magnitude.ToString("0.0") + " m short).");
+                    return;
+
+                case "work":
+                    if (gone || (t is BaseCombatEntity && ((BaseCombatEntity)t).IsDead()))
+                    {
+                        if (j.Kind != "barrel") { EndJob(name + " finished the " + Noun(j.Kind) + "."); return; }
+                        j.Phase = "pickup";
+                        j.Spot = t != null ? t.transform.position : bot.transform.position;
+                        j.Next = Time.time + 0.8f; // let the drops land
+                        return;
+                    }
+                    if (Time.time > j.Until) { EndJob(name + " gave up on the " + Noun(j.Kind) + "."); return; }
+                    if (!InReach(j)) { j.Phase = "walk"; j.Approached = false; j.Until = Time.time + 20f; return; }
+                    var melee = EquipTool(j);
+                    if (melee == null) return; // switching, or EndJob already said why
+                    if (melee.HasAttackCooldown()) return;
+                    Swing(j, melee);
+                    return;
+
+                case "pickup":
+                    if (j.Drops == null) j.Drops = DropsNear(j.Spot);
+                    j.Drops.RemoveAll(d => d == null || d.IsDestroyed);
+                    if (j.Drops.Count == 0) { EndJob(name + " broke the barrel and picked up the loot."); return; }
+                    var drop = j.Drops[0];
+                    if (Vector3.Distance(bot.eyes.position, drop.ClosestPoint(bot.eyes.position)) <= Reach)
+                    {
+                        walker.Halt();
+                        walker.Face(drop.transform.position);
+                        if (!PickUp(drop)) { EndJob(name + "'s inventory is full."); return; }
+                        j.Drops.RemoveAt(0);
+                        j.Approached = false;
+                        j.Next = Time.time + 0.5f;
+                        return;
+                    }
+                    if (walker.Busy) return;
+                    if (!j.Approached) { j.Approached = true; walker.WalkStraight(drop.transform.position); return; }
+                    j.Drops.RemoveAt(0); // couldn't get to this one
+                    j.Approached = false;
+                    return;
+
+                case "take":
+                    if (gone) { EndJob(name + " looted the crate."); return; }
+                    var sc = t as StorageContainer;
+                    walker.Face(t.CenterPoint());
+                    if (!j.Opened)
+                    {
+                        j.Opened = true;
+                        // The same call a player's "open" makes. The bot has no client, so nothing shows.
+                        try { sc.PlayerOpenLoot(bot, "", false); }
+                        catch (Exception ex) { Puts("PlayerOpenLoot failed, taking items directly: " + ex.Message); }
+                        j.Next = Time.time + 0.6f;
+                        return;
+                    }
+                    var items = sc.inventory.itemList;
+                    if (items.Count > 0)
+                    {
+                        if (!bot.inventory.GiveItem(items[0])) { EndJob(name + "'s inventory is full."); return; }
+                        j.Taken++;
+                        j.Next = Time.time + 0.35f;
+                        return;
+                    }
+                    // Closing the loot is what makes an empty crate go away, as for a player.
+                    if (bot.inventory.loot.IsLooting() && bot.inventory.loot.entitySource == t) bot.inventory.loot.Clear();
+                    else sc.PlayerStoppedLooting(bot);
+                    EndJob(name + " looted the crate" + (t.IsDestroyed ? " and it despawned, empty." : "; it is empty but still there."));
+                    return;
+            }
+        }
+
+        // The best melee tool on the belt for this target, made the active item.
+        private BaseMelee EquipTool(Job j)
+        {
+            var type = GatherOf(j.Target);
+            Item best = null;
+            var bestScore = 0f;
+            foreach (var item in bot.inventory.containerBelt.itemList)
+            {
+                var m = item.GetHeldEntity() as BaseMelee;
+                if (m == null || m.IsItemBroken()) continue;
+                var score = type == ResourceDispenser.GatherType.UNSET ? m.TotalDamage() : m.GetGatherInfoFromIndex(type).gatherDamage;
+                if (score > bestScore) { best = item; bestScore = score; }
+            }
+            if (best == null) { EndJob(saved.Name + " has no working tool for the " + Noun(j.Kind) + "."); return null; }
+            if (bot.GetActiveItem() != best)
+            {
+                bot.UpdateActiveItem(best.uid);
+                j.Next = Time.time + 0.8f; // deploy time
+                return null;
+            }
+            return best.GetHeldEntity() as BaseMelee;
+        }
+
+        private static readonly System.Reflection.FieldInfo TreeMarker = typeof(TreeEntity).GetField("xMarker", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        private static readonly System.Reflection.FieldInfo OreSpot = typeof(OreResourceEntity).GetField("_hotSpot", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        // Where a player would swing: the tree's X marker or the ore's glowing spot when there is
+        // one (those give the bonus), otherwise the trunk at chest height or the middle of the object.
+        private Vector3 AimPoint(BaseEntity t, Vector3 eyes)
+        {
+            var field = t is TreeEntity ? TreeMarker : t is OreResourceEntity ? OreSpot : null;
+            var spot = field?.GetValue(t) as Component;
+            if (spot != null && spot.gameObject.activeInHierarchy) return spot.transform.position;
+            if (t is TreeEntity)
+            {
+                var p = t.transform.position;
+                p.y = Mathf.Max(p.y + 0.5f, eyes.y - 0.4f);
+                return p;
+            }
+            return t.CenterPoint();
+        }
+
+        private void Swing(Job j, BaseMelee melee)
+        {
+            var t = j.Target;
+            walker.Face(t.transform.position);
+            melee.StartAttackCooldown(melee.repeatDelay);
+            bot.SignalBroadcast(BaseEntity.Signal.Attack, string.Empty, null);
+            if (melee.swingEffect.isValid)
+                Effect.server.Run(melee.swingEffect.resourcePath, melee.transform.position, Vector3.forward, null, false);
+            j.Swings++;
+            // The hit lands a moment into the swing animation.
+            timer.Once(0.3f, () =>
+            {
+                if (!Alive || t == null || t.IsDestroyed || melee == null || melee.IsDestroyed || job != j) return;
+                Strike(t, melee);
+            });
+        }
+
+        // Builds the hit the way the game does for a player's swing and hands it to the tool's own
+        // attack code, which damages the target, gathers resources, wears the tool and plays effects.
+        private void Strike(BaseEntity t, BaseMelee melee)
+        {
+            var eyes = bot.eyes.position;
+            var aim = AimPoint(t, eyes);
+            var dir = (aim - eyes).normalized;
+            var info = new HitInfo
+            {
+                Initiator = bot,
+                Weapon = melee,
+                WeaponPrefab = melee,
+                HitEntity = t,
+                PointStart = eyes,
+                HitPositionWorld = aim,
+                HitNormalWorld = -dir,
+                HitMaterial = StringPool.Get("generic"),
+                damageProperties = melee.damageProperties,
+            };
+            foreach (var hit in Physics.RaycastAll(eyes, dir, Vector3.Distance(eyes, aim) + 1.5f, 1220225809, QueryTriggerInteraction.Ignore))
+            {
+                if (hit.GetEntity() != t) continue;
+                info.HitPositionWorld = hit.point;
+                info.HitNormalWorld = hit.normal;
+                var mat = hit.collider != null ? hit.collider.sharedMaterial : null;
+                if (mat != null) info.HitMaterial = StringPool.Get(AssetNameCache.GetName(mat));
+                break;
+            }
+            info.PointEnd = info.HitPositionWorld;
+            melee.DoAttackShared(info);
+        }
+
+        private static List<BaseEntity> DropsNear(Vector3 at)
+        {
+            var list = new List<BaseEntity>();
+            foreach (var net in BaseNetworkable.serverEntities)
+            {
+                var e = net as BaseEntity;
+                if (e == null || e.IsDestroyed || (e.transform.position - at).sqrMagnitude > 16f) continue;
+                if ((e is WorldItem && ((WorldItem)e).item != null && ((WorldItem)e).allowPickup) || e is DroppedItemContainer) list.Add(e);
+            }
+            return list;
+        }
+
+        // Same steps as a player's pickup: take the item out of the world, then give it to the player.
+        private bool PickUp(BaseEntity drop)
+        {
+            var w = drop as WorldItem;
+            if (w != null)
+            {
+                var item = w.item;
+                if (item == null) return true;
+                w.RemoveItem();
+                bot.GiveItem(item, BaseEntity.GiveItemReason.PickedUp);
+                if (!w.IsDestroyed) w.Kill();
+                bot.SignalBroadcast(BaseEntity.Signal.Gesture, "pickup_item", null);
+                job.Taken++;
+                return true;
+            }
+            var bag = drop as DroppedItemContainer;
+            if (bag == null || bag.inventory == null) return true;
+            while (bag.inventory.itemList.Count > 0)
+            {
+                if (!bot.inventory.GiveItem(bag.inventory.itemList[0])) return false;
+                job.Taken++;
+            }
+            bag.Kill();
+            return true;
+        }
+
+        private string Inventory()
+        {
+            var sb = new StringBuilder(saved.Name + "'s inventory");
+            var cs = Containers(bot);
+            for (var c = 0; c < cs.Length; c++)
+            {
+                var parts = new List<string>();
+                foreach (var i in cs[c].itemList)
+                    parts.Add(i.info.displayName.english + (i.amount > 1 ? " x" + i.amount : "") + (i.hasCondition ? " (" + (i.conditionNormalized * 100f).ToString("0") + "%)" : ""));
+                sb.Append("\n" + ContainerNames[c] + " (" + cs[c].itemList.Count + "/" + cs[c].capacity + "): " + (parts.Count > 0 ? string.Join(", ", parts) : "empty"));
+            }
+            return sb.ToString();
+        }
 
         #endregion
 
@@ -292,6 +751,8 @@ namespace Oxide.Plugins
             private static readonly int BlockMask = LayerMask.GetMask("World", "Default", "Construction", "Deployed");
 
             public bool Roaming { get; private set; }
+            public bool Working; // an action is running: no wandering or looking around
+            public bool Busy => corners.Count > 0;
 
             private BasePlayer body;
             private readonly RustNavMeshPath path = new RustNavMeshPath();
@@ -333,6 +794,30 @@ namespace Oxide.Plugins
                 lookYaw = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
             }
 
+            public bool GoTo(Vector3 to, bool run)
+            {
+                if (!SetPath(to)) return false;
+                speed = run ? RunSpeed : WalkSpeed;
+                stuckLevel = 0;
+                return true;
+            }
+
+            // A straight line, for the last few metres the navmesh doesn't cover.
+            public void WalkStraight(Vector3 to)
+            {
+                corners.Clear();
+                corners.Add(body.transform.position);
+                corners.Add(to);
+                corner = 1;
+                goal = to;
+                speed = WalkSpeed;
+                stuckLevel = 0;
+                state = "approaching";
+                ResetStuck();
+            }
+
+            public void Halt() => EndTrip(Working ? "working" : "standing");
+
             public void TeleportTo(Vector3 pos)
             {
                 corners.Clear();
@@ -358,6 +843,7 @@ namespace Oxide.Plugins
 
             private void Idle()
             {
+                if (Working) return;
                 if (Time.time >= nextLook)
                 {
                     nextLook = Time.time + UnityEngine.Random.Range(1.5f, 4f);
@@ -457,7 +943,7 @@ namespace Oxide.Plugins
                 }
                 if (corner >= corners.Count)
                 {
-                    EndTrip("pausing");
+                    EndTrip(Working ? "working" : "pausing");
                     waitUntil = Time.time + UnityEngine.Random.Range(1f, 7f);
                     return;
                 }
@@ -509,7 +995,7 @@ namespace Oxide.Plugins
                     lastDir = Quaternion.Euler(0f, UnityEngine.Random.Range(120f, 240f), 0f) * lastDir;
                     EndTrip("recovering");
                     var level = stuckLevel;
-                    if (Roaming) PickTrip();
+                    if (Roaming && !Working) PickTrip();
                     stuckLevel = level;
                     return;
                 }
