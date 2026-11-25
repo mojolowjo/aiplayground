@@ -7,7 +7,7 @@ import { sprite } from './sprites.js';
 export const TILE = 32;
 export const CW = 18 * TILE, CH = 32 * TILE;
 export const TEAM = ['#3a8cff', '#ff4646'];
-const SCALE = { tiny: 3, small: 3, mid: 4, big: 4, huge: 4 };
+const SCALE = { tiny: 4, small: 4, mid: 5, big: 5, huge: 5 };
 const px = v => v * TILE / MT;
 
 // Per-arena colours: each arena gets its own ground and water so you can tell where you are.

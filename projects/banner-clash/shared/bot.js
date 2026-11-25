@@ -7,13 +7,14 @@ import { DEF, TPS, SPARK, MT, W, H, LANES_X, ownY, laneOf, isqrt } from './sim.j
 
 // ---------- skill tiers (Fairness table) ----------
 // react: seconds of stale view; gap: fastest play rate (seconds between cards); wobble: placement error in tiles;
-// mistake: % chance per play of a believable error; est/memory: counts your Spark / remembers your cycle.
+// mistake: % chance per play of a believable error; est/memory: counts your Spark / remembers your cycle;
+// smart: how well it judges which card answers which threat (0 picks almost blindly, 1 uses the full counter table).
 export const TIERS = {
-  rookie:  { react: 2.0, gap: 3.0, wobble: 2.0, mistake: 25, est: false, memory: 0 },
-  trainee: { react: 1.5, gap: 2.0, wobble: 1.5, mistake: 15, est: false, memory: 0 },
-  skilled: { react: 1.0, gap: 1.5, wobble: 1.0, mistake: 8,  est: true,  memory: 0 },
-  veteran: { react: 0.7, gap: 1.2, wobble: 0.5, mistake: 4,  est: true,  memory: 20 },
-  expert:  { react: 0.5, gap: 1.0, wobble: 0.3, mistake: 2,  est: true,  memory: 999 },
+  rookie:  { react: 2.0, gap: 3.0, wobble: 2.0, mistake: 25, est: false, memory: 0, smart: 0.15 },
+  trainee: { react: 1.5, gap: 2.0, wobble: 1.5, mistake: 15, est: false, memory: 0, smart: 0.4 },
+  skilled: { react: 1.0, gap: 1.5, wobble: 1.0, mistake: 8,  est: true,  memory: 0, smart: 0.65 },
+  veteran: { react: 0.7, gap: 1.2, wobble: 0.5, mistake: 4,  est: true,  memory: 20, smart: 0.85 },
+  expert:  { react: 0.5, gap: 1.0, wobble: 0.3, mistake: 2,  est: true,  memory: 999, smart: 1 },
 };
 
 // ---------- rivals (Personalities per arena) ----------
@@ -289,6 +290,7 @@ export class Bot {
         if (swarm >= 3 && d.count === 1 && !d.splash && ALL_CARDS[id].cost >= 4) fit *= 0.5;
         if (bt && d.type === 'building') fit *= 2;
         if (!bt && d.type === 'building') fit *= 0.8;
+        fit = 1 + (fit - 1) * this.tier.smart;                          // low tiers barely see which card counters what
         const pw = power(id, lvlPct) * fit;
         const value = Math.min(threat[lane], pw);
         const cost = ALL_CARDS[id].cost;
@@ -315,7 +317,8 @@ export class Bot {
       const d = DEF[id]; if (d.type !== 'spell') continue;
       const cost = ALL_CARDS[id].cost;
       const travel = d.delayT;
-      const pts = theirs.filter(u => u.kind !== 'tower').map(u => { const v = vel.get(u.id) || [0, 0]; return { u, x: u.x + v[0] * travel, y: u.y + v[1] * travel }; });
+      const lead = this.tier.smart >= 0.5 ? travel : 0;              // better bots aim where units will be
+      const pts = theirs.filter(u => u.kind !== 'tower').map(u => { const v = vel.get(u.id) || [0, 0]; return { u, x: u.x + v[0] * lead, y: u.y + v[1] * lead }; });
       let bestV = 0, bx = 0, by = 0, bn = 0;
       for (const c of pts) {
         let value = 0, n = 0;
@@ -398,7 +401,7 @@ export class Bot {
 
     // Wait
     const wait = 4 + st.patience * 6 - (full ? 8 : 0);
-    const wob = 1 + this.tier.mistake / 10;
+    const wob = 1 + this.tier.mistake / 10 + (1 - this.tier.smart) * 3;
     for (const m of moves) m.score += (this.rnd() - 0.5) * wob * 4;
     moves.sort((a, b2) => b2.score - a.score);
     this.debug.scores = moves.slice(0, 3).map(m => `${m.why} ${ALL_CARDS[m.card].name} ${m.score.toFixed(1)}`);
