@@ -6,6 +6,12 @@ New-Item -ItemType Directory -Force $cfgDir | Out-Null
 Copy-Item "$ProjectDir\config\server.cfg" "$cfgDir\server.cfg" -Force
 & "$PSScriptRoot\deploy-plugins.ps1"
 
+# Keep the router mapping alive while the server runs. Results go to upnp.log in the server folder.
+$renew = Start-Job -ArgumentList "$PSScriptRoot\upnp.ps1", "$Root\upnp.log" {
+    param($script, $log)
+    & $script -Renew | ForEach-Object { Add-Content -Path $log -Value $_ -Encoding utf8 }
+}
+
 $env:DOORSTOP_ENABLED = '1'
 Push-Location $ServerDir
 try {
@@ -16,4 +22,7 @@ try {
         +server.port $GamePort +server.queryport $QueryPort `
         +rcon.ip 127.0.0.1 +rcon.port $RconPort +rcon.web 1 +rcon.password (Get-RconPassword) `
         +app.port -1 +server.saveinterval 600 -logfile "$Root\server.log" | Out-Default
-} finally { Pop-Location }
+} finally {
+    Pop-Location
+    Stop-Job $renew; Remove-Job $renew -Force
+}
