@@ -48,6 +48,41 @@ After the server stops, the mapping stays until the lease ends, or until upnp.ps
 
 Windows Firewall needs an inbound allow rule for RustDedicated.exe on Private networks.
 
+## AiBot (player-like bot)
+
+`plugins\AiBot.cs` runs one bot that looks like a player and wanders the map. Admin only.
+
+| Chat | Console / RCON | Does |
+|---|---|---|
+| `/bot spawn` | `aibot.spawn` | New bot, 4 m in front of you, standing still. From RCON it appears at a random spawn point and roams. |
+| `/bot info` | `aibot.info` | Name, position, health, gear, what it is doing, and counters since spawn. |
+| `/bot roam` / `/bot stop` | `aibot.roam` / `aibot.stop` | Start or stop wandering. |
+| `/bot here` | | Moves it in front of you and stops it. |
+| `/bot kill` | `aibot.kill` | Removes it. |
+
+The bot is saved to `carbon\data\AiBot.json` on every server save and on plugin unload, and comes
+back at the same spot after a restart or hot reload. If it dies it leaves a normal corpse and is
+gone until the next spawn.
+
+### Which body
+
+| Body | Verdict |
+|---|---|
+| `ScientistNPC2` (Gen2, most vanilla NPCs now) | Not a player. It derives from `BaseNPC2 : BaseCombatEntity`, so it has no inventory, clothing slots, held item or player name. It can't be made to look like a player. |
+| `HumanNPC` / `ScientistNPC` (legacy) | A player body, but it's the AI generation Facepunch is replacing; scientists already moved to Gen2. |
+| Plain `BasePlayer`, no connection | **Chosen.** The real player prefab. It is the same class real players use, so it won't be phased out. The game treats it as a bot (`BasePlayer.bots`, user id below 10,000,000). |
+
+A `BasePlayer` has no navigator, so the plugin moves it: it asks the game's own Gen2 navmesh for a
+path (`RustNavMeshHelpers.CalculatePath`, the same one NPC2 uses), then walks the corners,
+snapping to the ground each step. Checked against Rust 2636.
+
+### Roaming
+
+Picks a spot 30 to 100 m away, mostly keeping its heading, walks or runs there, pauses, looks
+around, repeats. Paths that cross water deeper than 0.4 m are refused. If it moves less than
+0.6 m in 3 s it re-paths, then picks a new spot, then hops a few metres to the nearest walkable
+spot. The hop is a short teleport, so a bot boxed in by walls will hop out through them.
+
 ## Vanilla AI
 
 `config\server.cfg` turns off wildlife, scientist spawners, Bradley and events. A few built-in
