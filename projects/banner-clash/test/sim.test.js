@@ -84,14 +84,14 @@ function duel() {
   for (let i = 0; i < 60; i++) q.step();
   assert.equal(h.target, tower.id, 'locked hedge keeps hitting the tower while a troop hits it');
 }
-// Forge Lancer: the beam grows 40 -> 120 -> 300 on one target.
+// Forge Lancer: the beam grows 15 -> 60 -> 300 on one target.
 {
   const q = duel();
   const [l] = q.spawn(0, 'lancer', 1, 3500, 22000, 0);
   const [g] = q.spawn(1, 'golem', 1, 3500, 18500, 0);
   const hits = [];
   for (let i = 0; i < 400 && g.hp > 0; i++) { const was = g.hp; q.step(); if (g.hp < was) hits.push(was - g.hp); }
-  assert.deepEqual([...new Set(hits)], [40, 120, 300], 'beam stages');
+  assert.deepEqual([...new Set(hits)], [15, 60, 300], 'beam stages');
 }
 // Paper Kite: 150 splash on death.
 {

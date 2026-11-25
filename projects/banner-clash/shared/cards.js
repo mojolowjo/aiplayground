@@ -41,7 +41,7 @@ export const CARDS = {
   imps: { name: 'Pebble Imps', type: 'troop', rarity: 'common', cost: 2, hp: 110, dmg: 55, hit: 1.0, range: MELEE, speed: 'fast',
     targets: 'ground', body: 'tiny', count: 4, offsets: [[-0.45, -0.45], [0.45, -0.45], [-0.45, 0.45], [0.45, 0.45]],
     tags: ['swarm', 'ground'], text: '4 imps' },
-  fox: { name: 'Fox Scout', type: 'troop', rarity: 'common', cost: 2, hp: 450, dmg: 90, hit: 0.9, range: MELEE, speed: 'veryfast',
+  fox: { name: 'Fox Scout', type: 'troop', rarity: 'common', cost: 2, hp: 500, dmg: 110, hit: 0.9, range: MELEE, speed: 'veryfast',
     targets: 'ground', body: 'small', charge: 3, tags: ['cycle', 'ground'], text: 'First hit after moving 3 tiles deals double' },
   hedge: { name: 'Hedge Guard', type: 'troop', rarity: 'common', cost: 3, hp: 1000, shield: 250, dmg: 100, hit: 1.2, range: MELEE, speed: 'medium',
     targets: 'ground', body: 'mid', lockOn: true, tags: ['minitank', 'wincon', 'ground'],
@@ -59,19 +59,19 @@ export const CARDS = {
     targets: 'buildings', body: 'big', roll: 50, tags: ['wincon', 'ground', 'buildingtargeter'], text: 'Rolls over small units, dealing 50 to each' },
   harpoon: { name: 'Harpoon Gunner', type: 'troop', rarity: 'rare', cost: 4, hp: 500, dmg: 140, hit: 1.5, range: 6.5, speed: 'medium',
     targets: 'both', body: 'small', pull: 1, tags: ['ranged', 'antiair', 'ground'], text: 'First shot pulls its target 1 tile closer' },
-  lancer: { name: 'Forge Lancer', type: 'troop', rarity: 'rare', cost: 4, hp: 550, dmg: 40, hit: 0.4, range: 5, speed: 'medium',
-    targets: 'both', body: 'small', beam: { dmg: [40, 120, 300], every: 5 }, tags: ['tankkiller', 'ranged', 'antiair', 'ground'],
-    text: 'Beam grows stronger on one target: 40, then 120, then 300' },   // 'every': hits per beam stage (2 s), a guess
+  lancer: { name: 'Forge Lancer', type: 'troop', rarity: 'rare', cost: 4, hp: 450, dmg: 15, hit: 0.4, range: 5, speed: 'medium',
+    targets: 'both', body: 'small', beam: { dmg: [15, 60, 300], every: 5 }, tags: ['tankkiller', 'ranged', 'antiair', 'ground'],
+    text: 'Beam grows stronger on one target: 15, then 60, then 300' },   // 'every': hits per beam stage (2 s), a guess
   kite: { name: 'Paper Kite', type: 'troop', rarity: 'rare', cost: 5, hp: 1100, dmg: 300, hit: 2.0, range: 1, speed: 'medium',
     targets: 'buildings', body: 'big', air: true, deathSplash: { r: 2, dmg: 150 }, tags: ['wincon', 'air', 'buildingtargeter'],
     text: 'Flies to buildings. Drops 150 splash damage when it falls' },   // range and splash radius are guesses
-  ember: { name: 'Ember Mage', type: 'troop', rarity: 'rare', cost: 5, hp: 650, dmg: 220, hit: 1.6, range: 5.5, speed: 'medium',
+  ember: { name: 'Ember Mage', type: 'troop', rarity: 'rare', cost: 5, hp: 650, dmg: 220, hit: 1.9, range: 5.5, speed: 'medium',
     targets: 'both', body: 'small', splash: 1.5, tags: ['splash', 'antiair', 'antiswarm', 'ground'], text: 'Splash hits all units in radius' },
   treant: { name: 'Ironbark Treant', type: 'troop', rarity: 'rare', cost: 6, hp: 3600, dmg: 180, hit: 1.5, range: MELEE, speed: 'slow',
     targets: 'buildings', body: 'huge', root: { r: 2.5, time: 1 }, tags: ['tank', 'wincon', 'ground', 'buildingtargeter'], text: 'On death, roots nearby enemies for 1 s' },
   wyvern: { name: 'Glass Wyvern', type: 'troop', rarity: 'epic', cost: 4, hp: 900, dmg: 120, hit: 1.4, range: 2, speed: 'fast',
     targets: 'both', body: 'mid', air: true, splash: 1, spellWeak: 25, tags: ['air', 'splash', 'antiswarm', 'antiair'], text: 'Takes 25% extra damage from spells' },
-  shade: { name: 'Shade Duelist', type: 'troop', rarity: 'epic', cost: 4, hp: 800, dmg: 250, hit: 1.3, range: MELEE, speed: 'fast',
+  shade: { name: 'Shade Duelist', type: 'troop', rarity: 'epic', cost: 4, hp: 650, dmg: 220, hit: 1.3, range: MELEE, speed: 'fast',
     targets: 'ground', body: 'small', stealth: true, tags: ['assassin', 'ground'], text: 'Invisible until its first attack' },
   captain: { name: 'Banner Captain', type: 'troop', rarity: 'epic', cost: 5, hp: 1200, dmg: 110, hit: 1.2, range: MELEE, speed: 'medium',
     targets: 'ground', body: 'mid', aura: { r: 3, pct: 15 }, tags: ['support', 'ground'], text: 'Allies within 3 tiles move and attack 15% faster' },
@@ -79,7 +79,7 @@ export const CARDS = {
     targets: 'buildings', body: 'huge', split: 'cog', tags: ['tank', 'wincon', 'ground', 'buildingtargeter'], text: 'Splits into 2 Cogs (600 HP, 80 dmg) on death' },
   hermit: { name: 'Storm Hermit', type: 'troop', rarity: 'mythic', cost: 4, hp: 700, dmg: 160, hit: 1.6, range: 5, speed: 'medium',
     targets: 'both', body: 'small', chain: { jumps: 2, pct: 60, r: 3 }, tags: ['ranged', 'antiair', 'antiswarm', 'ground'], text: 'Lightning jumps to 2 more targets at 60%' },
-  tide: { name: 'Tidecaller', type: 'troop', rarity: 'mythic', cost: 5, hp: 900, dmg: 130, hit: 1.5, range: 5.5, speed: 'medium',
+  tide: { name: 'Tidecaller', type: 'troop', rarity: 'mythic', cost: 5, hp: 750, dmg: 130, hit: 1.5, range: 5.5, speed: 'medium',
     targets: 'ground', body: 'small', knock: 0.5, tags: ['ranged', 'control', 'ground'], text: 'A rolling wave: every hit pushes a ground target back 0.5 tiles' },
 
   // ---------- spells ----------
