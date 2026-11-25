@@ -450,7 +450,7 @@ export function assimilationDeck(profile, rnd = Math.random) {
   for (const id of top) {
     if (has(id, 'swarm')) answers.add(rnd() < 0.5 ? 'ember' : 'hermit');
     if (has(id, 'air')) answers.add(rnd() < 0.5 ? 'loft' : 'harpoon');
-    if (has(id, 'tank') || has(id, 'wincon')) answers.add(rnd() < 0.5 ? 'turret' : 'shade');
+    if (has(id, 'tank') || has(id, 'wincon')) answers.add(['turret', 'shade', 'lancer', 'smasher'][Math.floor(rnd() * 4)]);
     if (has(id, 'ranged')) answers.add('flamejar');
   }
   const core = [...answers].slice(0, 4);

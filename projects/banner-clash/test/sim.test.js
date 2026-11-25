@@ -66,4 +66,39 @@ const before = b.s.units.filter(u => u.card === 'moths' && u.side === 0).length;
 b.schedule({ tick: b.tick, side: 0, type: 'play', card: 'hive', x: 9000, y: 22000 });
 for (let i = 0; i < 40; i++) b.step();
 assert.equal(b.s.units.filter(u => u.card === 'moths' && u.side === 0).length - before, 2, 'hive spawns 2 moths');
+
+// v0.2 cards. A quiet board: towers that neither shoot nor fall.
+function duel() {
+  const q = new Battle({ seed: 3, decks: [['imps'], ['imps']] });
+  for (const u of q.s.units) if (u.kind === 'tower') { u.awake = false; u.dmg = 0; u.hp = u.maxHp = 1e9; }
+  return q;
+}
+// Hedge Guard: hits the tower, then ignores a troop that walks up to it.
+{
+  const q = duel();
+  const tower = q.s.units.find(u => u.kind === 'tower' && u.side === 1 && u.type === 'watch' && u.lane === 0);
+  const [h] = q.spawn(0, 'hedge', 1, tower.x, tower.y + 2200, 0);
+  for (let i = 0; i < 60; i++) q.step();
+  assert.equal(h.lockOn, true, 'hedge locks on after hitting the tower');
+  q.spawn(1, 'fox', 1, h.x + 1000, h.y, 0);
+  for (let i = 0; i < 60; i++) q.step();
+  assert.equal(h.target, tower.id, 'locked hedge keeps hitting the tower while a troop hits it');
+}
+// Forge Lancer: the beam grows 40 -> 120 -> 300 on one target.
+{
+  const q = duel();
+  const [l] = q.spawn(0, 'lancer', 1, 3500, 22000, 0);
+  const [g] = q.spawn(1, 'golem', 1, 3500, 18500, 0);
+  const hits = [];
+  for (let i = 0; i < 400 && g.hp > 0; i++) { const was = g.hp; q.step(); if (g.hp < was) hits.push(was - g.hp); }
+  assert.deepEqual([...new Set(hits)], [40, 120, 300], 'beam stages');
+}
+// Paper Kite: 150 splash on death.
+{
+  const q = duel();
+  const [k] = q.spawn(0, 'kite', 1, 9000, 20000, 0);
+  const [f] = q.spawn(1, 'fox', 1, 9000, 21000, 0);
+  k.hp = 0; q.step();
+  assert.equal(f.maxHp - f.hp, 150, 'kite death splash');
+}
 console.log('sim tests passed');

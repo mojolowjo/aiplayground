@@ -5,6 +5,7 @@
 //   npm run matchups -- --level 9       another level for both sides
 //   npm run matchups -- --only hedge    just one card's row
 //   npm run matchups -- --out file.html write the table somewhere else
+//   npm run matchups -- --json          also write the raw results next to the table
 //
 // Each pair is fought twice, once from each side of the arena, and the two results are averaged.
 // Setup (a guess at a fair duel, easy to change below): both cards are dropped in the left lane, 10 tiles apart,
@@ -125,3 +126,4 @@ ${rows.map(a => `<tr><th class="row">${esc(name(a))} (${CARDS[a].cost})</th>${id
 </table></div>`;
 fs.writeFileSync(OUT, html);
 console.log(`\nTable written to ${OUT}`);
+if (process.argv.includes('--json')) fs.writeFileSync(OUT.replace(/\.html$/, '') + '.json', JSON.stringify({ level: LEVEL, limit: LIMIT, results: res }, null, 1));

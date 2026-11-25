@@ -1,6 +1,6 @@
 // Progression, from the Progression design v1 doc. Pure functions on a plain save object, so the
 // browser (which keeps the save) and the tests share them. Every pacing number lives in PROG.
-import { CARDS, CARD_IDS, STARTER_DECK, RARITIES, MAX_LEVEL, ALL_CARDS } from './cards.js';
+import { CARDS, CARD_IDS, STARTER_DECK, FIRST_UNLOCK, RARITIES, MAX_LEVEL, ALL_CARDS } from './cards.js';
 
 export const PROG = {
   coins: { win: 100, loss: 40, draw: 60, perWatchtower: 10, keepBonus: 10, friend: 10 },
@@ -27,9 +27,10 @@ export const ARENAS = [
   { n: 10, name: 'Possible the Matrix', glory: 1800, bot: 7, style: 'AI Assimilation', emote: 'Beep boop.' },   // emote is a placeholder (guess)
 ];
 
-// Unlock order: rarity tier by how many picks you have made (8 Rares, then 6 Epics, then 2 Mythics).
+// Unlock order: rarity tier by how many picks you have made (Gust and 10 Rares, then 6 Epics, then 2 Mythics).
+// Gust (FIRST_UNLOCK) is always one of the three in the first offer.
 export const OFFER_TIERS = [
-  { picks: 8, rarity: 'rare' },
+  { picks: 11, rarity: 'rare' },
   { picks: 6, rarity: 'epic' },
   { picks: 2, rarity: 'mythic' },
 ];
@@ -100,7 +101,7 @@ export function upgrade(s, id) {
 }
 
 // ---------- unlocks ----------
-export const picksEarned = s => Math.min(16, Math.floor(s.keys / PROG.keys.perPick));
+export const picksEarned = s => Math.min(CARD_IDS.length - STARTER_DECK.length, Math.floor(s.keys / PROG.keys.perPick));
 export const picksWaiting = s => Math.max(0, picksEarned(s) - s.picks);
 export function offerTier(picksMade) {
   let n = picksMade;
@@ -118,6 +119,7 @@ export function makeOffer(s, rnd = Math.random) {
   }
   if (!pool.length) pool = CARD_IDS.filter(id => !s.unlocked.includes(id));
   const out = [];
+  if (!s.unlocked.includes(FIRST_UNLOCK)) { out.push(FIRST_UNLOCK); pool = pool.filter(id => id !== FIRST_UNLOCK); }
   while (out.length < 3 && pool.length) out.push(pool.splice(Math.floor(rnd() * pool.length), 1)[0]);
   return out;
 }

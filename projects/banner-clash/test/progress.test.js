@@ -24,14 +24,14 @@ out = PR.applyBotResult(s, { result: 'win', rival: 'bea', eased: true, watch: 0 
 assert.equal(out.glory, 0); assert.equal(s.eased, false);
 // Arena bonus ×1.25 in Arena 2.
 assert.equal(out.coins, 125);
-// Unlocks: 15 Keys per pick, 3 cards offered from the right tier, all 24 by 240 Keys.
+// Unlocks: 15 Keys per pick, 3 cards offered from the right tier with Gust first, all 27 by 285 Keys.
 s = PR.newSave(); s.keys = 15;
 assert.equal(PR.picksWaiting(s), 1);
 const offer = PR.ensureOffer(s, Math.random);
-assert.equal(offer.length, 3); assert.ok(offer.every(id => ['brute', 'roller', 'harpoon', 'ember', 'treant', 'flamejar', 'loft', 'hive'].includes(id)));
-s.keys = 240;
+assert.equal(offer.length, 3); assert.equal(offer[0], 'gust'); assert.ok(offer.slice(1).every(id => ['brute', 'roller', 'harpoon', 'ember', 'treant', 'flamejar', 'loft', 'hive', 'lancer', 'kite'].includes(id)));
+s.keys = 285;
 while (PR.picksWaiting(s)) { const o = PR.ensureOffer(s, Math.random); assert.ok(PR.pickCard(s, o[0])); }
-assert.equal(s.unlocked.length, CARD_IDS.length, 'everything unlocked at 240 Keys');
+assert.equal(s.unlocked.length, CARD_IDS.length, 'everything unlocked at 285 Keys');
 // Arena 10 bot levels.
 s.glory = 1800; assert.equal(PR.botLevel(s), 7); s.glory = 2100; assert.equal(PR.botLevel(s), 8); s.glory = 2500; assert.equal(PR.botLevel(s), 9);
 // Old or broken saves are repaired.

@@ -1,4 +1,4 @@
-// The 24 cards, the towers and the arena, in human units (tiles, seconds).
+// The 27 cards, the towers and the arena, in human units (tiles, seconds).
 // The battle doc (Battle game design doc v0.1) is the source for every number here; values it marks
 // as a guess are guesses here too. sim.js converts them to integer game units when it loads.
 // Shared by the browser and the server, so no imports and no browser or Node APIs.
@@ -38,14 +38,17 @@ export const SPELL_TOWER_PCT = 35;    // damaging spells deal 35% to towers
 // Each card's `color` and `role` drive its sprite and the bot's counter table.
 export const CARDS = {
   // ---------- troops ----------
-  imps: { name: 'Pebble Imps', type: 'troop', rarity: 'common', cost: 2, hp: 90, dmg: 45, hit: 1.0, range: MELEE, speed: 'fast',
+  imps: { name: 'Pebble Imps', type: 'troop', rarity: 'common', cost: 2, hp: 110, dmg: 55, hit: 1.0, range: MELEE, speed: 'fast',
     targets: 'ground', body: 'tiny', count: 4, offsets: [[-0.45, -0.45], [0.45, -0.45], [-0.45, 0.45], [0.45, 0.45]],
     tags: ['swarm', 'ground'], text: '4 imps' },
-  fox: { name: 'Fox Scout', type: 'troop', rarity: 'common', cost: 2, hp: 400, dmg: 70, hit: 0.9, range: MELEE, speed: 'veryfast',
+  fox: { name: 'Fox Scout', type: 'troop', rarity: 'common', cost: 2, hp: 450, dmg: 90, hit: 0.9, range: MELEE, speed: 'veryfast',
     targets: 'ground', body: 'small', charge: 3, tags: ['cycle', 'ground'], text: 'First hit after moving 3 tiles deals double' },
-  hedge: { name: 'Hedge Guard', type: 'troop', rarity: 'common', cost: 3, hp: 750, shield: 200, dmg: 90, hit: 1.2, range: MELEE, speed: 'medium',
-    targets: 'ground', body: 'mid', tags: ['minitank', 'ground'], text: 'Shield soaks damage first' },
-  slingers: { name: 'Slingers', type: 'troop', rarity: 'common', cost: 3, hp: 250, dmg: 75, hit: 1.1, range: 5, speed: 'medium',
+  hedge: { name: 'Hedge Guard', type: 'troop', rarity: 'common', cost: 3, hp: 1000, shield: 250, dmg: 100, hit: 1.2, range: MELEE, speed: 'medium',
+    targets: 'ground', body: 'mid', lockOn: true, tags: ['minitank', 'wincon', 'ground'],
+    text: 'Shield soaks damage first. Once it hits a building or tower, it ignores troops' },
+  smasher: { name: 'Crag Smasher', type: 'troop', rarity: 'common', cost: 3, hp: 650, dmg: 340, hit: 1.8, range: MELEE, speed: 'medium',
+    targets: 'ground', body: 'mid', tags: ['tankkiller', 'ground'], text: 'One huge, slow blow' },
+  slingers: { name: 'Slingers', type: 'troop', rarity: 'common', cost: 3, hp: 200, dmg: 70, hit: 1.1, range: 5, speed: 'medium',
     targets: 'both', body: 'small', count: 2, offsets: [[-0.5, 0], [0.5, 0]], tags: ['ranged', 'antiair', 'ground'], text: '2 slingers' },
   moths: { name: 'Moth Swarm', type: 'troop', rarity: 'common', cost: 3, hp: 70, dmg: 40, hit: 1.0, range: 1.5, speed: 'fast',
     targets: 'both', body: 'tiny', air: true, count: 5, offsets: [[0, -0.6], [0.57, -0.19], [0.35, 0.49], [-0.35, 0.49], [-0.57, -0.19]],
@@ -56,6 +59,12 @@ export const CARDS = {
     targets: 'buildings', body: 'big', roll: 50, tags: ['wincon', 'ground', 'buildingtargeter'], text: 'Rolls over small units, dealing 50 to each' },
   harpoon: { name: 'Harpoon Gunner', type: 'troop', rarity: 'rare', cost: 4, hp: 500, dmg: 140, hit: 1.5, range: 6.5, speed: 'medium',
     targets: 'both', body: 'small', pull: 1, tags: ['ranged', 'antiair', 'ground'], text: 'First shot pulls its target 1 tile closer' },
+  lancer: { name: 'Forge Lancer', type: 'troop', rarity: 'rare', cost: 4, hp: 550, dmg: 40, hit: 0.4, range: 5, speed: 'medium',
+    targets: 'both', body: 'small', beam: { dmg: [40, 120, 300], every: 5 }, tags: ['tankkiller', 'ranged', 'antiair', 'ground'],
+    text: 'Beam grows stronger on one target: 40, then 120, then 300' },   // 'every': hits per beam stage (2 s), a guess
+  kite: { name: 'Paper Kite', type: 'troop', rarity: 'rare', cost: 5, hp: 1100, dmg: 300, hit: 2.0, range: 1, speed: 'medium',
+    targets: 'buildings', body: 'big', air: true, deathSplash: { r: 2, dmg: 150 }, tags: ['wincon', 'air', 'buildingtargeter'],
+    text: 'Flies to buildings. Drops 150 splash damage when it falls' },   // range and splash radius are guesses
   ember: { name: 'Ember Mage', type: 'troop', rarity: 'rare', cost: 5, hp: 650, dmg: 220, hit: 1.6, range: 5.5, speed: 'medium',
     targets: 'both', body: 'small', splash: 1.5, tags: ['splash', 'antiair', 'antiswarm', 'ground'], text: 'Splash hits all units in radius' },
   treant: { name: 'Ironbark Treant', type: 'troop', rarity: 'rare', cost: 6, hp: 3600, dmg: 180, hit: 1.5, range: MELEE, speed: 'slow',
@@ -71,7 +80,7 @@ export const CARDS = {
   hermit: { name: 'Storm Hermit', type: 'troop', rarity: 'mythic', cost: 4, hp: 700, dmg: 160, hit: 1.6, range: 5, speed: 'medium',
     targets: 'both', body: 'small', chain: { jumps: 2, pct: 60, r: 3 }, tags: ['ranged', 'antiair', 'antiswarm', 'ground'], text: 'Lightning jumps to 2 more targets at 60%' },
   tide: { name: 'Tidecaller', type: 'troop', rarity: 'mythic', cost: 5, hp: 900, dmg: 130, hit: 1.5, range: 5.5, speed: 'medium',
-    targets: 'both', body: 'small', knock: 0.5, tags: ['ranged', 'control', 'antiair', 'ground'], text: 'Every hit pushes the target back 0.5 tiles' },
+    targets: 'ground', body: 'small', knock: 0.5, tags: ['ranged', 'control', 'ground'], text: 'A rolling wave: every hit pushes a ground target back 0.5 tiles' },
 
   // ---------- spells ----------
   shower: { name: 'Spark Shower', type: 'spell', rarity: 'common', cost: 2, radius: 2.5, dmg: 200, delay: 0.5, tags: ['spell', 'antiswarm'], text: '200 damage' },
@@ -81,7 +90,7 @@ export const CARDS = {
   meteor: { name: 'Meteor', type: 'spell', rarity: 'epic', cost: 6, radius: 3, dmg: 1100, delay: 2.5, tags: ['spell', 'bigspell'], text: '1,100 damage, shadow shown' },
 
   // ---------- buildings ----------
-  turret: { name: 'Stone Turret', type: 'building', rarity: 'common', cost: 3, hp: 700, dmg: 120, hit: 0.9, range: 5.5, life: 30,
+  turret: { name: 'Stone Turret', type: 'building', rarity: 'common', cost: 3, hp: 700, dmg: 150, hit: 0.9, range: 5.5, life: 30,
     targets: 'ground', body: 'big', tags: ['building', 'pull', 'defence'], text: 'Ground defence' },
   loft: { name: 'Arrow Loft', type: 'building', rarity: 'rare', cost: 4, hp: 900, dmg: 90, hit: 1.0, range: 7, life: 35,
     targets: 'both', body: 'big', tags: ['building', 'pull', 'defence', 'antiair'], text: 'All-round defence' },
@@ -101,11 +110,12 @@ export const ARCHIVED = {
     targets: 'both', body: 'small', count: 3, offsets: [[-0.8, 0], [0, 0.4], [0.8, 0]], archived: true,
     tags: ['ranged', 'antiair', 'ground'], text: 'Three long-range sharpshooters' },
 };
-// Every card a deck may hold (the 24 plus archived ones).
+// Every card a deck may hold (the 27 plus archived ones).
 export const ALL_CARDS = { ...CARDS, ...ARCHIVED };
 
 export const CARD_IDS = Object.keys(CARDS);
-export const STARTER_DECK = ['imps', 'fox', 'hedge', 'slingers', 'moths', 'shower', 'gust', 'turret'];
+export const STARTER_DECK = ['imps', 'fox', 'hedge', 'smasher', 'slingers', 'moths', 'shower', 'turret'];
+export const FIRST_UNLOCK = 'gust';   // always in the first card offer
 export const RARITIES = ['common', 'rare', 'epic', 'mythic'];
 export const RARITY_COLOR = { common: '#9aa7b8', rare: '#f0a030', epic: '#b05ce8', mythic: '#38e0c8' };
 

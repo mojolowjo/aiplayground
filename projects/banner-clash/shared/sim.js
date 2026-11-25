@@ -201,7 +201,7 @@ export class Battle {
   add(u) {
     const s = this.s;
     const unit = { id: s.nextId++, kind: 'troop', type: '', lane: 0, air: false, hp: 1, maxHp: 1, shield: 0, dmg: 0,
-      target: 0, locked: false, cd: 0, deploy: 0, frozen: 0, stun: 0, slow: 0, haste: false, hidden: false,
+      target: 0, locked: false, lockOn: false, beam: 0, cd: 0, deploy: 0, frozen: 0, stun: 0, slow: 0, haste: false, hidden: false,
       run: 0, pulled: false, rolled: [], age: 0, spawnCd: 0, awake: true, ...u };
     s.units.push(unit);
     return unit;
@@ -274,13 +274,13 @@ export class Battle {
   canHit(u, t) {
     if (t.side === u.side || t.hp <= 0 || t.hidden) return false;
     const f = u.kind === 'tower' ? 'both' : DEF[u.card].targets;
-    if (f === 'buildings') return t.kind !== 'troop';
+    if (f === 'buildings' || u.lockOn) return t.kind !== 'troop';
     if (f === 'ground') return !t.air;
     return true;
   }
   findTarget(u) {
     const s = this.s, d = u.kind === 'tower' ? DEF[u.card] : DEF[u.card];
-    const sight = u.kind === 'troop' ? (d.targets === 'buildings' ? T(7) : d.sight) : d.range;
+    const sight = u.kind === 'troop' ? (d.targets === 'buildings' || u.lockOn ? T(7) : d.sight) : d.range;
     let best = null, bestD = Infinity;
     for (const t of s.units) {
       if (!this.canHit(u, t)) continue;
@@ -289,7 +289,7 @@ export class Battle {
     }
     return best;
   }
-  reset(u) { u.target = 0; u.locked = false; u.run = 0; }
+  reset(u) { u.target = 0; u.locked = false; u.run = 0; u.beam = 0; }
   byId(id) { if (!id) return null; for (const u of this.s.units) if (u.id === id) return u; return null; }
 
   // ---------- units ----------
@@ -323,11 +323,11 @@ export class Battle {
     if (t && u.locked && edge(u, t) > range + T(0.5)) { t = null; this.reset(u); }     // locked targets are kept until they leave range
     if (!t || (!u.locked && (s.tick + u.id) % 5 === 0)) {
       const n = this.findTarget(u);
-      if (n && n !== t) { t = n; u.target = n.id; u.locked = false; }
+      if (n && n !== t) { t = n; u.target = n.id; u.locked = false; u.beam = 0; }
     }
     const rate = this.rate(u);
     if (t && edge(u, t) <= range) {
-      if (!u.locked) { u.locked = true; u.cd = trunc((u.kind === 'tower' ? DEF[u.card].hitT : d.hitT) * 1000 / 2); }
+      if (!u.locked) { u.locked = true; u.cd = (u.kind === 'tower' ? DEF[u.card].hitT : d.hitT) * 1000; }   // v0.2: the first hit waits the full hit time (half let slow hitters one-shot swarms)
       u.cd -= rate;
       if (u.cd <= 0) { u.cd += (u.kind === 'tower' ? DEF[u.card].hitT : d.hitT) * 1000; this.attack(u, t); }
       return;
@@ -387,6 +387,13 @@ export class Battle {
     let dmg = u.dmg;
     if (d.charge && u.run >= T(d.charge)) { dmg *= 2; this.events.push({ e: 'charge', id: u.id }); }
     u.run = 0;
+    if (d.lockOn && t.kind !== 'troop') u.lockOn = true;    // Hedge Guard: once it hits a building or tower it stays on buildings
+    if (d.beam) {                                          // Forge Lancer: an instant beam that grows on the same target
+      const stage = Math.min(d.beam.dmg.length - 1, trunc((u.beam || 0) / d.beam.every));
+      u.beam = (u.beam || 0) + 1;
+      this.events.push({ e: 'attack', id: u.id, target: t.id }, { e: 'zap', x1: u.x, y1: u.y, x2: t.x, y2: t.y });
+      return this.hit(u.id, u.side, u.card, t, trunc(d.beam.dmg[stage] * lvlPct(u.lvl) / 100), t.x, t.y, u.x, u.y, false);
+    }
     const ranged = u.kind === 'tower' || d.range > T(1.5);
     this.events.push({ e: 'attack', id: u.id, target: t.id });
     if (!ranged) return this.hit(u.id, u.side, u.card, t, dmg, t.x, t.y, u.x, u.y, !u.pulled);
@@ -516,6 +523,11 @@ export class Battle {
       if (d.root) for (const o of s.units) if (o.side !== u.side && o.kind === 'troop' && dist(o, u) <= T(d.root.r)) { o.stun = Math.max(o.stun, S(d.root.time)); this.reset(o); }
       if (d.root) this.events.push({ e: 'root', x: u.x, y: u.y, r: T(d.root.r) });
       if (d.split) this.spawn(u.side, d.split, u.lvl, u.x, u.y, 0);
+      if (d.deathSplash) {                                 // Paper Kite drops its load when it falls
+        const dmg = trunc(d.deathSplash.dmg * lvlPct(u.lvl) / 100);
+        this.events.push({ e: 'splash', x: u.x, y: u.y, r: T(d.deathSplash.r), side: u.side });
+        for (const o of s.units) if (o.side !== u.side && o.hp > 0 && dist(o, u) <= T(d.deathSplash.r) + o.r) this.damage(o, dmg, false);
+      }
       if (u.kind === 'tower') this.towerDown(u);
     }
   }
