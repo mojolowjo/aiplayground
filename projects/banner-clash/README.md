@@ -97,7 +97,10 @@ cheat. That seemed fine for a private game.
 | `server.js` | Web server and friend rooms |
 | `net/` | UPnP, DuckDNS, public IP and abuse limits, from Lane Duel |
 
-`npm test` runs the simulation, bot, progression and server tests.
+`npm test` runs the simulation, bot, progression, server and UPnP tests.
+
+`npm run matchups` fights every troop and building against every other one, 1v1 at the same level, and writes
+`tools/matchups.html`, a table to read for balancing. Add `-- --level 9` for another level or `-- --only hedge` for one card.
 
 Add `?demo=1` to the address to watch two bots play each other (for testing), and turn on
 **Setup → Bot debug overlay** to see what the bot is thinking.
