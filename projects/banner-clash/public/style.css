@@ -125,3 +125,5 @@ body.inbattle #nav, body.inbattle #topbar { display: none; }
 label { display: block; margin: 6px 0; }
 label select, label input { display: block; width: 100%; }
 @media (min-height: 900px) { .hand .card .nm { font-size: 7px; } }
+#acctCard { padding: 8px 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#acctBtn { white-space: nowrap; flex: none; }

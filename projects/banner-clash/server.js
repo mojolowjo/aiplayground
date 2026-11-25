@@ -12,6 +12,7 @@
 //   UPNP_DEBUG      "1" prints every UPnP request and the router's raw replies     optional
 //   UPNP_GATEWAY    the router's UPnP description URL, to skip the search     optional, rarely needed
 //   PUBLIC_IP_URL   the "what is my IP" service used if the router will not say     default https://api.ipify.org
+//   ACCOUNTS_FILE   where player accounts and saves are kept                default saves/accounts.json
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,6 +25,7 @@ import { PortMapping, isPublicAddress } from './net/upnp.js';
 import { duckName, startDuck } from './net/duckdns.js';
 import { publicIp, PUBLIC_IP_SERVICE } from './net/publicip.js';
 import { LIMITS, RateLimiter, PerIp, plainIp, isThisMachine, lanAddress, staticFiles } from './net/guard.js';
+import { Accounts } from './accounts.js';
 
 const PORT = +process.env.PORT || 3000;
 const UPNP = !['off', '0', 'false', 'no'].includes(String(process.env.UPNP ?? 'on').trim().toLowerCase());
@@ -31,6 +33,7 @@ const UPNP_LEASE = 3600;
 const DUCK_EVERY = 300;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FILES = staticFiles(path.join(HERE, 'public'), { '/shared': path.join(HERE, 'shared') });
+const accounts = new Accounts(process.env.ACCOUNTS_FILE || path.join(HERE, 'saves', 'accounts.json'));
 const MAX_ROOMS = 10;                     // a few friends: far fewer rooms than Lane Duel's 50 (guess)
 const HOLD_SEAT = 60;                     // seconds a dropped player's seat is held (guess)
 const COUNTDOWN = 3000;                   // ms before the first tick, hides any clock difference
@@ -39,6 +42,7 @@ const MAX_LEAD = 20;                      // ticks ahead a play may be scheduled
 const server = http.createServer((req, res) => {
   let rel = null; try { rel = decodeURIComponent(String(req.url).split('?')[0]); } catch { /* bad escape */ }
   if (rel === '/ping' && (req.method === 'GET' || req.method === 'HEAD')) { res.writeHead(204, { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' }); return res.end(); }
+  if (rel && accounts.handle(req, res, rel, plainIp(req.socket.remoteAddress))) return;
   const hit = (req.method === 'GET' || req.method === 'HEAD') && FILES.get(rel);
   if (!hit) { res.writeHead(req.method === 'GET' || req.method === 'HEAD' ? 404 : 405, { 'Content-Type': 'text/plain' }); return res.end('not found'); }
   fs.readFile(hit.file, (err, data) => {
@@ -283,6 +287,7 @@ async function goPublic() {
 let closing = false;
 async function shutdown() {
   if (closing) return; closing = true;
+  try { accounts.flush(); } catch (e) { console.log('Could not write accounts: ' + e.message); }
   if (duckJob) duckJob.stop();
   try {
     const removed = await Promise.race([mapping.close(), new Promise((_, no) => setTimeout(() => no(new Error('the router did not answer')), 3000))]);

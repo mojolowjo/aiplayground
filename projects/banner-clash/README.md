@@ -41,6 +41,14 @@ Not yet: card backs for maxed cards, match series, draft and ban decks, profile 
 on the laptop, HTTPS for installing to a phone home screen, bot balance tuning (higher tiers currently beat
 the tier below only a little more than half the time; the design asks for about 70%).
 
+## Accounts
+
+Press **Log in** on the home screen to keep your progress on the laptop instead of only in your browser, so you can
+play from any device. Pick a name and password and press **Create account**; the progress already in that browser
+comes with you. Accounts and saves are kept in `saves/accounts.json` next to the server (passwords as salted hashes).
+This is a simple test login over plain http: there is no password reset (the host can delete a player from that
+file while the server is stopped), so don't reuse an important password. Playing without an account still works.
+
 ## Playing with friends
 
 Online play uses the lowest-ping setup from the online plan: friends connect straight to your laptop, with
@@ -63,6 +71,7 @@ Settings (environment variables):
 | `UPNP` | `off` if you forward the port by hand in the router instead | on |
 | `DUCKDNS_DOMAIN`, `DUCKDNS_TOKEN` | Keep one DuckDNS name pointed at your home, so the link stays the same | off |
 | `UPNP_DEBUG` | `1` prints every UPnP request and reply | off |
+| `ACCOUNTS_FILE` | Where accounts and saves are kept | `saves/accounts.json` |
 
 On Windows PowerShell: `$env:UPNP="off"; npm start`.
 

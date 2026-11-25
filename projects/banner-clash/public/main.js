@@ -7,6 +7,7 @@ import { Renderer } from './render.js';
 import { spriteURL } from './sprites.js';
 import { sfx, setSound } from './sfx.js';
 import { Online } from './online.js';
+import { Account } from './account.js';
 
 const $ = s => document.querySelector(s);
 const el = (tag, attrs = {}, html = '') => { const e = document.createElement(tag); Object.assign(e, attrs); if (html) e.innerHTML = html; return e; };
@@ -18,7 +19,13 @@ const rnd = Math.random;
 const KEY = 'bannerclash.save.v1';
 function load() { try { return PR.fixSave(JSON.parse(localStorage.getItem(KEY))); } catch { return PR.newSave(); } }
 export let save = load();
-export function persist() { try { localStorage.setItem(KEY, JSON.stringify(save)); } catch { toast('Could not save progress in this browser.'); } refreshTop(); }
+let account = null;               // set up below; see public/account.js
+export function persist() {
+  save.updated = Date.now();
+  try { localStorage.setItem(KEY, JSON.stringify(save)); } catch { toast('Could not save progress in this browser.'); }
+  account?.push();
+  refreshTop();
+}
 setSound(save.settings.sound);
 
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 2200); }
@@ -66,7 +73,43 @@ function statRows(id, lvl) {
 // ---------- home ----------
 let nextRival = null;
 function chooseRival() { nextRival = pickRival(PR.currentArena(save)); }
+// ---------- account ----------
+account = new Account({
+  getSave: () => save,
+  setSave: s => { save = s; try { localStorage.setItem(KEY, JSON.stringify(save)); } catch { /* private mode */ } setSound(save.settings.sound); nextRival = null; },
+  fresh: () => PR.newSave('Player'), fix: s => PR.fixSave(s), toast: m => toast(m),
+  onChange: () => { refreshTop(); if (current !== 'battle') show(current); },
+});
+function renderAccount() {
+  const c = $('#acctCard'); if (!c) return;
+  const st = { ok: 'saved on the server', saving: 'saving…', offline: 'server not reachable, saved in this browser for now', off: '' }[account.state];
+  c.innerHTML = account.name
+    ? `<small>Logged in as <b>${esc(account.name)}</b>${st ? ` · ${st}` : ''}</small>`
+    : `<small>Playing without an account: progress is saved only in this browser.</small> <button class="mini" id="acctBtn">Log in</button>`;
+  if (!account.name) $('#acctBtn').onclick = () => openLogin();
+}
+function openLogin() {
+  const box = el('div', {}, `<b>Log in</b><p><small>Your progress is kept on the host's laptop, so you can play from any device. New here? Pick a name and password and press Create account. Your progress in this browser comes with you.</small></p>
+    <label>Name<input id="lName" maxlength="20" autocomplete="username"></label>
+    <label>Password<input id="lPass" type="password" autocomplete="current-password"></label>
+    <p id="lErr" style="color:var(--red,#e55)"></p>
+    <div class="row"><button class="go" id="lIn">Log in</button><button id="lNew">Create account</button><button id="lNo">Cancel</button></div>
+    <p><small>Simple test login: don't reuse an important password.</small></p>`);
+  modal(box);
+  const go = async kind => {
+    $('#lErr').textContent = '';
+    const err = await account.enter(kind, $('#lName').value.trim(), $('#lPass').value);
+    if (err) { $('#lErr').textContent = err; return; }
+    if (!save.name || save.name === 'Player') { save.name = account.name.slice(0, 16); persist(); }
+    closeModal(); toast(kind === 'register' ? 'Account created' : 'Welcome back, ' + account.name);
+  };
+  $('#lIn').onclick = () => go('login'); $('#lNew').onclick = () => go('register'); $('#lNo').onclick = closeModal;
+  $('#lPass').onkeydown = e => { if (e.key === 'Enter') go('login'); };
+  $('#lName').focus();
+}
+
 function renderHome() {
+  renderAccount();
   const a = PR.currentArena(save), info = PR.arenaInfo(a), next = PR.ARENAS[a];
   const lo = info.glory, hi = next ? next.glory : Math.max(2400, save.glory);
   const pct = next ? (save.glory - lo) / (hi - lo) * 100 : 100;
@@ -188,9 +231,13 @@ function renderSettings() {
     <label><input type="checkbox" id="sTaunts" ${save.settings.taunts ? 'checked' : ''} style="display:inline;width:auto"> Show rival taunts</label>
     <label><input type="checkbox" id="sDebug" ${save.settings.debug ? 'checked' : ''} style="display:inline;width:auto"> Bot debug overlay</label>
     <p><small>Wins ${save.stats.wins} · losses ${save.stats.losses} · draws ${save.stats.draws} · friend battles ${save.stats.friendly}</small></p>
-    <h2>Save</h2><small>Your progress lives in this browser. Copy it to move it to another device.</small>
+    <h2>Account</h2>${account.name ? `<small>Logged in as <b>${esc(account.name)}</b>. Your progress is saved on the server.</small><div class="row"><button id="sOut">Log out</button></div>`
+      : `<small>Not logged in. Log in to keep your progress on the server and play from any device.</small><div class="row"><button class="go" id="sIn">Log in</button></div>`}
+    <h2>Save</h2><small>${account.name ? 'A copy also lives in this browser.' : 'Your progress lives in this browser.'} Copy it to move it to another device.</small>
     <textarea id="sBox" placeholder="Paste a save here to import it"></textarea>
     <div class="row"><button id="sExport">Export</button><button id="sImport">Import</button><button id="sReset" class="warn">Reset</button></div>`;
+  if ($('#sOut')) $('#sOut').onclick = async () => { await account.logout(); toast('Logged out'); };
+  if ($('#sIn')) $('#sIn').onclick = () => openLogin();
   $('#sName').onchange = e => { save.name = e.target.value.slice(0, 16) || 'Player'; persist(); };
   $('#sSound').onchange = e => { save.settings.sound = e.target.checked; setSound(save.settings.sound); persist(); };
   $('#sTaunts').onchange = e => { save.settings.taunts = e.target.checked; persist(); };
@@ -441,6 +488,7 @@ function endBotMatch(b, rival, plays) {
 // ---------- start ----------
 export const online = new Online({ getSave: () => save, persist, screen, show, toast, modal, closeModal, cardEl, el, esc });
 show('home');
+account.start();
 if (!localStorage.getItem(KEY + '.seen')) {
   try { localStorage.setItem(KEY + '.seen', '1'); } catch { /* private mode */ }
   modal(`<b>Welcome to Banner Clash</b><p><small>Drag a card from your hand onto your half of the arena (or tap the card, then tap the arena). Cards cost Spark, which refills over time. Knock down more enemy towers than you lose in 3 minutes. Taking the big Keep in the middle wins at once.</small></p><button class="go" onclick="document.getElementById('modal').classList.add('hidden')">Let's go</button>`);
