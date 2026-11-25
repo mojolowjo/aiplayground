@@ -61,8 +61,13 @@ Windows Firewall needs an inbound allow rule for RustDedicated.exe on Private ne
 | `/bot kill` | `aibot.kill` | Removes it. |
 
 The bot is saved to `carbon\data\AiBot.json` on every server save and on plugin unload, and comes
-back at the same spot after a restart or hot reload. If it dies it leaves a normal corpse and is
-gone until the next spawn.
+back at the same spot after a restart or hot reload. If it dies it leaves a normal corpse and
+respawns 30 s later at a random spawn point with fresh gear. `/bot kill` removes it for good.
+
+Each name owns one bot ID (Dusty 9000001, Marlow 9000002, Kestrel 9000003, and so on), so a bot
+keeps its name, face and body through deaths and restarts. The game gives its own bots IDs
+counting up from 1 and reuses freed ones; the plugin keeps the 9000001+ range out of that reuse
+pool. Add new names at the end of the list only.
 
 ### Which body
 

@@ -12,19 +12,25 @@ namespace Oxide.Plugins
     // like a real player. It finds paths on the game's own navmesh (the one NPC2 uses), but this
     // plugin moves the body itself, because a BasePlayer has no navigator.
     // Chat (admins): /bot spawn|info|roam|stop|here|kill      Console/RCON: aibot.<same>
-    [Info("AiBot", "mojolowjo", "0.2.1")]
+    [Info("AiBot", "mojolowjo", "0.3.0")]
     public class AiBot : RustPlugin
     {
         private const string PlayerPrefab = "assets/prefabs/player/player.prefab";
         private const string FileName = "AiBot";
 
+        // Each name owns one bot ID for good, so a bot keeps its name, face and body through deaths
+        // and restarts. Bot IDs are user IDs below 10,000,000; the game hands them out counting up
+        // from 1, so it won't reach this range. Add names to the end only, never reorder them.
+        private const ulong FirstId = 9000001;
         private static readonly string[] Names = { "Dusty", "Marlow", "Kestrel", "Bramble", "Otis", "Wren", "Hatch", "Juniper" };
+        private const float RespawnSeconds = 30f;
         private static readonly string[] Clothes = { "hoodie", "pants", "shoes.boots", "burlap.gloves", "hat.beenie" };
         private static readonly string[] Belt = { "stone.pickaxe", "stonehatchet", "bandage" };
 
         private class Saved
         {
             public string Name;
+            public ulong Id;
             public float X, Y, Z, Yaw, Health;
             public bool Roaming = true;
         }
@@ -32,13 +38,27 @@ namespace Oxide.Plugins
         private Saved saved;
         private BasePlayer bot;
         private Walker walker;
+        private Timer respawnTimer;
+
+        private static bool OurId(ulong id) => id >= FirstId && id < FirstId + (ulong)Names.Length;
+
+        // The game returns a destroyed bot's ID to its free pool, which would let its next bot take ours.
+        private static void KeepIdsReserved()
+        {
+            var field = typeof(BasePlayer).GetField("freeBotIds", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            (field?.GetValue(null) as List<ulong>)?.RemoveAll(OurId);
+        }
 
         #region Lifecycle
 
         private void OnServerInitialized()
         {
             try { saved = Interface.Oxide.DataFileSystem.ReadObject<Saved>(FileName); } catch { saved = null; }
+            KeepIdsReserved();
             if (saved == null || string.IsNullOrEmpty(saved.Name)) { saved = null; return; }
+            var index = Array.IndexOf(Names, saved.Name);
+            if (index < 0) { Puts("Unknown bot name " + saved.Name + ", not restoring it."); saved = null; return; }
+            saved.Id = FirstId + (ulong)index;
             var why = SpawnBody(new Vector3(saved.X, saved.Y, saved.Z), saved.Yaw);
             Puts(why ?? "Restored " + saved.Name);
         }
@@ -54,6 +74,7 @@ namespace Oxide.Plugins
         private void Unload()
         {
             Save();
+            respawnTimer?.Destroy();
             RemoveBody();
         }
 
@@ -79,11 +100,17 @@ namespace Oxide.Plugins
             if (!Walker.Nearest(near, 5f, out pos) && !Walker.Nearest(near, 30f, out pos))
                 return "No walkable ground near " + near;
             if (Walker.WaterDepth(pos) > Walker.MaxWater) return "That spot is under water.";
+            KeepIdsReserved();
 
             var player = GameManager.server.CreateEntity(PlayerPrefab, pos, Quaternion.identity) as BasePlayer;
             if (player == null) return "Could not create a player entity.";
             player.enableSaving = false; // the data file is the save
+            // A preset ID skips the game's bot ID pool, so register it as a bot the way the game does.
+            player.userID = saved.Id;
+            player.UserIDString = saved.Id.ToString();
             player.Spawn();
+            if (!BasePlayer.bots.Contains(player)) BasePlayer.bots.Add(player);
+            BasePlayer.botColliderWorkQueue.Add(player);
             player.displayName = saved.Name;
             player.InitializeHealth(saved.Health > 0f ? saved.Health : 100f, 100f);
             player.metabolism.calories.value = player.metabolism.calories.max;
@@ -113,9 +140,11 @@ namespace Oxide.Plugins
             if (bot != null && !bot.IsDestroyed) bot.Kill();
             bot = null;
             walker = null;
+            NextTick(KeepIdsReserved);
         }
 
-        // The game makes the corpse and removes the dead body by itself.
+        // The game makes the corpse and removes the dead body by itself. The same bot comes back
+        // at a random spawn point a little later, with fresh gear, like a player respawning.
         private void OnEntityDeath(BasePlayer player, HitInfo info)
         {
             if (player == null || player != bot) return;
@@ -123,8 +152,28 @@ namespace Oxide.Plugins
             if (walker != null) UnityEngine.Object.Destroy(walker);
             bot = null;
             walker = null;
-            saved = null;
+            saved.Health = 0f;
+            saved.Roaming = true;
             Save();
+            timer.Once(5f, KeepIdsReserved);
+            respawnTimer?.Destroy();
+            respawnTimer = timer.Once(RespawnSeconds, Respawn);
+        }
+
+        private void Respawn()
+        {
+            if (saved == null || Alive) return;
+            for (var i = 0; i < 5; i++)
+            {
+                var point = ServerMgr.FindSpawnPoint(null, 0UL);
+                if (point == null) continue;
+                if (SpawnBody(point.pos, point.rot.eulerAngles.y) != null) continue;
+                Puts(saved.Name + " respawned at " + bot.transform.position);
+                Save();
+                return;
+            }
+            Puts("Could not respawn " + saved.Name + ", trying again in " + RespawnSeconds + " s");
+            respawnTimer = timer.Once(RespawnSeconds, Respawn);
         }
 
         #endregion
@@ -138,6 +187,7 @@ namespace Oxide.Plugins
                 case "spawn":
                 {
                     if (Alive) return saved.Name + " is already here. Use /bot here, or /bot kill first.";
+                    respawnTimer?.Destroy();
                     Vector3 pos;
                     if (user != null) pos = InFrontOf(user);
                     else
@@ -146,7 +196,9 @@ namespace Oxide.Plugins
                         if (point == null) return "No spawn point found.";
                         pos = point.pos;
                     }
-                    saved = new Saved { Name = Names[UnityEngine.Random.Range(0, Names.Length)], Roaming = user == null };
+                    var index = saved != null ? Array.IndexOf(Names, saved.Name) : -1; // dead, waiting to respawn
+                    if (index < 0) index = UnityEngine.Random.Range(0, Names.Length);
+                    saved = new Saved { Name = Names[index], Id = FirstId + (ulong)index, Roaming = user == null };
                     var why = SpawnBody(pos, user != null ? user.viewAngles.y + 180f : 0f);
                     if (why != null) { saved = null; return why; }
                     Save();
@@ -155,6 +207,7 @@ namespace Oxide.Plugins
                 case "info": return Info();
                 case "kill":
                     if (saved == null) return "No bot.";
+                    respawnTimer?.Destroy();
                     RemoveBody();
                     saved = null;
                     Save();
@@ -186,7 +239,8 @@ namespace Oxide.Plugins
 
         private string Info()
         {
-            if (!Alive) return "No bot. Server fps " + Performance.current.frameRate;
+            if (!Alive)
+                return (saved != null ? saved.Name + " is dead and respawns within " + RespawnSeconds + " s." : "No bot.") + " Server fps " + Performance.current.frameRate;
             var sb = new StringBuilder();
             sb.AppendLine(saved.Name + "  id " + bot.UserIDString + "  health " + bot.health.ToString("0"));
             sb.AppendLine("pos " + bot.transform.position + " (" + MapHelper.PositionToString(bot.transform.position) + ")  water " + Walker.WaterDepth(bot.transform.position).ToString("0.0") + " m");
