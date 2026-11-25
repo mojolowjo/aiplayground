@@ -360,14 +360,15 @@ namespace Oxide.Plugins
             public BasePlayer Asker;
             public Dictionary<string, int> Before;
             public float Next, Until, Started;
-            public bool Approached, Opened;
-            public int Swings, Taken;
+            public bool Approached, Opened, Stepped;
+            public int Swings, Taken, Misses;
+            public string LastHit;
             public List<BaseEntity> Drops;
 
             public string Describe(BasePlayer bot)
             {
                 var d = Target != null && !Target.IsDestroyed ? ", " + Vector3.Distance(bot.transform.position, Target.transform.position).ToString("0") + " m away" : "";
-                return Kind + " " + Phase + d + ", " + Swings + " swings, " + Taken + " items taken, " + (Time.time - Started).ToString("0") + " s";
+                return Kind + " " + Phase + d + ", " + Swings + " swings (" + Misses + " misses in a row" + (LastHit != null ? ", last miss hit " + LastHit : "") + "), " + Taken + " items taken, " + (Time.time - Started).ToString("0") + " s";
             }
         }
 
@@ -537,6 +538,18 @@ namespace Oxide.Plugins
                     }
                     if (Time.time > j.Until) { EndJob(name + " gave up on the " + Noun(j.Kind) + "."); return; }
                     if (!InReach(j)) { j.Phase = "walk"; j.Approached = false; j.Until = Time.time + 20f; return; }
+                    if (walker.Busy) return; // stepping closer
+                    if (j.Misses >= 8) { EndJob(name + " kept missing the " + Noun(j.Kind) + " (last swing hit " + j.LastHit + ") and gave up."); return; }
+                    if (j.Misses >= 2 && j.Misses % 2 == 0 && !j.Stepped)
+                    {
+                        // Two misses in a row: out of the tool's reach, or something in the way. Step in.
+                        j.Stepped = true;
+                        var toward = t.transform.position - bot.transform.position;
+                        toward.y = 0f;
+                        walker.WalkStraight(bot.transform.position + toward.normalized * 0.6f);
+                        return;
+                    }
+                    if (j.Misses % 2 == 1) j.Stepped = false;
                     var melee = EquipTool(j);
                     if (melee == null) return; // switching, or EndJob already said why
                     if (melee.HasAttackCooldown()) return;
@@ -647,41 +660,57 @@ namespace Oxide.Plugins
             // The hit lands a moment into the swing animation.
             timer.Once(0.3f, () =>
             {
-                if (!Alive || t == null || t.IsDestroyed || melee == null || melee.IsDestroyed || job != j) return;
-                Strike(t, melee);
+                if (!Alive || melee == null || melee.IsDestroyed || job != j) return;
+                var hit = Strike(melee);
+                if (hit == t) { j.Misses = 0; return; }
+                j.Misses++;
+                j.LastHit = hit == null ? "nothing" : hit is BasePlayer ? ((BasePlayer)hit).displayName : hit.ShortPrefabName;
+                Puts(saved.Name + "'s swing at the " + Noun(j.Kind) + " hit " + j.LastHit + " instead");
             });
         }
 
-        // Builds the hit the way the game does for a player's swing and hands it to the tool's own
-        // attack code, which damages the target, gathers resources, wears the tool and plays effects.
-        private void Strike(BaseEntity t, BaseMelee melee)
+        private readonly List<RaycastHit> traceHits = new List<RaycastHit>();
+
+        // A swing like a player's: it hits whatever is first along the bot's view, within the tool's
+        // reach, not the thing it meant to hit. A player's client does this trace; the bot has no
+        // client, so this is the game's own server-side melee trace (BaseMelee.ServerUse_Strike,
+        // used for its AI): a thin ray first, then a fatter one. Because it starts at the eyes and
+        // stops at the tool's reach, it also meets the server's anti-cheat rules for player hits
+        // (distance and line of sight). The hit then goes through the tool's own player attack
+        // code, which damages, gathers, wears the tool and plays effects. Returns what it hit.
+        private BaseEntity Strike(BaseMelee melee)
         {
             var eyes = bot.eyes.position;
-            var aim = AimPoint(t, eyes);
-            var dir = (aim - eyes).normalized;
-            var info = new HitInfo
+            var dir = bot.eyes.rotation * Vector3.forward;
+            for (var pass = 0; pass < 2; pass++)
             {
-                Initiator = bot,
-                Weapon = melee,
-                WeaponPrefab = melee,
-                HitEntity = t,
-                PointStart = eyes,
-                HitPositionWorld = aim,
-                HitNormalWorld = -dir,
-                HitMaterial = StringPool.Get("generic"),
-                damageProperties = melee.damageProperties,
-            };
-            foreach (var hit in Physics.RaycastAll(eyes, dir, Vector3.Distance(eyes, aim) + 1.5f, 1220225809, QueryTriggerInteraction.Ignore))
-            {
-                if (hit.GetEntity() != t) continue;
-                info.HitPositionWorld = hit.point;
-                info.HitNormalWorld = hit.normal;
-                var mat = hit.collider != null ? hit.collider.sharedMaterial : null;
-                if (mat != null) info.HitMaterial = StringPool.Get(AssetNameCache.GetName(mat));
-                break;
+                traceHits.Clear();
+                var ray = new Ray(eyes - dir * (pass == 1 ? 0.2f : 0f), dir);
+                GamePhysics.TraceAll(ray, pass == 1 ? melee.attackRadius : 0f, traceHits, melee.maxDistance + 0.2f, 1220225809, QueryTriggerInteraction.UseGlobal, null);
+                foreach (var hit in traceHits)
+                {
+                    var e = hit.GetEntity();
+                    if (e != null && (e == bot || e.EqualNetID(bot) || e.isClient)) continue;
+                    var info = new HitInfo
+                    {
+                        Initiator = bot,
+                        Weapon = melee,
+                        WeaponPrefab = melee,
+                        HitEntity = e,
+                        PointStart = eyes,
+                        HitPositionWorld = hit.point,
+                        PointEnd = hit.point,
+                        HitNormalWorld = hit.normal,
+                        damageProperties = melee.damageProperties,
+                    };
+                    var mat = hit.collider != null ? hit.collider.sharedMaterial : null;
+                    info.HitMaterial = e is BasePlayer || e is BaseNpc ? StringPool.Get("Flesh")
+                        : StringPool.Get(mat != null ? AssetNameCache.GetName(mat) : "generic");
+                    melee.DoAttackShared(info); // also hits terrain and rock faces, like a player
+                    return e;
+                }
             }
-            info.PointEnd = info.HitPositionWorld;
-            melee.DoAttackShared(info);
+            return null; // swung at air
         }
 
         private static List<BaseEntity> DropsNear(Vector3 at)
