@@ -7,6 +7,7 @@
 //   3. SOAP: call AddPortMapping / GetExternalIPAddress / DeletePortMapping on that URL.
 import dgram from 'node:dgram';
 import http from 'node:http';
+import os from 'node:os';
 
 const SSDP = { address: '239.255.255.250', port: 1900 };
 const TARGETS = [
@@ -17,23 +18,40 @@ const TARGETS = [
 const SERVICE = /urn:schemas-upnp-org:service:WAN(?:IP|PPP)Connection:\d/;
 
 // Step 1. Resolves with the description URL of the first gateway that answers.
+// The search goes out once from every network adapter (Ethernet, Wi-Fi, ...) as well as from the default
+// one: on Windows a multicast from an unbound socket can leave on the wrong adapter and never reach the router.
 // `to` lets a test point the search at a stand-in router instead of the multicast address.
-export function discover({ timeout = 3000, to = SSDP } = {}) {
+export function lanAddresses() {
+  const out = [];
+  for (const list of Object.values(os.networkInterfaces())) for (const a of list || []) if ((a.family === 'IPv4' || a.family === 4) && !a.internal) out.push(a.address);
+  return out;
+}
+export function discover({ timeout = 3000, to = SSDP, bindTo = lanAddresses() } = {}) {
   return new Promise((resolve, reject) => {
-    const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-    const done = (err, url) => { clearTimeout(timer); try { sock.close(); } catch { /* already closed */ } err ? reject(err) : resolve(url); };
+    const socks = [];
+    let finished = false, failures = 0;
+    const done = (err, url) => {
+      if (finished) return; finished = true; clearTimeout(timer);
+      for (const s of socks) { try { s.close(); } catch { /* already closed */ } }
+      err ? reject(err) : resolve(url);
+    };
     const timer = setTimeout(() => done(new Error('no UPnP router answered')), timeout);
-    sock.on('error', e => done(new Error('could not search the network for a router: ' + e.message)));
-    sock.on('message', buf => {
-      const text = buf.toString(), loc = /^location:\s*(\S+)/im.exec(text);
-      if (loc && /InternetGatewayDevice|WAN(IP|PPP)Connection/i.test(text)) done(null, loc[1]);
-    });
-    sock.bind(0, () => {
-      for (const st of TARGETS) {
-        const msg = Buffer.from(`M-SEARCH * HTTP/1.1\r\nHOST: ${SSDP.address}:${SSDP.port}\r\nMAN: "ssdp:discover"\r\nMX: 2\r\nST: ${st}\r\n\r\n`);
-        for (let i = 0; i < 2; i++) sock.send(msg, to.port, to.address, () => {});   // UDP can drop one
-      }
-    });
+    for (const addr of [null, ...bindTo]) {
+      const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true }); socks.push(sock);
+      sock.on('error', e => { try { sock.close(); } catch { /* already closed */ } if (++failures === socks.length) done(new Error('could not search the network for a router: ' + e.message)); });
+      sock.on('message', buf => {
+        const text = buf.toString(), loc = /^location:\s*(\S+)/im.exec(text);
+        if (loc && /InternetGatewayDevice|WAN(IP|PPP)Connection/i.test(text)) done(null, loc[1]);
+      });
+      const send = () => {
+        if (addr) { try { sock.setMulticastInterface(addr); } catch { /* not every system allows it; the bound address still picks the adapter */ } }
+        for (const st of TARGETS) {
+          const msg = Buffer.from(`M-SEARCH * HTTP/1.1\r\nHOST: ${SSDP.address}:${SSDP.port}\r\nMAN: "ssdp:discover"\r\nMX: 2\r\nST: ${st}\r\n\r\n`);
+          for (let i = 0; i < 2; i++) sock.send(msg, to.port, to.address, () => {});   // UDP can drop one
+        }
+      };
+      addr ? sock.bind(0, addr, send) : sock.bind(0, send);
+    }
   });
 }
 
@@ -100,8 +118,16 @@ export async function soap(gw, action, args = {}, debug) {
     'Content-Type': 'text/xml; charset="utf-8"', SOAPAction: `"${gw.serviceType}#${action}"`, Connection: 'close' };
   if (debug) debug(`UPnP >> POST ${gw.controlUrl}\n${Object.entries(headers).map(([k, v]) => `   ${k}: ${v}`).join('\n')}\n   ${body.trim()}`);
   let res;
-  try { res = await request(gw.controlUrl, { method: 'POST', body, headers }); }
-  catch (e) { if (debug) debug(`UPnP << no reply to ${action}: ${e.message}`); throw e; }
+  // Some routers drop a request now and then ("socket hang up"), so a request with no reply at all is sent
+  // again, up to twice. A reply with an error is not retried.
+  for (let attempt = 1; ; attempt++) {
+    try { res = await request(gw.controlUrl, { method: 'POST', body, headers }); break; }
+    catch (e) {
+      if (debug) debug(`UPnP << no reply to ${action} (try ${attempt}): ${e.message}`);
+      if (attempt >= 3) throw e;
+      await new Promise(r => setTimeout(r, 300 * attempt));
+    }
+  }
   if (debug) debug(`UPnP << HTTP ${res.status} for ${action}\n   ${res.body.trim() || '(empty reply)'}`);
   if (res.status !== 200) {
     const code = +(/<(?:[\w.-]+:)?errorCode[^>]*>\s*(\d+)\s*</i.exec(res.body) || [])[1] || 0, text = (/<(?:[\w.-]+:)?errorDescription[^>]*>\s*([^<]*?)\s*</i.exec(res.body) || [])[1];

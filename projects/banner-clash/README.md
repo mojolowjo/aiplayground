@@ -70,6 +70,8 @@ On Windows PowerShell: `$env:UPNP="off"; npm start`.
 
 - The server prints a warning if your router's own address is not public (CGNAT). Then a direct connection
   cannot work; use Tailscale (low added ping, everyone installs it once) or a Cloudflare Tunnel.
+- If the server says no UPnP router answered, set `UPNP_GATEWAY` to the router's description URL (run once with `UPNP_DEBUG=1`, or look in the router's UPnP page).
+- Some routers keep a mapping for up to a day if the server is killed instead of stopped. Stop it with Ctrl+C or by closing its window.
 - If UPnP fails, forward TCP port 3000 to the laptop in your router's settings and run with `UPNP=off`.
 
 ## How online play works
