@@ -19,12 +19,24 @@ export class Accounts {
   constructor(file) {
     this.file = file;
     this.db = { users: {} };
-    try { this.db = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* first run */ }
-    this.db.users ||= {};
+    let text = null;
+    try { text = fs.readFileSync(file, 'utf8'); } catch { /* first run: no file yet */ }
+    if (text != null) {
+      try {
+        const d = JSON.parse(text);
+        if (!d || typeof d.users !== 'object' || Array.isArray(d.users)) throw new Error('no users list');
+        this.db = d;
+      } catch (e) {                         // never overwrite a file we could not read: keep it aside and say so
+        const keep = file + '.broken-' + Date.now();
+        fs.renameSync(file, keep);
+        console.log(`Accounts file could not be read (${e.message}); kept it as ${keep} and started with no accounts.`);
+      }
+    }
     this.fails = new Map();
     this.timer = null;
   }
   key(name) { return String(name).toLowerCase(); }
+  user(name) { const k = this.key(name); return Object.hasOwn(this.db.users, k) ? this.db.users[k] : null; }   // own names only: "constructor" is not an account
   write() {                               // a short delay groups several saves into one disk write
     if (this.timer) return;
     this.timer = setTimeout(() => {
@@ -57,7 +69,7 @@ export class Accounts {
     if (String(password || '').length < 4) return { error: 'Use a password of at least 4 characters.' };
     if (this.tooMany(ip)) return { error: 'Too many tries. Wait a few minutes.' };
     const k = this.key(name);
-    if (this.db.users[k]) return { error: 'That name is taken.' };
+    if (this.user(name) || k in Object.prototype) return { error: 'That name is taken.' };   // "__proto__" and friends
     const salt = crypto.randomBytes(16).toString('hex');
     const u = this.db.users[k] = { name: String(name), salt, hash: this.hash(password, salt), save: null, saved: 0, created: Date.now() };
     const token = this.token(u); this.write();
@@ -65,8 +77,8 @@ export class Accounts {
   }
   login(name, password, ip) {
     if (this.tooMany(ip)) return { error: 'Too many tries. Wait a few minutes.' };
-    const u = this.db.users[this.key(name)];
-    const ok = u && crypto.timingSafeEqual(Buffer.from(this.hash(password, u.salt), 'hex'), Buffer.from(u.hash, 'hex'));
+    const u = typeof name === 'string' ? this.user(name) : null;
+    const ok = u && typeof u.salt === 'string' && typeof u.hash === 'string' && crypto.timingSafeEqual(Buffer.from(this.hash(password, u.salt), 'hex'), Buffer.from(u.hash, 'hex'));
     if (!ok) { this.failed(ip); return { error: 'Wrong name or password.' }; }
     const token = this.token(u); this.write();
     return { name: u.name, token, save: u.save, saved: u.saved };
@@ -93,19 +105,25 @@ export class Accounts {
     const reply = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
     const done = out => reply(out.error ? (/log in again/.test(out.error) ? 401 : 400) : 200, out);
     const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    if (req.method === 'GET' && rel === '/api/save') { done(this.load(token)); return true; }
+    if (req.method === 'GET' && rel === '/api/save') { try { done(this.load(token)); } catch { reply(500, { error: 'Something went wrong.' }); } return true; }
     if (req.method !== 'POST') { reply(405, { error: 'not allowed' }); return true; }
     let body = '', big = false;
     req.setEncoding('utf8');
     req.on('data', c => { if (big) return; body += c; if (body.length > MAX_SAVE + 1000) { big = true; reply(413, { error: 'Too large.' }); req.destroy(); } });
     req.on('end', () => {
       if (big) return;
-      let m = {}; try { m = JSON.parse(body || '{}'); } catch { return reply(400, { error: 'Bad request.' }); }
-      if (rel === '/api/register') done(this.register(m.name, m.password, ip));
-      else if (rel === '/api/login') done(this.login(m.name, m.password, ip));
-      else if (rel === '/api/logout') done(this.logout(token));
-      else if (rel === '/api/save') done(this.store(token, m.save));
-      else reply(404, { error: 'not found' });
+      try {
+        let m; try { m = JSON.parse(body || '{}'); } catch { return reply(400, { error: 'Bad request.' }); }
+        if (!m || typeof m !== 'object' || Array.isArray(m)) return reply(400, { error: 'Bad request.' });
+        if (rel === '/api/register') done(this.register(m.name, m.password, ip));
+        else if (rel === '/api/login') done(this.login(m.name, m.password, ip));
+        else if (rel === '/api/logout') done(this.logout(token));
+        else if (rel === '/api/save') done(this.store(token, m.save));
+        else reply(404, { error: 'not found' });
+      } catch (e) {                         // a bad request must never take the server down
+        console.log('Account request failed: ' + e.message);
+        if (!res.headersSent) reply(500, { error: 'Something went wrong.' });
+      }
     });
     return true;
   }

@@ -27,5 +27,16 @@ assert.match(a.load(l.token).error, /log in again/);
 for (let i = 0; i < 10; i++) a.login('mojo', 'bad', 'ip2');
 assert.match(a.login('mojo', 'secret', 'ip2').error, /Too many/);
 assert.ok(a.login('mojo', 'secret', 'ip3').token, 'other addresses are not blocked');
+// Built-in object names are not accounts, and odd input is refused instead of crashing.
+for (const n of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) assert.match(a.login(n, 'x', 'ip4').error, /Wrong/, n);
+assert.match(a.login(null, null, 'ip4').error, /Wrong/);
+assert.match(a.login({}, 'x', 'ip4').error, /Wrong/);
+assert.match(a.register('__proto__', 'pass', 'ip5').error, /taken/);
+assert.match(a.register('constructor', 'pass', 'ip5').error, /taken/);
 a.flush();
+// An unreadable file is kept aside, never overwritten.
+fs.writeFileSync(file, '{not json');
+const b2 = new Accounts(file);
+assert.ok(fs.readdirSync(path.dirname(file)).some(f => f.startsWith('accounts.json.broken-')), 'broken file kept');
+assert.equal(Object.keys(b2.db.users).length, 0);
 console.log('accounts tests passed');
