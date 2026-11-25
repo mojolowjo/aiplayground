@@ -2,11 +2,12 @@
 // match the server's checksums. Also checks the abuse limits and a held seat on disconnect.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { Battle } from '../shared/sim.js';
 
 const PORT = 3400 + Math.floor(Math.random() * 500);
-const srv = spawn(process.execPath, ['server.js'], { cwd: new URL('..', import.meta.url).pathname, env: { ...process.env, PORT: String(PORT), UPNP: 'off' }, stdio: ['ignore', 'pipe', 'pipe'] });
+const srv = spawn(process.execPath, ['server.js'], { cwd: fileURLToPath(new URL('..', import.meta.url)), env: { ...process.env, PORT: String(PORT), UPNP: 'off' }, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = ''; srv.stdout.on('data', d => log += d); srv.stderr.on('data', d => log += d);
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const until = async (fn, ms = 8000) => { const t = Date.now(); while (Date.now() - t < ms) { const v = fn(); if (v) return v; await wait(20); } throw new Error('timed out\n' + log); };

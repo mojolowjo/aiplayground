@@ -290,7 +290,7 @@ async function shutdown() {
   } catch (e) { console.log(`WARNING: could not remove the UPnP port mapping (${e.message}). It will expire on its own.`); }
   process.exit(0);
 }
-process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown); process.on('SIGBREAK', shutdown); // SIGBREAK: Ctrl+Break or closing the console window on Windows
 
 server.on('error', e => { console.error(e.code === 'EADDRINUSE' ? `Port ${PORT} is already in use. Close the other program or set PORT to something else.` : e.message); process.exit(1); });
 server.listen(PORT, () => { console.log(`Banner Clash running: http://localhost:${PORT}`); goPublic(); });
