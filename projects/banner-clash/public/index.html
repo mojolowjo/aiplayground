@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#14142a">
+<title>Banner Clash</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+  <!-- Top bar for menu screens -->
+  <header id="topbar">
+    <div class="res"><span class="ico coin"></span><b id="coins">0</b></div>
+    <div class="res"><span class="ico key"></span><b id="keys">0</b></div>
+    <div class="res"><span class="ico glory"></span><b id="glory">0</b></div>
+  </header>
+
+  <main>
+    <section id="home" class="screen">
+      <div class="title">BANNER<br>CLASH</div>
+      <div class="panel arena-card" id="arenaCard"></div>
+      <div class="panel" id="rivalCard"></div>
+      <button class="big go" id="battleBtn">BATTLE</button>
+      <div class="panel" id="unlockCard"></div>
+    </section>
+
+    <section id="cards" class="screen">
+      <h2>Battle deck <small id="deckAvg"></small></h2>
+      <div class="grid deck" id="deckGrid"></div>
+      <p class="hint" id="swapHint"></p>
+      <h2>Collection <small id="ownCount"></small></h2>
+      <div class="grid" id="collGrid"></div>
+    </section>
+
+    <section id="arenas" class="screen">
+      <h2>Arenas</h2>
+      <div id="arenaList"></div>
+    </section>
+
+    <section id="friends" class="screen">
+      <h2>Friend battle</h2>
+      <div class="panel" id="netPanel"></div>
+    </section>
+
+    <section id="settings" class="screen">
+      <h2>Settings</h2>
+      <div class="panel" id="setPanel"></div>
+    </section>
+
+    <section id="battle" class="screen">
+      <div class="bar top">
+        <div class="who red"><span id="foeName">Rival</span><span class="lvl" id="foeLvl"></span></div>
+        <div class="banners"><span id="bannersRed"></span></div>
+        <div class="clock" id="clock">3:00</div>
+        <button class="mini" id="pauseBtn">II</button>
+      </div>
+      <div id="stage">
+        <canvas id="cv"></canvas>
+        <div id="bubbleFoe" class="bubble foe"></div>
+        <div id="bubbleMe" class="bubble me"></div>
+        <div id="banner" class="banner-msg"></div>
+        <div id="voteBox" class="vote hidden"><p>Still tied. Extend 1:00 of sudden death?</p><button id="voteYes">Extend</button><button id="voteNo">Tiebreak</button></div>
+        <pre id="debug" class="debug hidden"></pre>
+      </div>
+      <div class="bar bottom">
+        <div class="row1">
+          <div class="who blue"><span id="meName">You</span><span class="banners" id="bannersBlue"></span></div>
+          <button class="mini" id="emoteBtn">:)</button>
+        </div>
+        <div id="emotes" class="emotes hidden"></div>
+        <div class="handrow">
+          <div class="next"><small>NEXT</small><div id="nextCard" class="card tiny"></div></div>
+          <div id="hand" class="hand"></div>
+        </div>
+        <div class="spark"><div id="sparkFill"></div><div id="sparkTicks"></div><b id="sparkNum">5</b></div>
+      </div>
+    </section>
+
+    <section id="result" class="screen">
+      <div class="panel result" id="resultPanel"></div>
+    </section>
+  </main>
+
+  <nav id="nav">
+    <button data-go="cards">Cards</button>
+    <button data-go="arenas">Arenas</button>
+    <button data-go="home" class="on">Battle</button>
+    <button data-go="friends">Friends</button>
+    <button data-go="settings">Setup</button>
+  </nav>
+
+  <div id="modal" class="modal hidden"><div class="panel" id="modalBox"></div></div>
+  <div id="toast" class="toast"></div>
+</div>
+<script type="module" src="/main.js"></script>
+</body>
+</html>
