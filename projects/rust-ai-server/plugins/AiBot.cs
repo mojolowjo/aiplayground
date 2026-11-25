@@ -638,7 +638,7 @@ namespace Oxide.Plugins
         private void Swing(Job j, BaseMelee melee)
         {
             var t = j.Target;
-            walker.Face(t.transform.position);
+            walker.Face(AimPoint(t, bot.eyes.position));
             melee.StartAttackCooldown(melee.repeatDelay);
             bot.SignalBroadcast(BaseEntity.Signal.Attack, string.Empty, null);
             if (melee.swingEffect.isValid)
@@ -759,6 +759,7 @@ namespace Oxide.Plugins
             private readonly List<Vector3> corners = new List<Vector3>();
             private int corner;
             private Vector3 goal, lastDir = Vector3.forward;
+            private float pitch, lookPitch;
             private float yaw, lookYaw, acc, speed, waitUntil, nextLook;
             private float stuckSince;
             private Vector3 stuckPos;
@@ -792,6 +793,9 @@ namespace Oxide.Plugins
             {
                 var d = point - body.transform.position;
                 lookYaw = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
+                // Tilt the head too (positive pitch looks down), so it looks at what it works on.
+                var e = point - body.eyes.position;
+                lookPitch = Mathf.Clamp(-Mathf.Atan2(e.y, new Vector2(e.x, e.z).magnitude) * Mathf.Rad2Deg, -80f, 80f);
             }
 
             public bool GoTo(Vector3 to, bool run)
@@ -837,7 +841,9 @@ namespace Oxide.Plugins
                 if (corners.Count > 0) Walk(dt);
                 else Idle();
 
+                if (corners.Count > 0 || !Working) lookPitch = 0f; // eyes ahead while walking or idle
                 yaw = Mathf.MoveTowardsAngle(yaw, lookYaw, 300f * dt);
+                pitch = Mathf.MoveTowards(pitch, lookPitch, 200f * dt);
                 SetLook();
             }
 
@@ -1028,10 +1034,10 @@ namespace Oxide.Plugins
 
             private void SetLook()
             {
-                var rot = Quaternion.Euler(0f, yaw, 0f);
-                if (Mathf.Abs(Mathf.DeltaAngle(body.viewAngles.y, yaw)) > 0.5f)
+                var rot = Quaternion.Euler(pitch, yaw, 0f);
+                if (Mathf.Abs(Mathf.DeltaAngle(body.viewAngles.y, yaw)) > 0.5f || Mathf.Abs(Mathf.DeltaAngle(body.viewAngles.x, pitch)) > 0.5f)
                 {
-                    body.OverrideViewAngles(new Vector3(0f, yaw, 0f));
+                    body.OverrideViewAngles(new Vector3(pitch, yaw, 0f));
                     body.eyes.rotation = rot;
                     body.transform.hasChanged = true;
                     if (corners.Count == 0) body.NetworkPositionTick();
@@ -1048,7 +1054,7 @@ namespace Oxide.Plugins
             public string Describe()
             {
                 var mins = (Time.time - startedAt) / 60f;
-                return "roaming " + Roaming + ", " + state + (corners.Count > 0 ? " to " + goal + " at " + speed + " m/s, " + Vector3.Distance(goal, body.transform.position).ToString("0") + " m left" : "")
+                return "roaming " + Roaming + ", looking " + body.viewAngles.x.ToString("0") + "° down, " + state + (corners.Count > 0 ? " to " + goal + " at " + speed + " m/s, " + Vector3.Distance(goal, body.transform.position).ToString("0") + " m left" : "")
                     + "\nsince spawn (" + mins.ToString("0.0") + " min): " + travelled.ToString("0") + " m, " + trips + " trips, stuck " + stucks
                     + " (repath " + repaths + ", teleport " + teleports + "), blocked steps " + blocked + ", no destination " + noGoal + ", deepest water " + deepest.ToString("0.0") + " m";
             }
