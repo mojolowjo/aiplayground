@@ -73,6 +73,12 @@ Windows Firewall needs an inbound allow rule for RustDedicated.exe on Private ne
 | `/bot barrel` | `aibot.barrel` | Breaks the nearest barrel and picks up what drops. |
 | `/bot loot` | `aibot.loot` | Opens the nearest unlocked crate and takes everything. |
 | `/bot inv` | `aibot.inv` | Lists belt, main inventory and clothing, with amounts and tool condition. |
+| `/bot path` | | Walks to the spot under your crosshair (up to 400 m) and draws its route for you. |
+| `/bot route` | `aibot.route` | The route it's on, point by point (height, slope, trail and jump spots), and why it last stopped. |
+| `/bot unstuck` | `aibot.unstuck` | Admin teleport 2 to 8 m out of a rock or wall. |
+| | `aibot.tp <x> <z>` | Admin teleport to map coordinates. |
+| | `aibot.trails` | Reloads the player trails now (otherwise when a recording changes). |
+| | `aibot.drop` | Test: lifts it 15 m to check falls. |
 
 The bot is saved to `carbon\data\AiBot.json` on every server save and on plugin unload, and comes
 back at the same spot with the same inventory after a restart or hot reload. If it dies it leaves
@@ -127,36 +133,43 @@ A `BasePlayer` has no navigator, so the plugin moves it: it asks the game's own 
 path (`RustNavMeshHelpers.CalculatePath`, the same one NPC2 uses), then walks the corners,
 snapping to the ground each step. Checked against Rust 2636.
 
-### Roaming
+### Movement
 
-Picks a spot 30 to 100 m away, mostly keeping its heading, walks or runs there, pauses, looks
-around, repeats. Paths that cross water deeper than 0.4 m are refused. If it moves less than
-0.6 m in 3 s it re-paths, then picks a new spot, then hops a few metres to the nearest walkable
-spot. The hop is a short teleport, so a bot boxed in by walls will hop out through them.
+Roaming picks a spot 30 to 100 m away, mostly keeping its heading, walks or runs there (2.6 or
+5.2 m/s), pauses, looks around, repeats. Paths through water deeper than 0.4 m are refused.
 
-### Body (movement option C, part 1)
+- **Body.** A player-sized Unity `CharacterController` (0.5 m radius, 1.8 m tall, steps up
+  0.5 m, slope limit 50 degrees, gravity), the same kind of collide-and-slide a game client
+  moves a player with: it stops at, slides along and steps onto what's in the way instead of
+  trying to walk into it. Every move still goes through the movement checks below. Benched
+  against every recorded player track: 99.3% of 4,681 waypoints reached, 0.16% of moves refused
+  by no-clip (all at the lighthouse).
+- **Routes.** For goals within 60 m it first tries a straight line, because the game's map never
+  routes off ledges; otherwise, or if that fails, the game's Gen2 map route. Either way the body
+  does a dry run along it (a waypoint a metre, nothing moves) before walking. A straight line that
+  would end more than 2 m below its goal (a goal on top of a rock) is dropped for the map route.
+- **Drops.** It walks off ledges and falls, but never off a drop over 10 m; fall damage starts at
+  a 15 m/s landing, about 11.5 m. Landing goes through the game's fall-damage code.
+- **Jumping.** One jump for everything: a real body jump (take-off for 1.4 m, under the game's
+  1.5 m jump height) when it stalls going up or against something, and at spots where a recorded
+  player jumped. Like a player, only from footing within the slope limit and only after landing
+  from the last jump.
+- **Player trails.** Every MoveLab recording is loaded as a trail. Where the dry run can't get
+  through and a trail within 2.5 m rejoins the route further on, the bot follows the player's
+  line and jumps where they jumped.
+- **Stuck.** Moving less than 0.6 m in 3 s counts as stuck: it re-routes, then picks a new spot.
+  The old stuck-hop (a short teleport) is switched off. Each stuck writes a `STUCK` line to the
+  console saying what stopped it.
+- **Actions** aim like a player: at the X marker or bonus spot if reachable, otherwise the nearest
+  part of the target within the tool's reach; out of reach it steps in or works round.
 
-The bot no longer places itself along the path. The path only says which way to go; a
-player-sized body (the game's own 0.5 m radius and 1.8 m height) decides how far it gets:
+A player's movement code runs on their computer and isn't on the server, so step height,
+acceleration and similar numbers are fitted to the recordings and the anti-cheat limits.
+Recorded players: walk about 2.6 m/s, sprint about 4.7, never climbed over 39 degrees.
 
-- It has a velocity: it speeds up, slows down and drifts a little when it stops. Its top speed is
-  the game's own `BasePlayer.GetSpeed` (2.8 walking, 5.5 running, less with heavy clothing),
-  kept 3% under the anti-cheat limit.
-- It collides with what the no-clip check treats as solid (and the ground), and slides along
-  walls, rocks and fences instead of stopping dead.
-- It steps up ledges up to 0.25 m, which is the highest it can go without the no-clip check's
-  capsule touching the ledge. Anything taller is a wall until it can jump (part 2).
-- It can't stand on slopes steeper than 55 degrees, and it sticks to the ground going downhill.
-- Off a ledge it falls under gravity. On landing, the fall speed goes to the game's own
-  fall-damage code (`ApplyFallDamageFromVelocity`, what a player's landing report calls). Test:
-  `aibot.drop` lifts it 15 m; it landed at 17 m/s and took 11.5 damage, which is the game's
-  formula.
-- For actions it aims like a player: at the X marker or bonus spot if it can reach it, otherwise
-  at the nearest part of the target within the tool's reach (1.5 m for stone tools). If nothing
-  is in reach it steps in, then works round to another side, and gives up after 8 tries.
-
-A player's movement code runs on their computer and isn't on the server, so acceleration, step
-height and slope limit are my numbers; jump, crouch and swim are part 2.
+If a lag report comes in, check the laptop's RAM first: on 2026-11-26 timeouts were the server
+being swapped to disk while other builds ran, not the bot (about 0.2 ms per update).
+`/bot info` shows route-planning times and any server frame over 100 ms.
 
 ### Movement checks (the server's tick process, rebuilt)
 
