@@ -1834,6 +1834,7 @@ namespace Oxide.Plugins
                 corners.Clear(); cornerJumps.Clear(); cornerTrusted.Clear();
                 body.MovePosition(pos);
                 Guard.Reset(pos);
+                lastStandY = float.MaxValue;
                 ResetStuck();
             }
 
@@ -2165,6 +2166,8 @@ namespace Oxide.Plugins
                     if (Vector3.Distance(way[way.Count - 1], dense[i]) >= 1f || i == dense.Count - 1) way.Add(dense[i]);
                 var route = new List<Vector3> { dense[0] };
                 dryLegs.Place(dense[0]);
+                var dryStandY = dense[0].y;
+                var dryWasGrounded = true;
                 var vy = -2f;
                 const float dt = 0.1f;
                 // A straight line's points are just a line through the air, so their height means
@@ -2196,7 +2199,6 @@ namespace Oxide.Plugins
                     }
                     var reached = false;
                     var dryHops = 0;
-                    var dryHopY = float.MaxValue;
                     for (var t = 0; t < 16; t++)
                     {
                         var p = dryLegs.Position;
@@ -2212,11 +2214,15 @@ namespace Oxide.Plugins
                         lastDry = p;
                         vy = hop ? HopSpeed : dryLegs.Grounded ? -2f : vy + Physics.gravity.y * dt;
                         var d = f.normalized * Mathf.Min(WalkSpeed * 1.5f, f.magnitude / dt);
-                        if (hop) dryHopY = p.y;
                         dryLegs.Move(new Vector3(d.x, vy, d.z) * dt);
-                        // Same limit as the real body: no landing more than a jump's height up.
-                        if (dryLegs.Grounded && dryLegs.Position.y - dryHopY > MaxJumpUp) { dryLegs.Place(p); break; }
-                        if (dryLegs.Grounded && vy <= 0f) dryHopY = float.MaxValue;
+                        // Same limit as the real body: never standing more than a jump's height
+                        // above where it last stood.
+                        if (dryLegs.Grounded)
+                        {
+                            if (!dryWasGrounded && dryLegs.Position.y - dryStandY > MaxJumpUp) { dryLegs.Place(p); break; }
+                            dryStandY = dryLegs.Position.y;
+                        }
+                        dryWasGrounded = dryLegs.Grounded;
                     }
                     if (reached)
                     {
@@ -2235,6 +2241,7 @@ namespace Oxide.Plugins
                         route.Add(tp.P);
                     }
                     dryLegs.Place(way[rejoin]);
+                    dryStandY = way[rejoin].y; // a player walked this way, so trust where the trail rejoins
                     route.Add(way[rejoin]);
                     w = rejoin;
                 }
@@ -2355,7 +2362,13 @@ namespace Oxide.Plugins
                 // over 1.8 m). A player's jump only gets their feet about 1.5 m up (the game's
                 // jump height), so anything it would end up standing on higher than that is refused.
                 var refusedLanding = false;
-                if (!landedSinceHop && legs.Grounded && next.y - hopFrom.y > MaxJumpUp)
+                // Any way up counts (a jump, or sliding up an edge): it may never end up standing
+                // more than a jump's height above where it last stood. Walking up a slope is fine,
+                // since that raises where it last stood a little at a time.
+                // Only a landing (in the air last step, standing now) is judged; while it keeps
+                // standing, or after a teleport, where it stands is simply the new reference.
+                if (legs.Grounded && (wasGrounded || next.y - lastStandY <= MaxJumpUp)) lastStandY = next.y;
+                else if (legs.Grounded)
                 {
                     // Back off the edge a little and keep falling. This must not count as landing,
                     // or it could jump again from mid-air (that was a double jump).
@@ -2404,6 +2417,7 @@ namespace Oxide.Plugins
             // corner, it slides off that edge, or steps back onto it if the drop would hurt.
             public static float PerchRadius = 0.25f;
             public const float MaxJumpUp = 1.5f; // BasePlayer jump height: the highest a player's feet can land after a jump
+            private float lastStandY = float.MaxValue; // height of the last ground it stood on (MaxValue: not known yet)
             public int TooHighLandings;
             public int PerchSlides, PerchBacks;
 
