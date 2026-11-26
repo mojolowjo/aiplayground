@@ -125,6 +125,30 @@ around, repeats. Paths that cross water deeper than 0.4 m are refused. If it mov
 0.6 m in 3 s it re-paths, then picks a new spot, then hops a few metres to the nearest walkable
 spot. The hop is a short teleport, so a bot boxed in by walls will hop out through them.
 
+### Body (movement option C, part 1)
+
+The bot no longer places itself along the path. The path only says which way to go; a
+player-sized body (the game's own 0.5 m radius and 1.8 m height) decides how far it gets:
+
+- It has a velocity: it speeds up, slows down and drifts a little when it stops. Its top speed is
+  the game's own `BasePlayer.GetSpeed` (2.8 walking, 5.5 running, less with heavy clothing),
+  kept 3% under the anti-cheat limit.
+- It collides with what the no-clip check treats as solid (and the ground), and slides along
+  walls, rocks and fences instead of stopping dead.
+- It steps up ledges up to 0.25 m, which is the highest it can go without the no-clip check's
+  capsule touching the ledge. Anything taller is a wall until it can jump (part 2).
+- It can't stand on slopes steeper than 55 degrees, and it sticks to the ground going downhill.
+- Off a ledge it falls under gravity. On landing, the fall speed goes to the game's own
+  fall-damage code (`ApplyFallDamageFromVelocity`, what a player's landing report calls). Test:
+  `aibot.drop` lifts it 15 m; it landed at 17 m/s and took 11.5 damage, which is the game's
+  formula.
+- For actions it aims like a player: at the X marker or bonus spot if it can reach it, otherwise
+  at the nearest part of the target within the tool's reach (1.5 m for stone tools). If nothing
+  is in reach it steps in, then works round to another side, and gives up after 8 tries.
+
+A player's movement code runs on their computer and isn't on the server, so acceleration, step
+height and slope limit are my numbers; jump, crouch and swim are part 2.
+
 ### Movement checks (the server's tick process, rebuilt)
 
 A real player's client sends the server a tick with each new position, and the server checks it
