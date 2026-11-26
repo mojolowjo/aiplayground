@@ -433,6 +433,76 @@ namespace Oxide.Plugins
 
         #endregion
 
+        #region Body
+
+        // A player-sized Unity character controller on its own object: the collide-and-slide
+        // body. Benched against every recorded player track: it reached 99.3% of 4,681 player
+        // waypoints, and the server's no-clip check refused 0.16% of its moves (all at the
+        // lighthouse). Step 0.5 m; slope limit 45 degrees (no recorded player climbed over 39).
+        public class CharacterBody
+        {
+            private readonly GameObject go;
+            private readonly CharacterController cc;
+            public bool Bumped;
+            public string BumpedInto = "";
+
+            public CharacterBody(BasePlayer owner)
+            {
+                go = new GameObject("AiBot body");
+                go.layer = LayerMask.NameToLayer("Player Movement");
+                cc = go.AddComponent<CharacterController>();
+                cc.radius = BasePlayer.GetRadius();
+                cc.height = BasePlayer.GetHeight(false);
+                cc.center = Vector3.up * (cc.height / 2f);
+                cc.stepOffset = 0.5f;
+                cc.slopeLimit = 45f;
+                cc.skinWidth = 0.05f;
+                cc.minMoveDistance = 0f;
+                // Don't collide with the bot's own body.
+                if (owner != null)
+                    foreach (var c in owner.GetComponentsInChildren<Collider>(true))
+                        if (c != null) Physics.IgnoreCollision(cc, c);
+            }
+
+            public Vector3 Position => go.transform.position;
+            public bool Grounded => cc.isGrounded;
+
+            public void Place(Vector3 pos)
+            {
+                if ((go.transform.position - pos).sqrMagnitude < 0.0004f) return;
+                cc.enabled = false;
+                go.transform.position = pos;
+                cc.enabled = true;
+            }
+
+            public Vector3 Move(Vector3 motion)
+            {
+                var flags = cc.Move(motion);
+                Bumped = (flags & CollisionFlags.Sides) != 0;
+                if (Bumped)
+                {
+                    RaycastHit hit;
+                    var flat = new Vector3(motion.x, 0f, motion.z);
+                    BumpedInto = flat.sqrMagnitude > 0.000001f && Physics.SphereCast(go.transform.position + Vector3.up * 0.9f, cc.radius * 0.9f, flat.normalized, out hit, 0.6f, ~0, QueryTriggerInteraction.Ignore)
+                        ? (hit.collider.GetComponentInParent<BaseEntity>()?.ShortPrefabName ?? hit.collider.transform.root.name) : "something";
+                }
+                return go.transform.position;
+            }
+
+            public void Park()
+            {
+                cc.enabled = false;
+                go.transform.position = new Vector3(0f, -1000f, 0f);
+            }
+
+            public void Dispose()
+            {
+                if (go != null) UnityEngine.Object.Destroy(go);
+            }
+        }
+
+        #endregion
+
         #region Player trails
 
         // Every movement recording (MoveLab) is a path a real player proved walkable, including
@@ -1155,7 +1225,11 @@ namespace Oxide.Plugins
 
                 if (jumping) Fly(dt);
                 else if (corners.Count > 0) Walk(dt);
-                else Idle();
+                else
+                {
+                    Settle(dt);
+                    Idle();
+                }
 
                 if (corners.Count > 0 || !Working) lookPitch = 0f; // eyes ahead while walking or idle
                 yaw = Mathf.MoveTowardsAngle(yaw, lookYaw, 300f * dt);
@@ -1321,90 +1395,126 @@ namespace Oxide.Plugins
                 return best;
             }
 
+            // From where the body got stuck, find a player trail that starts within 2.5 m and comes
+            // back to the route's waypoints at least 2 m further on (within 40 m). Returns the trail
+            // points to walk and the waypoint it rejoins at, or null.
+            private List<TrailPoint> TrailBridge(Vector3 from, List<Vector3> way, int w, out int rejoin)
+            {
+                rejoin = -1;
+                if (Trails.All.Count == 0) return null;
+                var near = new List<KeyValuePair<int, int>>(Trails.Near(from, 2.5f));
+                near.Sort((a, b) => Vector3.Distance(Trails.All[a.Key][a.Value].P, from).CompareTo(Vector3.Distance(Trails.All[b.Key][b.Value].P, from)));
+                var seen = new HashSet<int>();
+                List<TrailPoint> best = null;
+                var bestLen = float.MaxValue;
+                foreach (var st in near)
+                {
+                    if (!seen.Add(st.Key)) continue;
+                    if (seen.Count > 6) break;
+                    var tr = Trails.All[st.Key];
+                    foreach (var dirn in new[] { 1, -1 })
+                    {
+                        var len = 0f;
+                        var prevP = tr[st.Value].P;
+                        for (int m = st.Value, steps = 0; m >= 0 && m < tr.Count && steps < 120 && len < bestLen; m += dirn, steps++)
+                        {
+                            if (dirn < 0 && tr[m].Jump && m != st.Value) break; // a jump can't be done backwards
+                            len += Vector3.Distance(prevP, tr[m].P);
+                            prevP = tr[m].P;
+                            var hit = -1;
+                            for (var a = w + 1; a < way.Count; a++)
+                            {
+                                if (Vector3.Distance(way[a], way[w]) > 40f) break;
+                                if (Vector3.Distance(way[a], from) < 2f) continue;
+                                var q = way[a];
+                                if (new Vector2(q.x - prevP.x, q.z - prevP.z).magnitude < 1.2f && Mathf.Abs(q.y - prevP.y) < 1.2f) { hit = a; break; }
+                            }
+                            if (hit < 0) continue;
+                            var seg = new List<TrailPoint>();
+                            for (var x = st.Value; x != m + dirn; x += dirn) seg.Add(tr[x]);
+                            best = seg;
+                            bestLen = len;
+                            rejoin = hit;
+                            break;
+                        }
+                    }
+                }
+                return best;
+            }
+
+            // The route check is a dry run of the same body along the map's route, a waypoint
+            // every metre, with nothing moving in the world. Where the body can't get to the next
+            // waypoint, a player trail through there is used; if there is none, the route is
+            // turned down. Returns the route to walk, or null.
+            private CharacterBody dryLegs;
+
+            // The route as points every half metre along the map's line.
+            private static List<Vector3> Densify(List<Vector3> pts)
+            {
+                var dense = new List<Vector3> { pts[0] };
+                for (var i = 1; i < pts.Count; i++)
+                {
+                    var n = Mathf.Max(1, Mathf.CeilToInt(Vector3.Distance(pts[i - 1], pts[i]) / 0.5f));
+                    for (var k = 1; k <= n; k++) dense.Add(Vector3.Lerp(pts[i - 1], pts[i], k / (float)n));
+                }
+                return dense;
+            }
+
             private List<Vector3> Walkable(List<Vector3> pts, Vector3 to)
+            {
+                try { return DryRun(pts, to); }
+                finally { dryLegs?.Park(); } // out of the way, so the dry-run body never blocks anyone
+            }
+
+            private List<Vector3> DryRun(List<Vector3> pts, Vector3 to)
             {
                 routeJumps.Clear();
                 routeTrusted.Clear();
-                var offset = BasePlayer.NoClipOffset();
-                var radius = BasePlayer.NoClipRadius(ConVar.AntiHack.noclip_margin);
-                var route = new List<Vector3>();
-                Vector3 prev, last;
-                if (!Ground(pts[0], out prev)) prev = pts[0];
-                last = prev;
-                route.Add(prev);
-                var shift = Vector3.zero; // a nudge carries on to the next steps, so the route stays off the wall
-                for (var i = 1; i < pts.Count; i++)
+                if (dryLegs == null) dryLegs = new CharacterBody(body);
+                var dense = Densify(pts);
+                var way = new List<Vector3> { dense[0] };
+                for (var i = 1; i < dense.Count; i++)
+                    if (Vector3.Distance(way[way.Count - 1], dense[i]) >= 1f || i == dense.Count - 1) way.Add(dense[i]);
+                var route = new List<Vector3> { dense[0] };
+                dryLegs.Place(dense[0]);
+                var vy = -2f;
+                const float dt = 0.1f;
+                for (var w = 1; w < way.Count; w++)
                 {
-                    var seg = pts[i] - pts[i - 1];
-                    seg.y = 0f;
-                    var side = Vector3.Cross(Vector3.up, seg.normalized);
-                    var n = Mathf.Max(1, Mathf.CeilToInt(seg.magnitude / 0.5f));
-                    for (var k = 1; k <= n; k++)
+                    if (Vector3.Distance(way[w], to) < GoalSlack)
                     {
-                        var want = Vector3.Lerp(pts[i - 1], pts[i], k / (float)n);
-                        if (Vector3.Distance(want, to) < GoalSlack)
-                        {
-                            for (var j = i; j < pts.Count; j++) route.Add(pts[j]);
-                            return route;
-                        }
-                        Vector3 next;
-                        if (!Ground(want + shift, out next) && !Ground(want, out next)) next = want;
-                        if (Blocked(prev, next, offset, radius))
-                        {
-                            var freed = false;
-                            foreach (var amount in Nudges)
-                            {
-                                Vector3 alt;
-                                if (!Ground(want + side * amount, out alt)) continue;
-                                if (Blocked(prev, alt, offset, radius)) continue;
-                                next = alt;
-                                shift = side * amount;
-                                freed = true;
-                                Nudged++;
-                                break;
-                            }
-                            if (!freed)
-                            {
-                                // Blocked, but maybe a player got through here: follow their trail.
-                                int rejoinSeg, rejoinStep;
-                                var trail = TrailBridge(prev, pts, i, k, n, offset, radius, out rejoinSeg, out rejoinStep);
-                                if (trail == null) { RejectedBlocked++; return null; }
-                                TrailsUsed++;
-                                foreach (var tp in trail)
-                                {
-                                    if (tp.Jump) routeJumps[route.Count] = tp.Land;
-                                    routeTrusted.Add(route.Count);
-                                    route.Add(tp.P);
-                                }
-                                prev = route[route.Count - 1];
-                                last = prev;
-                                shift = Vector3.zero;
-                                // Carry on from where the trail rejoined the route.
-                                i = rejoinSeg;
-                                k = rejoinStep;
-                                seg = pts[i] - pts[i - 1];
-                                seg.y = 0f;
-                                side = Vector3.Cross(Vector3.up, seg.normalized);
-                                n = Mathf.Max(1, Mathf.CeilToInt(seg.magnitude / 0.5f));
-                                continue;
-                            }
-                        }
-                        else if (shift != Vector3.zero)
-                        {
-                            // Ease back onto the map's line once there's room.
-                            Vector3 back;
-                            if (Ground(want, out back) && !Blocked(prev, back, offset, radius)) { next = back; shift = Vector3.zero; }
-                        }
-                        // Slope over at least a metre, so small bumps don't count.
-                        var flat = new Vector2(next.x - last.x, next.z - last.z).magnitude;
-                        if (flat >= SlopeRun)
-                        {
-                            if (Mathf.Atan2(next.y - last.y, flat) * Mathf.Rad2Deg > MaxUphill) { RejectedSteep++; return null; }
-                            last = next;
-                        }
-                        route.Add(next);
-                        prev = next;
+                        for (var j = w; j < way.Count; j++) route.Add(way[j]);
+                        return route;
                     }
+                    var reached = false;
+                    for (var t = 0; t < 12; t++)
+                    {
+                        var p = dryLegs.Position;
+                        var f = new Vector3(way[w].x - p.x, 0f, way[w].z - p.z);
+                        if (f.magnitude < 0.35f) { reached = true; break; }
+                        vy = dryLegs.Grounded ? -2f : vy + Physics.gravity.y * dt;
+                        var d = f.normalized * Mathf.Min(WalkSpeed * 1.5f, f.magnitude / dt);
+                        dryLegs.Move(new Vector3(d.x, vy, d.z) * dt);
+                    }
+                    if (reached)
+                    {
+                        route.Add(dryLegs.Position);
+                        continue;
+                    }
+                    // The body can't get there: maybe a player did. Follow their trail.
+                    int rejoin;
+                    var trail = TrailBridge(dryLegs.Position, way, w, out rejoin);
+                    if (trail == null) { RejectedBlocked++; return null; }
+                    TrailsUsed++;
+                    foreach (var tp in trail)
+                    {
+                        if (tp.Jump) routeJumps[route.Count] = tp.Land;
+                        routeTrusted.Add(route.Count);
+                        route.Add(tp.P);
+                    }
+                    dryLegs.Place(way[rejoin]);
+                    route.Add(way[rejoin]);
+                    w = rejoin;
                 }
                 return route;
             }
@@ -1432,57 +1542,22 @@ namespace Oxide.Plugins
                 return false;
             }
 
+            // The body: Unity's character controller, the same kind of collide-and-slide a game
+            // client moves its player with. It stops at, slides along and steps up onto what's
+            // in the way, so it doesn't try to walk into rocks in the first place. Every move it
+            // makes still goes through the server's checks (TickGuard).
+            private CharacterBody legs;
+            private float fallSpeed;
+
             private void Walk(float dt)
             {
                 var pos = body.transform.position;
-                var left = speed * dt;
-                var start = pos;
-                while (left > 0f && corner < corners.Count)
+                while (corner < corners.Count)
                 {
-                    var flat = corners[corner] - pos;
-                    flat.y = 0f;
-                    var d = flat.magnitude;
-                    if (d < 0.15f) { corner++; continue; }
-                    var dir = flat / d;
-                    var move = Mathf.Min(left, d);
-                    Vector3 next;
-                    // A player jumped from here: do the same jump to where they landed.
-                    Vector3 land;
-                    if (pos == start && d < 0.6f && cornerJumps.TryGetValue(corner, out land))
-                    {
-                        StartTrailJump(pos, land);
-                        corner++;
-                        return;
-                    }
-                    // Steps a player walked are trusted past the walker's own obstacle check
-                    // (the server's checks still apply to every step).
-                    var trusted = cornerTrusted.Contains(corner);
-                    if ((!trusted && Blocked(pos, dir)) || !Ground(pos + dir * move, out next))
-                    {
-                        // Something knee to chest high in the way: jump it, like a player would.
-                        if (pos == start && TryJump(pos, dir)) return;
-                        blocked++;
-                        lastStop = WhyBlocked(pos, dir, move);
-                        if (Vector3.Distance(pos, goal) < 2f) corner = corners.Count; // close enough
-                        break;
-                    }
-                    left -= move;
-                    pos = next;
-                    lastDir = dir;
-                    lookYaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
-                }
-
-                if (pos != start)
-                {
-                    // Every move is a tick: the server's checks decide whether it happens.
-                    if (!Guard.Receive(start, pos, speed > WalkSpeed)) lastStop = "the anti-cheat refused the step (" + Guard.LastType + ")";
-                    else
-                    {
-                        travelled += Vector3.Distance(start, pos);
-                        deepest = Mathf.Max(deepest, WaterDepth(pos));
-                        body.MovePosition(pos);
-                    }
-                    if (Guard.Kicked) { Roaming = false; EndTrip("kicked by anti-cheat"); return; }
+                    var f = corners[corner] - pos;
+                    f.y = 0f;
+                    if (f.magnitude > 0.35f) break;
+                    corner++;
                 }
                 if (corner >= corners.Count)
                 {
@@ -1490,8 +1565,70 @@ namespace Oxide.Plugins
                     waitUntil = Time.time + UnityEngine.Random.Range(1f, 7f);
                     return;
                 }
+                var flat = corners[corner] - pos;
+                flat.y = 0f;
+                var dir = flat.normalized;
+                // A player jumped from here: do the same jump to where they landed.
+                Vector3 land;
+                if (flat.magnitude < 0.8f && cornerJumps.TryGetValue(corner, out land))
+                {
+                    StartTrailJump(pos, land);
+                    corner++;
+                    return;
+                }
+                var next = MoveBody(pos, dir, speed, dt);
+                var progress = new Vector2(next.x - pos.x, next.z - pos.z).magnitude;
+                if (progress < 0.25f * speed * dt)
+                {
+                    blocked++;
+                    lastStop = legs.Bumped ? "its body bumped into " + legs.BumpedInto : "it couldn't get any further this step";
+                    // Something knee to chest high in the way: jump it, like a player would.
+                    if (legs.Bumped && TryJump(pos, dir)) return;
+                    if (Vector3.Distance(pos, goal) < 2f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
+                }
+                lastDir = dir;
+                lookYaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+                if (Guard.Kicked) { Roaming = false; EndTrip("kicked by anti-cheat"); return; }
                 CheckStuck();
             }
+
+            // Standing still: gravity still applies (after /bot here, a jump, or ground that went away).
+            private float settleCheck;
+
+            private void Settle(float dt)
+            {
+                if (Time.time < settleCheck) return;
+                var pos = body.transform.position;
+                if (legs == null) legs = new CharacterBody(body);
+                legs.Place(pos);
+                MoveBody(pos, Vector3.zero, 0f, dt);
+                if (legs.Grounded) settleCheck = Time.time + 0.5f; // on the ground: check twice a second
+            }
+
+            // One body move: the controller moves (with gravity), then the server's checks
+            // decide whether it happens. Returns where the bot ends up.
+            private Vector3 MoveBody(Vector3 pos, Vector3 dir, float spd, float dt)
+            {
+                if (legs == null) legs = new CharacterBody(body);
+                legs.Place(pos);
+                var wasGrounded = legs.Grounded;
+                fallSpeed = wasGrounded ? -2f : fallSpeed + Physics.gravity.y * dt;
+                var next = legs.Move(new Vector3(dir.x * spd, fallSpeed, dir.z * spd) * dt);
+                if (legs.Grounded && !wasGrounded && fallSpeed < -15f) body.ApplyFallDamageFromVelocity(fallSpeed); // what a player's landing report does
+                if ((next - pos).sqrMagnitude < 0.000001f) return pos;
+                if (!Guard.Receive(pos, next, spd > WalkSpeed))
+                {
+                    lastStop = "the anti-cheat refused the step (" + Guard.LastType + ")";
+                    legs.Place(pos);
+                    return pos;
+                }
+                travelled += Vector3.Distance(pos, next);
+                deepest = Mathf.Max(deepest, WaterDepth(next));
+                body.MovePosition(next);
+                return next;
+            }
+
+            private void OnDestroy() { legs?.Dispose(); dryLegs?.Dispose(); }
 
             // Why the last step didn't happen, for the stuck report.
             private string lastStop = "nothing";
