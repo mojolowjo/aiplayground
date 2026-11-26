@@ -349,6 +349,9 @@ namespace Oxide.Plugins
         // something between step height and jump height -> jump; a low bump -> step over.
         private static string Guess(ProbeProblem p)
         {
+            // Walls, gates and fences: always around, whatever the height says.
+            var o = (p.Object ?? "").ToLowerInvariant();
+            if (o.Contains("wall") || o.Contains("gate") || o.Contains("fence")) return "around";
             if (p.Kind.Contains("jumpable")) return "jump";
             if (p.Kind.Contains("step-able")) return "step";
             return "around";

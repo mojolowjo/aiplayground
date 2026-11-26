@@ -160,7 +160,7 @@ namespace Oxide.Plugins
                     RaycastHit block;
                     if (BodyBlocked(prev, next, out block))
                     {
-                        var top = TopAbove(block.point, next.y);
+                        var top = HeightAhead(prev, block.point);
                         Record(top <= Step ? "low bump (step-able)" : top <= BasePlayer.GetJumpHeight() ? "obstacle, jumpable height" : "obstacle, too tall to jump", block.collider, block.point, top, slope);
                         metresBad += d;
                         return false;
@@ -170,7 +170,7 @@ namespace Oxide.Plugins
                     var off = BasePlayer.NoClipOffset();
                     if (AntiHack.TestNoClipping(Someone(), prev + off, next + off, BasePlayer.NoClipRadius(ConVar.AntiHack.noclip_margin), ConVar.AntiHack.noclip_backtracking, out nc, false, null, false, false, false))
                     {
-                        Record("no-clip check would refuse", nc, next, TopAbove(next, next.y), slope);
+                        Record("no-clip check would refuse", nc, next, HeightAhead(prev, next), slope);
                         metresBad += d;
                         return false;
                     }
@@ -218,13 +218,20 @@ namespace Oxide.Plugins
             return block.collider != null;
         }
 
-        // How high the thing at this spot sticks up above the ground the player stands on.
-        private float TopAbove(Vector3 at, float groundY)
+        // How tall the thing in front is, the way you'd judge it standing there: rays straight
+        // ahead at rising heights; the first height that gets past it is its top. (A ray down
+        // from above missed thin tall things like high external walls: it started inside them.)
+        // Returns 4 for anything 4 m or taller.
+        private static float HeightAhead(Vector3 feet, Vector3 obstacle)
         {
-            RaycastHit hit;
-            if (Physics.Raycast(new Vector3(at.x, groundY + 4f, at.z), Vector3.down, out hit, 6f, CollisionMask, QueryTriggerInteraction.Ignore))
-                return Mathf.Max(0f, hit.point.y - groundY);
-            return 0f;
+            var dir = new Vector3(obstacle.x - feet.x, 0f, obstacle.z - feet.z);
+            var reach = dir.magnitude + 0.6f;
+            if (dir.sqrMagnitude < 0.0001f) return 0f;
+            dir.Normalize();
+            for (var h = 0.1f; h <= 4f; h += 0.1f)
+                if (!Physics.Raycast(feet + Vector3.up * h, dir, reach, CollisionMask, QueryTriggerInteraction.Ignore))
+                    return h - 0.1f;
+            return 4f;
         }
 
         private void Record(string kind, Collider c, Vector3 at, float height, float slope)
