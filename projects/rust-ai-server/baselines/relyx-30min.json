@@ -1,0 +1,65 @@
+{
+  "source": "20261126-033857-Relyx.json",
+  "player": "Relyx",
+  "minutes": 28.5,
+  "distance_m": 5895,
+  "share_moving": 0.81,
+  "share_sprinting_while_moving": 0.72,
+  "jumps_per_minute": 9.5,
+  "share_crouched": 0.011,
+  "legs": {
+    "count": 59,
+    "duration_s": {
+      "n": 59,
+      "median": 7.73,
+      "p10": 0.9,
+      "p90": 88.56,
+      "max": 187.32
+    },
+    "length_m": {
+      "n": 59,
+      "median": 29.81,
+      "p10": 1.59,
+      "p90": 321.01,
+      "max": 789.94
+    },
+    "speed_mps": {
+      "n": 59,
+      "median": 3.87,
+      "p10": 1.2,
+      "p90": 4.93,
+      "max": 5.79
+    },
+    "straightness": {
+      "n": 59,
+      "median": 0.65,
+      "p10": 0.12,
+      "p90": 1.0,
+      "max": 1.0
+    },
+    "turns_over_45deg_per_min": {
+      "n": 59,
+      "median": 16.72,
+      "p10": 0.0,
+      "p90": 46.24,
+      "max": 66.71
+    }
+  },
+  "stops": {
+    "count": 60,
+    "duration_s": {
+      "n": 60,
+      "median": 2.07,
+      "p10": 1.03,
+      "p90": 15.27,
+      "max": 51.05
+    },
+    "looking_around_deg_per_s": {
+      "n": 60,
+      "median": 10.87,
+      "p10": 0.28,
+      "p90": 76.59,
+      "max": 125.62
+    }
+  }
+}
