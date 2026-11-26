@@ -482,6 +482,20 @@ namespace Oxide.Plugins
             arg.ReplyWith(Run(verb, arg.Player()));
         }
 
+        // Test: aibot.goto <x> <z> [run] - walk there with the normal route checks.
+        [ConsoleCommand("aibot.goto")]
+        private void ConGoto(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !arg.IsAdmin) return;
+            if (!Alive) { arg.ReplyWith("No bot."); return; }
+            var want = new Vector3(arg.GetFloat(0), 0f, arg.GetFloat(1));
+            want.y = TerrainMeta.HeightMap.GetHeight(want);
+            Vector3 spot;
+            if (!Walker.Nearest(want, 6f, out spot)) { arg.ReplyWith("Not walkable there."); return; }
+            BrainOff(); EndJob(null); walker.SetRoaming(false);
+            arg.ReplyWith(walker.GoTo(spot, arg.GetBool(2)) ? saved.Name + " is going to " + spot.ToString("F1") + ", " + Vector3.Distance(spot, bot.transform.position).ToString("0") + " m." : "No route: " + walker.lastPlanProblem);
+        }
+
         [ConsoleCommand("aibot.spawn")] private void ConSpawn(ConsoleSystem.Arg arg) => FromConsole(arg, "spawn");
         [ConsoleCommand("aibot.info")] private void ConInfo(ConsoleSystem.Arg arg) => FromConsole(arg, "info");
         [ConsoleCommand("aibot.roam")] private void ConRoam(ConsoleSystem.Arg arg) => FromConsole(arg, "roam");
@@ -2261,9 +2275,10 @@ namespace Oxide.Plugins
                     // Stalled going up, or against something: jump, like a player would. But not
                     // at something higher than a jump can reach: that's a wall, not a hop.
                     var rise = corners[corner].y - pos.y;
-                    if (rise > -0.2f || legs.Bumped) Jump();
-                    
-                    if (Vector3.Distance(pos, goal) < 2f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
+                    var jumped = (rise > -0.2f || legs.Bumped) && Jump();
+                    // Close enough - but not while jumping: ending the trip mid-jump took away its
+                    // forward movement, so it went straight up and down in front of half walls.
+                    if (!jumped && landedSinceHop && Vector3.Distance(pos, goal) < 2f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
                 }
                 lastDir = dir;
                 lookYaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
@@ -2297,11 +2312,27 @@ namespace Oxide.Plugins
                     lastStop = "a drop of more than " + SafeDrop + " m ahead (fall damage)";
                     dir = Vector3.zero;
                 }
-                if (hopNow && wasGrounded) { fallSpeed = HopSpeed; hopNow = false; }
+                if (hopNow && wasGrounded) { fallSpeed = HopSpeed; hopNow = false; hopFrom = pos; hopPeak = pos.y; hopWhy = legs.Bumped ? legs.BumpedInto : lastStop; hopLogged = false; }
+                else if (hopNow && !wasGrounded) { hopNow = false; Interface.Oxide.LogInfo("[AiBot] JUMP skipped at " + pos.ToString("F2") + ": not on the ground when it tried"); }
                 else fallSpeed = wasGrounded ? -2f : fallSpeed + Physics.gravity.y * dt;
                 var next = legs.Move(new Vector3(dir.x * spd, fallSpeed, dir.z * spd) * dt);
                 if (legs.Grounded && !wasGrounded && fallSpeed < -15f) body.ApplyFallDamageFromVelocity(fallSpeed); // what a player's landing report does
-                if (!landedSinceHop && fallSpeed <= 0f && legs.OnFooting) landedSinceHop = true;
+                if (!landedSinceHop) hopPeak = Mathf.Max(hopPeak, next.y);
+                if (!landedSinceHop && fallSpeed <= 0f && legs.OnFooting)
+                {
+                    landedSinceHop = true;
+                    if (!hopLogged && next.y - hopFrom.y < 0.3f && new Vector2(next.x - hopFrom.x, next.z - hopFrom.z).magnitude < 0.5f)
+                    {
+                        // Only jumps that went nowhere are logged.
+                        // Every jump: how high its feet got and where it came down, to find why
+                        // some don't get over things (a half wall, say).
+                        hopLogged = true;
+                        var flatGain = new Vector2(next.x - hopFrom.x, next.z - hopFrom.z).magnitude;
+                        Interface.Oxide.LogInfo("[AiBot] JUMP at " + hopFrom.ToString("F2") + " (" + MapHelper.PositionToString(hopFrom) + "), because " + hopWhy + ": feet peaked "
+                            + (hopPeak - hopFrom.y).ToString("0.00") + " m up, landed " + (next.y - hopFrom.y).ToString("+0.00;-0.00") + " m and " + flatGain.ToString("0.00") + " m on"
+                            + (next.y - hopFrom.y < 0.3f && flatGain < 0.5f ? " -> DIDN'T GET OVER (thing ahead is " + AheadHeight(hopFrom, lastDir).ToString("0.00") + " m tall)" : ""));
+                    }
+                }
                 if ((next - pos).sqrMagnitude < 0.000001f) return pos;
                 if (!Guard.Receive(pos, next, spd > WalkSpeed))
                 {
@@ -2340,6 +2371,17 @@ namespace Oxide.Plugins
             }
             private float nextHop;
             private int hops;
+            private Vector3 hopFrom;
+            private float hopPeak;
+            private string hopWhy = "";
+            private bool hopLogged = true;
+
+            private static float AheadHeight(Vector3 pos, Vector3 dir)
+            {
+                for (var h = 0.1f; h <= 2.5f; h += 0.05f)
+                    if (!Physics.Raycast(pos + Vector3.up * h, dir, 1.2f, BlockMask | GroundMask, QueryTriggerInteraction.Ignore)) return h;
+                return 99f;
+            }
             public bool Airborne => jumping || (legs != null && !legs.Grounded);
 
             // Fall damage starts at a 15 m/s landing, about an 11.5 m fall. Stay under 10 m.
