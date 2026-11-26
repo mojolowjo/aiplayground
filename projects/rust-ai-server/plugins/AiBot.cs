@@ -443,6 +443,8 @@ namespace Oxide.Plugins
             sb.Append("sprint share " + odds.RunShare + "; sticks with a choice " + odds.StickMin + "-" + odds.StickMax + " s\n");
             sb.Append("running for cover (within " + odds.FleeRadius + " m): score = cover depth x " + odds.FleeDepth + " - run seconds x " + odds.FleeTime + " - seconds in view x " + odds.FleeExposed
                 + " + metres from attacker x " + odds.FleeDistance + " - metres of climb x " + odds.FleeClimb + " (fields fleeradius, fleedepth, fleetime, fleeexposed, fleedistance, fleeclimb)\n");
+            sb.Append("running-away routes: uphill at most " + odds.FleeMaxSlope + " deg (fleemaxslope), steps up at most " + odds.FleeMaxStep + " m (fleemaxstep), cover at most " + odds.FleeMaxRise
+                + " m above it (fleemaxrise), jumps " + (odds.FleeJumps >= 0.5f ? "allowed" : "not allowed") + " (fleejumps 0/1); normal walking: 50 deg, 0.5 m, jumps allowed\n");
             sb.Append("Change one: /bot set chop base 2  |  /bot set barrel nearboost 8  |  /bot set runshare 0.5");
             return sb.ToString();
         }
@@ -824,6 +826,20 @@ namespace Oxide.Plugins
             arg.ReplyWith(saved.Name + " took 5 damage from " + who.displayName + " (" + Vector3.Distance(who.transform.position, bot.transform.position).ToString("0") + " m away).");
         }
 
+        // The stricter route rules for running away. Null when the route is fine.
+        private static string TooSteep(List<Vector3> route, Odds o)
+        {
+            for (var i = 1; i < route.Count; i++)
+            {
+                var rise = route[i].y - route[i - 1].y;
+                if (rise <= 0f) continue;
+                var run = new Vector2(route[i].x - route[i - 1].x, route[i].z - route[i - 1].z).magnitude;
+                if (run < 1f && rise > o.FleeMaxStep) return "a " + rise.ToString("0.0") + " m step up";
+                if (run >= 0.3f && Mathf.Atan2(rise, run) * Mathf.Rad2Deg > o.FleeMaxSlope) return "a " + (Mathf.Atan2(rise, run) * Mathf.Rad2Deg).ToString("0") + " deg slope";
+            }
+            return null;
+        }
+
         private class Cand { public Vector3 Spot; public float Depth, Time, Exposed, Away, Climb, Score; public bool Routed; }
 
         private static readonly int FloorMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed");
@@ -875,7 +891,8 @@ namespace Oxide.Plugins
 
             // 1. Candidates in rings, every 3 m out to FleeRadius, in 24 directions.
             var cands = new List<Cand>();
-            int tops = 0, open = 0;
+            int tops = 0, open = 0, steep = 0;
+            string lastSteep = null;
             for (var r = 3f; r <= o.FleeRadius; r += 3f)
                 for (var ang = 0; ang < 360; ang += 15)
                 {
@@ -883,7 +900,7 @@ namespace Oxide.Plugins
                     Vector3 spot;
                     if (!Walker.Nearest(me + dir * r, 1.5f, out spot)) continue;
                     if (Walker.WaterDepth(spot) > Walker.MaxWater) continue;
-                    if (spot.y - me.y > 1f) continue; // up on a boulder or ledge: it can't get there without jumping
+                    if (spot.y - me.y > o.FleeMaxRise) continue; // up on a boulder or ledge: it can't get there without jumping
                     if (Vector3.Distance(spot, them) < myDist) continue; // no running towards them
                     // 2. Deep cover: hidden from where they are now (required), and how many of the other views.
                     if (CanSee(eyes, spot)) continue;
@@ -898,10 +915,17 @@ namespace Oxide.Plugins
             // 3. Real routes for the best few: travel time along the route and time spent in view on the way.
             cands.Sort((x, y) => y.Score.CompareTo(x.Score));
             Cand best = null;
-            foreach (var c in cands.Take(3))
+            // Routes for up to 8 candidates, until 3 have passed the stricter danger route rules.
+            var routed = 0;
+            foreach (var c in cands.Take(8))
             {
+                if (routed >= 3) break;
                 if (!walker.GoTo(c.Spot, true)) continue;
                 var route = walker.Route();
+                var tooSteep = TooSteep(route, o);
+                if (tooSteep == null && o.FleeJumps < 0.5f && walker.RouteJumps > 0) tooSteep = "needs a jump";
+                if (tooSteep != null) { steep++; lastSteep = tooSteep; continue; }
+                routed++;
                 float length = 0f, seen = 0f, climb = 0f;
                 for (var i = 1; i < route.Count; i++)
                 {
@@ -927,7 +951,7 @@ namespace Oxide.Plugins
                 var moved = !d.HasCover || Vector3.Distance(d.Cover, best.Spot) > 3f;
                 d.Cover = best.Spot; d.HasCover = true; d.Picks++;
                 if (moved) Puts("[danger] cover " + Vector3.Distance(me, best.Spot).ToString("0") + " m away, score " + best.Score.ToString("0.0") + " (depth " + best.Depth.ToString("0.00")
-                    + ", " + best.Time.ToString("0.0") + " s run, " + best.Exposed.ToString("0.0") + " s in view, ends " + best.Away.ToString("0") + " m from them, climb " + best.Climb.ToString("0.0") + " m; " + cands.Count + " hidden spots found, " + tops + " tops and " + open + " open spots skipped)");
+                    + ", " + best.Time.ToString("0.0") + " s run, " + best.Exposed.ToString("0.0") + " s in view, ends " + best.Away.ToString("0") + " m from them, climb " + best.Climb.ToString("0.0") + " m; " + cands.Count + " hidden spots found, " + tops + " tops and " + open + " open spots skipped, " + steep + " routes too steep" + (lastSteep != null ? " (last: " + lastSteep + ")" : "") + ")");
                 if (a.IsAdmin)
                 {
                     // Show the attacker (admins only see debug drawing) where it's heading.
@@ -978,6 +1002,10 @@ namespace Oxide.Plugins
             // Running for cover: score = depth x FleeDepth - run seconds x FleeTime - seconds in
             // the attacker's view x FleeExposed + metres from them x FleeDistance - climb x FleeClimb.
             public float FleeRadius = 35f, FleeDepth = 10f, FleeTime = 0.3f, FleeExposed = 1f, FleeDistance = 0.05f, FleeClimb = 1f;
+            // Stricter routes while running away (normal walking allows 50 deg slopes, 0.5 m steps
+            // and jumps): steepest uphill slope, biggest single step up, highest cover spot above
+            // where it stands, and whether a route may need a jump (0 = no, 1 = yes).
+            public float FleeMaxSlope = 45f, FleeMaxStep = 0.5f, FleeMaxRise = 1f, FleeJumps = 0f;
             public Dictionary<string, BrainOption> Options = new Dictionary<string, BrainOption>
             {
                 { "chop", new BrainOption { Base = 1f, NearBoost = 3f, Want = "wood", WantAmount = 1000, NeedBoost = 2f } },
@@ -1708,6 +1736,7 @@ namespace Oxide.Plugins
             }
 
             public List<Vector3> Route() => new List<Vector3>(corners);
+            public int RouteJumps => cornerJumps.Count;
             public string StateWord => state;
 
             // The route it's on, point by point: height compared with where it stands, which
