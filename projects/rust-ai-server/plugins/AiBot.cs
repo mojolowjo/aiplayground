@@ -226,7 +226,7 @@ namespace Oxide.Plugins
             bot = null;
             walker = null;
             saved.Health = 0f;
-            saved.Roaming = true;
+            saved.Roaming = false; // m0j: after respawning it stands still until told to roam (/bot roam)
             saved.Items = null; // the corpse keeps them; respawn with a fresh kit
             Save();
             timer.Once(5f, KeepIdsReserved);
