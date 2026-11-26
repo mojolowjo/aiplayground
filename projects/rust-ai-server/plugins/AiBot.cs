@@ -465,7 +465,21 @@ namespace Oxide.Plugins
             }
 
             public Vector3 Position => go.transform.position;
+            private static readonly int FootingMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed", "Vehicle Large");
             public bool Grounded => cc.isGrounded;
+
+            // On the ground and on something flat enough to stand on (within the slope limit),
+            // i.e. somewhere a player could jump from. Touching a steep face doesn't count.
+            public bool OnFooting
+            {
+                get
+                {
+                    if (!cc.isGrounded) return false;
+                    RaycastHit hit;
+                    return Physics.SphereCast(go.transform.position + Vector3.up * (cc.radius + 0.1f), cc.radius * 0.8f, Vector3.down, out hit, 0.4f, FootingMask, QueryTriggerInteraction.Ignore)
+                        && Vector3.Angle(hit.normal, Vector3.up) <= cc.slopeLimit;
+                }
+            }
 
             public void Place(Vector3 pos)
             {
@@ -1519,7 +1533,7 @@ namespace Oxide.Plugins
                         if (f.magnitude < 0.35f) { reached = true; break; }
                         if (dryLegs.Grounded && DropAhead(p, f.normalized) > SafeDrop) break; // a fall that would hurt
                         var hop = false;
-                        if (dryLegs.Grounded && t > 0 && dryHops < 3 && new Vector2(p.x - lastDry.x, p.z - lastDry.z).magnitude < 0.05f)
+                        if (dryLegs.OnFooting && t > 0 && dryHops < 3 && new Vector2(p.x - lastDry.x, p.z - lastDry.z).magnitude < 0.05f)
                         {
                             hop = true; // stalled: the walker would hop here, so the dry run does too
                             dryHops++;
@@ -1616,13 +1630,16 @@ namespace Oxide.Plugins
                     blocked++;
                     lastStop = legs.Bumped ? "its body bumped into " + legs.BumpedInto : "it couldn't get any further this step";
                     // Stalled: hop, like a player does on a steep bit or over a lip of rock.
-                    if (legs.Grounded && Time.time >= nextHop && (corners[corner].y > pos.y - 0.2f || legs.Bumped))
+                    // Like a player: one jump, then it has to land on proper footing (not a face
+                    // too steep to stand on) before it can jump again. No jumping in mid-air.
+                    if (legs.OnFooting && landedSinceHop && Time.time >= nextHop && (corners[corner].y > pos.y - 0.2f || legs.Bumped))
                     {
                         hopNow = true;
+                        landedSinceHop = false;
                         nextHop = Time.time + HopCooldown;
                         hops++;
                     }
-                    else if (legs.Bumped && TryJump(pos, dir)) return;
+                    else if (legs.OnFooting && landedSinceHop && legs.Bumped && TryJump(pos, dir)) { landedSinceHop = false; return; }
                     if (Vector3.Distance(pos, goal) < 2f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
                 }
                 lastDir = dir;
@@ -1661,6 +1678,7 @@ namespace Oxide.Plugins
                 else fallSpeed = wasGrounded ? -2f : fallSpeed + Physics.gravity.y * dt;
                 var next = legs.Move(new Vector3(dir.x * spd, fallSpeed, dir.z * spd) * dt);
                 if (legs.Grounded && !wasGrounded && fallSpeed < -15f) body.ApplyFallDamageFromVelocity(fallSpeed); // what a player's landing report does
+                if (!landedSinceHop && fallSpeed <= 0f && legs.OnFooting) landedSinceHop = true;
                 if ((next - pos).sqrMagnitude < 0.000001f) return pos;
                 if (!Guard.Receive(pos, next, spd > WalkSpeed))
                 {
@@ -1680,7 +1698,7 @@ namespace Oxide.Plugins
             // (BasePlayer.GetJumpHeight), so the fly check allows it as it does a player's jump.
             private static readonly float HopSpeed = Mathf.Sqrt(2f * -Physics.gravity.y * 1.4f);
             private const float HopCooldown = 0.7f;
-            private bool hopNow;
+            private bool hopNow, landedSinceHop = true;
             private float nextHop;
             private int hops;
             public bool Airborne => jumping || (legs != null && !legs.Grounded);
