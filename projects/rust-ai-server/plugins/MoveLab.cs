@@ -131,10 +131,11 @@ namespace Oxide.Plugins
                     s.Route = null;
                     s.RouteDraw?.Destroy();
                     s.RouteDraw = null;
-                    SendReply(player, "Route cleared; the lines fade within " + OverlaySeconds + " s. (Lines from before this update can't be removed and run out on their own within 2 minutes.)");
+                    StopOverlay(s);
+                    SendReply(player, "Cleared the route and the problem markers; they fade within " + OverlaySeconds + " s.");
                     return;
             }
-            SendReply(player, "/lab route | rec | stop | problems [radius|off] | clear");
+            SendReply(player, "/lab route | rec | stop | problems [metres] [around|jump|step] | problems off | clear (removes route and markers)");
         }
 
         #region Route
