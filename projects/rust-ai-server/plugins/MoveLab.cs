@@ -45,6 +45,7 @@ namespace Oxide.Plugins
             public bool WasGround = true, JumpHeld;
             public Timer Overlay, RouteDraw;
             public float OverlayRadius;
+            public string OverlayFilter = "all";
         }
 
         // The game's debug drawing can't be erased, so the overlay is redrawn with short-lived
@@ -61,7 +62,7 @@ namespace Oxide.Plugins
                 if (player == null || !player.IsConnected) { StopOverlay(s); return; }
                 Problems(player, s.OverlayRadius, OverlaySeconds + 0.5f);
             });
-            return first + " It follows you as you move. /lab problems off to hide it, /lab problems <metres> to change the radius.";
+            return first + " It follows you as you move. /lab problems off to hide it; add a radius and/or around, jump or step to filter.";
         }
 
         private static void StopOverlay(Session s)
@@ -98,12 +99,19 @@ namespace Oxide.Plugins
                 case "stop": SendReply(player, StopRec(player, s)); return;
                 case "problems":
                 {
-                    var opt = args.Length > 1 ? args[1].ToLowerInvariant() : "";
-                    if (opt == "off") { StopOverlay(s); SendReply(player, "Problem overlay off (the last markers fade within " + OverlaySeconds + " s)."); return; }
-                    float radius;
-                    if (!float.TryParse(opt, out radius)) radius = 150f;
-                    radius = Mathf.Clamp(radius, 10f, 1000f);
-                    SendReply(player, StartOverlay(player, s, radius));
+                    // /lab problems [metres] [around|jump|step|all], in any order, or /lab problems off
+                    var radius = 150f;
+                    var filter = "all";
+                    for (var i = 1; i < args.Length; i++)
+                    {
+                        var opt = args[i].ToLowerInvariant();
+                        float r;
+                        if (opt == "off") { StopOverlay(s); SendReply(player, "Problem overlay off (the last markers fade within " + OverlaySeconds + " s)."); return; }
+                        if (float.TryParse(opt, out r)) radius = r;
+                        else if (opt == "around" || opt == "jump" || opt == "step" || opt == "all") filter = opt;
+                    }
+                    s.OverlayFilter = filter;
+                    SendReply(player, StartOverlay(player, s, Mathf.Clamp(radius, 10f, 1000f)));
                     return;
                 }
                 case "clear":
@@ -311,17 +319,39 @@ namespace Oxide.Plugins
             var file = Probe();
             if (file?.problems == null || file.problems.Count == 0) return "No map test results yet (navprobe.run in the console).";
             var me = player.transform.position;
-            var inRange = file.problems.Select(p => new { p, at = new Vector3(p.X, p.Y, p.Z) })
-                .Where(x => Vector3.Distance(x.at, me) < radius).OrderBy(x => Vector3.Distance(x.at, me)).ToList();
+            var filter = Of(player).OverlayFilter;
+            var inRange = file.problems.Select(p => new { p, at = new Vector3(p.X, p.Y, p.Z), guess = Guess(p) })
+                .Where(x => Vector3.Distance(x.at, me) < radius && (filter == "all" || x.guess == filter))
+                .OrderBy(x => Vector3.Distance(x.at, me)).ToList();
             var near = inRange.Take(MaxMarkers).ToList();
             foreach (var x in near)
             {
-                player.SendConsoleCommand("ddraw.sphere", seconds, Color.red, x.at + Vector3.up * 0.5f, 0.5f);
-                player.SendConsoleCommand("ddraw.text", seconds, Color.yellow, x.at + Vector3.up * 1.6f, x.p.Kind + "\n" + x.p.Object + (x.p.Height > 0 ? " " + x.p.Height.ToString("0.00") + " m" : ""));
+                var colour = x.guess == "around" ? Color.red : x.guess == "jump" ? Color.yellow : Color.green;
+                var label = (x.guess == "around" ? "GO AROUND?" : x.guess == "jump" ? "JUMP?" : "STEP OVER?")
+                    + "\n" + x.p.Kind + "\n" + x.p.Object + (x.p.Height > 0 ? " " + x.p.Height.ToString("0.00") + " m" : "");
+                player.SendConsoleCommand("ddraw.sphere", seconds, colour, x.at + Vector3.up * 0.5f, 0.5f);
+                player.SendConsoleCommand("ddraw.text", seconds, colour, x.at + Vector3.up * 1.8f, label);
             }
-            if (near.Count == 0) return "No problem spots within " + radius.ToString("0") + " m. The nearest is " + file.problems.Min(p => Vector3.Distance(new Vector3(p.X, p.Y, p.Z), me)).ToString("0") + " m away.";
+            var what = filter == "all" ? "problem spots" : "\"" + filter + "\" spots";
+            if (near.Count == 0) return "No " + what + " within " + radius.ToString("0") + " m.";
+            var counts = inRange.GroupBy(x => x.guess).ToDictionary(g => g.Key, g => g.Count());
+            int a, j, st;
+            counts.TryGetValue("around", out a);
+            counts.TryGetValue("jump", out j);
+            counts.TryGetValue("step", out st);
             var n = near[0];
-            return inRange.Count + " problem spots within " + radius.ToString("0") + " m" + (inRange.Count > MaxMarkers ? " (showing the nearest " + MaxMarkers + ")" : "") + ". Nearest: " + n.p.Kind + " (" + n.p.Object + ") " + Vector3.Distance(n.at, me).ToString("0") + " m away.";
+            return inRange.Count + " " + what + " within " + radius.ToString("0") + " m" + (inRange.Count > MaxMarkers ? " (showing the nearest " + MaxMarkers + ")" : "")
+                + ": red go around " + a + ", yellow jump " + j + ", green step over " + st + ". Nearest: " + n.guess + ", " + n.p.Object + ", " + Vector3.Distance(n.at, me).ToString("0") + " m away.";
+        }
+
+        // My guess at what a player would do there, from the map test's numbers: too tall to
+        // jump, or a cliff or rock with the game's invisible "no climbing" walls -> go around;
+        // something between step height and jump height -> jump; a low bump -> step over.
+        private static string Guess(ProbeProblem p)
+        {
+            if (p.Kind.Contains("jumpable")) return "jump";
+            if (p.Kind.Contains("step-able")) return "step";
+            return "around";
         }
 
         #endregion
