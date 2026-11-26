@@ -1595,9 +1595,15 @@ namespace Oxide.Plugins
                 {
                     if (Vector3.Distance(way[w], to) < GoalSlack)
                     {
-                        // Near the goal: it must actually be at the goal's height (not at the
-                        // bottom of a cliff under it).
-                        // (the goal's height is not checked: m0j preferred it without)
+                        // Only for the straight-line shortcut: if the goal is well above where the
+                        // body got to (on top of a rock, say), the straight line isn't a way up.
+                        // Turn it down so the map's route, which can go round to the top, is used.
+                        // The map's own routes keep climbing exactly as before.
+                        if (straightLine && to.y - dryLegs.Position.y > 2f)
+                        {
+                            lastPlanProblem = "the straight line ends " + (to.y - dryLegs.Position.y).ToString("0.0") + " m below the goal; using the map's route instead";
+                            return null;
+                        }
                         for (var j = w; j < way.Count; j++) route.Add(way[j]);
                         return route;
                     }
