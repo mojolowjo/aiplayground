@@ -2483,6 +2483,26 @@ namespace Oxide.Plugins
 
             private bool SetPath(Vector3 to, bool allowStraight = true)
             {
+                doorsToShut.Clear();
+                if (SetPathCore(to, allowStraight)) return true;
+                // No way with the open doors where they are: try again as if it may shut them
+                // (only if there's an open door it could use near where it's going).
+                var doors = new List<Door>();
+                Vis.Entities(to, 8f, doors);
+                if (!doors.Any(d => d != null && d.IsOpen() && DoorOpenable != null && DoorOpenable(d))) return false;
+                planThroughOpenDoors = true;
+                openDoorsPlanned.Clear();
+                try
+                {
+                    if (!SetPathCore(to, allowStraight)) return false;
+                    foreach (var d in openDoorsPlanned) doorsToShut.Add(d);
+                    return true;
+                }
+                finally { planThroughOpenDoors = false; }
+            }
+
+            private bool SetPathCore(Vector3 to, bool allowStraight)
+            {
                 if (SetPathDirect(to, allowStraight)) return true;
                 // The bot's own map of the area: boxes, crates and wall tops the game's map leaves out.
                 string localWhy = "";
@@ -2748,6 +2768,9 @@ namespace Oxide.Plugins
                         {
                             if (dirn < 0 && tr[m].Jump && m != st.Value) break; // a jump can't be done backwards
                             if (ThroughClosedDoor(prevP, tr[m].P)) break; // the player went through a door that's shut now
+                            // Nor through anything solid (a fence, a wall): a recording can cut a
+                            // corner or slip through a gap the bot's body doesn't fit.
+                            if (m != st.Value && Physics.Linecast(prevP + Vector3.up * 0.9f, tr[m].P + Vector3.up * 0.9f, BlockMask, QueryTriggerInteraction.Ignore)) break;
                             len += Vector3.Distance(prevP, tr[m].P);
                             prevP = tr[m].P;
                             Ahead hit = null;
@@ -2797,6 +2820,13 @@ namespace Oxide.Plugins
             public bool CloseDoorsBehind; // running away: shut doors after going through
             private readonly List<KeyValuePair<Door, float>> openedDoors = new List<KeyValuePair<Door, float>>(); // door, which side it was on
             private float nextDoorTry, replanAt;
+            private bool planThroughOpenDoors; // planning: open doors it can shut count as passable too
+            private readonly List<Door> openDoorsPlanned = new List<Door>(); // open doors a plan treated as passable
+            private readonly HashSet<Door> doorsToShut = new HashSet<Door>(); // ...which the current route needs shut
+            private readonly Dictionary<Door, float> doorCooldown = new Dictionary<Door, float>();
+            private Door lastOpened;
+            private Vector3 tripGoal;
+            private bool backingOff;
             public int DoorsOpened, DoorsClosed;
 
             private static float Side(Door d, Vector3 p) => Mathf.Sign(Vector3.Dot(p - d.transform.position, d.transform.forward));
@@ -2812,7 +2842,9 @@ namespace Oxide.Plugins
                 var off = new List<Collider>();
                 foreach (var d in doors)
                 {
-                    if (d == null || d.IsOpen() || DoorOpenable == null || !DoorOpenable(d)) continue;
+                    if (d == null || DoorOpenable == null || !DoorOpenable(d)) continue;
+                    if (d.IsOpen() && !planThroughOpenDoors) continue; // an open door's leaf is an obstacle, unless it may shut it
+                    if (d.IsOpen() && !openDoorsPlanned.Contains(d)) openDoorsPlanned.Add(d);
                     foreach (var c in d.GetComponentsInChildren<Collider>())
                         if (c.enabled && !c.isTrigger) { c.enabled = false; off.Add(c); }
                 }
@@ -2844,13 +2876,31 @@ namespace Oxide.Plugins
                     var dd = h.collider.GetComponentInParent<Door>();
                     if (dd != null) { door = dd; break; }
                 }
-                if (door == null || door.IsOpen()) return false;
+                if (door == null) return false;
+                if (door.IsOpen())
+                {
+                    // An open door's leaf right in front: shut it, like a player swinging it out
+                    // of the way. At most once every 3 s per door, so it can't flap.
+                    // Only doors its current plan needs shut (planned "through" an open door's
+                    // leaf). An open doorway it's walking through stays open.
+                    if (!doorsToShut.Contains(door)) return false;
+                    float until;
+                    if (doorCooldown.TryGetValue(door, out until) && Time.time < until) return false;
+                    var leaf = door.ClosestPoint(pos + Vector3.up * 1f);
+                    if (new Vector2(leaf.x - pos.x, leaf.z - pos.z).magnitude > 1.1f) return false;
+                    doorCooldown[door] = Time.time + 3f;
+                    nextDoorTry = Time.time + 0.6f;
+                    if (DoorUse?.Invoke(door, false) == null) { DoorsClosed++; doorsToShut.Remove(door); replanAt = Time.time + 0.5f; return true; }
+                    return false;
+                }
+                doorCooldown[door] = Time.time + 3f;
                 nextDoorTry = Time.time + 0.6f;
                 lookYaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
                 var why = DoorUse?.Invoke(door, true);
                 if (why == null)
                 {
                     DoorsOpened++;
+                    lastOpened = door;
                     openedDoors.Add(new KeyValuePair<Door, float>(door, Side(door, pos)));
                     // The open door leaf now stands somewhere: once it has swung, plan again
                     // around it (it may swing towards the bot, into the old line).
@@ -2874,6 +2924,7 @@ namespace Oxide.Plugins
                 var bestLen = float.MaxValue;
                 foreach (var st in near)
                 {
+                    if (Physics.Linecast(from + Vector3.up * 0.9f, Trails.All[st.Key][st.Value].P + Vector3.up * 0.9f, BlockMask, QueryTriggerInteraction.Ignore)) continue; // the trail is on the other side of a fence or wall
                     if (!seen.Add(st.Key)) continue;
                     if (seen.Count > 6) break;
                     var tr = Trails.All[st.Key];
@@ -2885,6 +2936,9 @@ namespace Oxide.Plugins
                         {
                             if (dirn < 0 && tr[m].Jump && m != st.Value) break; // a jump can't be done backwards
                             if (ThroughClosedDoor(prevP, tr[m].P)) break; // the player went through a door that's shut now
+                            // Nor through anything solid (a fence, a wall): a recording can cut a
+                            // corner or slip through a gap the bot's body doesn't fit.
+                            if (m != st.Value && Physics.Linecast(prevP + Vector3.up * 0.9f, tr[m].P + Vector3.up * 0.9f, BlockMask, QueryTriggerInteraction.Ignore)) break;
                             len += Vector3.Distance(prevP, tr[m].P);
                             prevP = tr[m].P;
                             var hit = -1;
@@ -3099,6 +3153,13 @@ namespace Oxide.Plugins
                 }
                 if (corner >= corners.Count)
                 {
+                    // Stepped back from a door that swung into it: now go round to where it was going.
+                    if (backingOff)
+                    {
+                        backingOff = false;
+                        var keep = speed;
+                        if (SetPath(tripGoal, false)) { speed = keep; return; }
+                    }
                     EndTrip(Working ? "working" : "pausing");
                     waitUntil = Time.time + UnityEngine.Random.Range(1f, 7f);
                     return;
@@ -3135,6 +3196,20 @@ namespace Oxide.Plugins
                 {
                     replanAt = 0f;
                     var keepSpeed = speed;
+                    // The door swung towards it, into where it's standing: step back out of the
+                    // way first (like a player would), then go round it.
+                    if (lastOpened != null && !lastOpened.IsDestroyed)
+                    {
+                        var near = lastOpened.ClosestPoint(pos + Vector3.up * 1f);
+                        var off = pos - near; off.y = 0f;
+                        if (off.magnitude < 1f)
+                        {
+                            tripGoal = goal;
+                            backingOff = true;
+                            WalkStraight(pos + (off.sqrMagnitude > 0.0001f ? off.normalized : -dir) * 1.3f);
+                            return;
+                        }
+                    }
                     if (SetPath(goal, false)) { speed = keepSpeed; return; }
                 }
                 if (replanAt > 0f) { ResetStuck(); return; }
@@ -3163,7 +3238,10 @@ namespace Oxide.Plugins
                     // Stalled going up, or against something: jump, like a player would. But not
                     // at something higher than a jump can reach: that's a wall, not a hop.
                     var rise = corners[corner].y - pos.y;
-                    var jumped = (rise > -0.2f || legs.Bumped) && Jump();
+                    // How tall is what's in front (the highest thing it would have to clear)? A
+                    // door, wall or anything over a jump's reach isn't worth jumping at.
+                    var tall = legs.Bumped && AheadHeight(pos, dir) > JumpReach + 0.2f;
+                    var jumped = !tall && (rise > -0.2f || legs.Bumped) && Jump();
                     // Close enough - but not while jumping: ending the trip mid-jump took away its
                     // forward movement, so it went straight up and down in front of half walls.
                     if (!jumped && landedSinceHop && Vector3.Distance(pos, goal) < 2f && goal.y - pos.y < 0.6f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
@@ -3330,11 +3408,17 @@ namespace Oxide.Plugins
             private string hopWhy = "";
             private bool hopLogged = true;
 
+            // The top of what's ahead: the highest of the rays (every 5 cm up to 2.5 m) that hits
+            // something, not the first one that doesn't. A door with a gap under it used to read
+            // as 0.1 m tall because the lowest ray went under the door.
             private static float AheadHeight(Vector3 pos, Vector3 dir)
             {
+                var top = 0f;
+                var any = false;
                 for (var h = 0.1f; h <= 2.5f; h += 0.05f)
-                    if (!Physics.Raycast(pos + Vector3.up * h, dir, 1.2f, BlockMask | GroundMask, QueryTriggerInteraction.Ignore)) return h;
-                return 99f;
+                    if (Physics.Raycast(pos + Vector3.up * h, dir, 1.2f, BlockMask | GroundMask, QueryTriggerInteraction.Ignore)) { top = h; any = true; }
+                if (!any) return 0f;
+                return top >= 2.45f ? 99f : top + 0.05f;
             }
             public bool Airborne => jumping || (legs != null && !legs.Grounded);
 
