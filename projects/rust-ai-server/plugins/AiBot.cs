@@ -321,7 +321,7 @@ namespace Oxide.Plugins
             if (!Alive)
                 return (saved != null ? saved.Name + " is dead and respawns within " + RespawnSeconds + " s." : "No bot.") + " Server fps " + Performance.current.frameRate;
             var sb = new StringBuilder();
-            sb.AppendLine(saved.Name + "  id " + bot.UserIDString + "  health " + bot.health.ToString("0"));
+            sb.AppendLine(saved.Name + "  id " + bot.UserIDString + "  health " + bot.health.ToString("0") + "  food " + bot.metabolism.calories.value.ToString("0") + "  water " + bot.metabolism.hydration.value.ToString("0") + "  bleeding " + bot.metabolism.bleeding.value.ToString("0.0"));
             sb.AppendLine("pos " + bot.transform.position + " (" + MapHelper.PositionToString(bot.transform.position) + ")  water " + Walker.WaterDepth(bot.transform.position).ToString("0.0") + " m");
             sb.AppendLine("wearing " + ItemNames(bot.inventory.containerWear) + "; belt " + ItemNames(bot.inventory.containerBelt));
             sb.AppendLine(job != null ? "job: " + job.Describe(bot) : "job: none");
@@ -1135,7 +1135,7 @@ namespace Oxide.Plugins
             // below are mine; the speed itself is the game's (BasePlayer.GetSpeed), and every move
             // still goes through the server's checks (TickGuard).
             private const float GroundAccel = 30f, AirAccel = 3f;
-            private const float StepHeight = 0.25f, SlopeLimit = 55f, Skin = 0.02f, Snap = 0.35f;
+            private const float StepHeight = 0.25f, SlopeLimit = 60f, Skin = 0.02f, Snap = 0.35f;
             private const float SpeedMargin = 0.97f; // stay just under the anti-cheat's own limit
             private static readonly float MinGroundNormal = Mathf.Cos(SlopeLimit * Mathf.Deg2Rad);
             private static readonly int SolidMask = 1503731969 | LayerMask.GetMask("Terrain"); // what the no-clip check treats as solid, plus the ground
@@ -1143,7 +1143,28 @@ namespace Oxide.Plugins
             private Vector3 velocity;
             private bool grounded = true;
             private float hardestLanding;
-            private int landings;
+            private int landings, slides, steepStops, rockStops, wallHits;
+            private string lastBlock = "nothing";
+            private float lastSlope;
+            private int reportedRefusals;
+
+            // A line in the server console each time it counts as stuck, for finding bad spots.
+            private void ReportStuck()
+            {
+                var pos = body.transform.position;
+                RaycastHit g;
+                bool ok;
+                var under = ProbeGround(pos, StepHeight, 1f, out g, out ok)
+                    ? (ok ? "walkable" : "too steep") + ", " + lastSlope.ToString("0") + " degrees, " + (g.collider != null ? g.collider.name : "?")
+                    : "none found within 1 m";
+                var refusals = Guard.Refusals - reportedRefusals;
+                reportedRefusals = Guard.Refusals;
+                Interface.Oxide.LogInfo("[AiBot] STUCK #" + (stucks) + " at " + pos.ToString("F1") + " (" + MapHelper.PositionToString(pos) + "), level " + (stuckLevel + 1)
+                    + ", " + state + (corners.Count > 0 ? " to " + goal.ToString("F0") + " " + Vector3.Distance(pos, goal).ToString("0") + " m away" : "")
+                    + " | last blocked by: " + lastBlock + " | ground under it: " + under + " | " + (grounded ? "on ground" : "in the air, vy " + velocity.y.ToString("0.0"))
+                    + " | anti-cheat refusals since last report: " + refusals + " (" + Guard.LastRefusal + ")");
+                lastBlock = "nothing";
+            }
 
             private float Radius => BasePlayer.GetRadius();
             private float Height => BasePlayer.GetHeight(false);
@@ -1152,11 +1173,12 @@ namespace Oxide.Plugins
             private float Move(Vector3 wish, bool run, float dt)
             {
                 var start = body.transform.position;
+                bool walkable;
                 if (grounded && wish == Vector3.zero && velocity.sqrMagnitude < 0.0001f)
                 {
                     // Standing still: only check the ground is still there.
                     RaycastHit under;
-                    if (ProbeGround(start, Snap, out under)) return 0f;
+                    if (ProbeGround(start, StepHeight, Snap, out under, out walkable)) return 0f;
                     grounded = false;
                 }
 
@@ -1170,26 +1192,73 @@ namespace Oxide.Plugins
                 // are left to the ground check), then up or down onto the ground.
                 var end = Slide(start, new Vector3(velocity.x, 0f, velocity.z) * dt);
                 RaycastHit ground;
+                var sideways = new Vector2(end.x - start.x, end.z - start.z).magnitude;
                 if (grounded)
                 {
-                    // Stick to the ground going downhill and step up ledges; walk off a drop.
-                    if (ProbeGround(end, Snap, out ground)) end.y = ground.point.y;
+                    // Walk up a slope or a ledge as high as the slope limit allows for this step,
+                    // stick to the ground going downhill, walk off a drop.
+                    var rise = StepHeight + sideways * Mathf.Tan(SlopeLimit * Mathf.Deg2Rad);
+                    if (ProbeGround(end, rise, Snap, out ground, out walkable))
+                    {
+                        if (walkable) end.y = ground.point.y;
+                        else { steepStops++; lastBlock = "ground ahead too steep (" + lastSlope.ToString("0") + " degrees)"; end = start; velocity.x = velocity.z = 0f; } // too steep: a wall
+                    }
                     else grounded = false;
                 }
                 else
                 {
                     var dy = velocity.y * dt;
-                    if (dy <= 0f && ProbeGround(end, Mathf.Max(0.05f, -dy), out ground))
+                    if (dy <= 0f && ProbeGround(end, 0.3f, Mathf.Max(0.05f, -dy), out ground, out walkable))
                     {
                         end.y = ground.point.y;
-                        Land();
-                        grounded = true;
-                        velocity.y = 0f;
+                        if (walkable)
+                        {
+                            Land();
+                            grounded = true;
+                            velocity.y = 0f;
+                        }
+                        else
+                        {
+                            // Too steep to stand on: slide down it, on its surface, not into it.
+                            slides++;
+                            var downhill = new Vector3(ground.normal.x, 0f, ground.normal.z).normalized;
+                            velocity.x += downhill.x * 6f * dt;
+                            velocity.z += downhill.z * 6f * dt;
+                            velocity.y = Mathf.Max(velocity.y, -3f);
+                        }
                     }
                     else end.y += dy;
                 }
 
                 if ((end - start).sqrMagnitude < 0.000001f) return 0f;
+                // A player's own collision is what stops them walking into rocks; the anti-cheat
+                // only notices when that fails. Treat whatever the no-clip check would refuse as
+                // solid, so the bot stops at it like a player instead of being refused.
+                if (Guard.WouldNoClip(start, end))
+                {
+                    // Slide along it: try the same step angled off to either side.
+                    var step = new Vector3(end.x - start.x, 0f, end.z - start.z);
+                    var freed = false;
+                    foreach (var angle in new[] { 45f, -45f, 80f, -80f })
+                    {
+                        var alt = start + Quaternion.Euler(0f, angle, 0f) * step * 0.7f;
+                        RaycastHit g;
+                        bool ok;
+                        if (!ProbeGround(alt, StepHeight + step.magnitude, Snap, out g, out ok) || !ok) continue;
+                        alt.y = g.point.y;
+                        if (Guard.WouldNoClip(start, alt)) continue;
+                        end = alt;
+                        freed = true;
+                        break;
+                    }
+                    if (!freed)
+                    {
+                        rockStops++;
+                        lastBlock = "no-clip check would refuse it (rock or object)";
+                        velocity.x = velocity.z = 0f;
+                        return 0f;
+                    }
+                }
                 // Every move is a tick: the server's checks decide whether it happens.
                 if (!Guard.Receive(start, end, run))
                 {
@@ -1223,6 +1292,8 @@ namespace Oxide.Plugins
                         pos += move;
                         break;
                     }
+                    wallHits++;
+                    lastBlock = "bumped into " + (hit.collider != null ? hit.collider.name : "?");
                     var dir = move.normalized;
                     var travel = Mathf.Max(0f, hit.distance - Skin);
                     pos += dir * travel;
@@ -1248,27 +1319,52 @@ namespace Oxide.Plugins
                 {
                     if (hit.distance <= 0f) continue; // already touching at the start
                     if (hit.GetEntity() == body) continue;
+                    if (hit.normal.y >= MinGroundNormal) continue; // walkable ground ahead, not a wall: the ground check climbs it
                     if (!found || hit.distance < nearest.distance) { nearest = hit; found = true; }
                 }
                 return found;
             }
 
-            // Walkable ground from step height above the feet down to 'below' metres under them.
-            // Ground that is higher (a ledge up to StepHeight) is how it steps up.
-            private bool ProbeGround(Vector3 feet, float below, out RaycastHit ground)
+            // The ground from 'up' metres above the feet to 'below' metres under them: five rays,
+            // one under the middle and four under the edges of the body, and the highest one
+            // wins, so it can stand on the edge of a ledge. 'walkable' is false if that ground is
+            // steeper than SlopeLimit. Rays rather than a sphere, because a sphere that starts
+            // already touching a slope reports nothing and the bot would think it was in the air.
+            private static readonly Vector3[] Feet =
+                { Vector3.zero, new Vector3(0.25f, 0f, 0f), new Vector3(-0.25f, 0f, 0f), new Vector3(0f, 0f, 0.25f), new Vector3(0f, 0f, -0.25f) };
+
+            private bool ProbeGround(Vector3 feet, float up, float below, out RaycastHit ground, out bool walkable)
             {
                 ground = default(RaycastHit);
-                var r = Radius * 0.9f;
-                var from = feet + Vector3.up * (StepHeight + r + 0.1f);
-                foreach (var hit in Physics.SphereCastAll(from, r, Vector3.down, StepHeight + 0.1f + below, SolidMask, QueryTriggerInteraction.Ignore))
+                walkable = false;
+                var found = false;
+                var centre = float.NaN;
+                var lowest = float.MaxValue;
+                for (var i = 0; i < Feet.Length; i++)
                 {
-                    if (hit.GetEntity() == body || hit.normal.y < MinGroundNormal) continue;
-                    if (hit.distance <= 0f) continue;
-                    if (ground.collider == null || hit.distance < ground.distance) ground = hit;
+                    var from = feet + Feet[i] + Vector3.up * (up + 0.05f);
+                    RaycastHit first = default(RaycastHit);
+                    var any = false;
+                    foreach (var hit in Physics.RaycastAll(from, Vector3.down, up + 0.05f + below, SolidMask, QueryTriggerInteraction.Ignore))
+                    {
+                        if (hit.GetEntity() == body || hit.distance <= 0f) continue;
+                        if (!any || hit.distance < first.distance) { first = hit; any = true; }
+                    }
+                    if (!any) continue;
+                    if (i == 0) centre = first.point.y;
+                    lowest = Mathf.Min(lowest, first.point.y);
+                    if (!found || first.point.y > ground.point.y) { ground = first; found = true; }
                 }
-                if (ground.collider == null) return false;
-                // Where the feet go: the bottom of the probe sphere where it touched.
-                ground.point = new Vector3(feet.x, from.y - ground.distance - r, feet.z);
+                if (!found) return false;
+                // Stand on the ground under the middle when there is some; on a ledge's edge,
+                // on the highest bit under the body.
+                var y = float.IsNaN(centre) ? ground.point.y : centre;
+                // How steep, from the heights under the body rather than one surface normal:
+                // rock meshes are bumpy, and a single normal can say "cliff" on a walkable hill.
+                var steepest = Mathf.Max(ground.point.y - y, y - lowest);
+                lastSlope = Mathf.Atan2(steepest, 0.25f) * Mathf.Rad2Deg;
+                walkable = lastSlope <= SlopeLimit;
+                ground.point = new Vector3(feet.x, y, feet.z);
                 return true;
             }
 
@@ -1290,6 +1386,7 @@ namespace Oxide.Plugins
                 }
                 if (Time.time - stuckSince < StuckSeconds) return;
                 stucks++;
+                ReportStuck();
                 stuckLevel++;
                 ResetStuck();
                 if (stuckLevel == 1)
@@ -1361,7 +1458,7 @@ namespace Oxide.Plugins
                 return "roaming " + Roaming + ", looking " + body.viewAngles.x.ToString("0") + "° down, " + state + (corners.Count > 0 ? " to " + goal + " at " + speed + " m/s, " + Vector3.Distance(goal, body.transform.position).ToString("0") + " m left" : "")
                     + "\nsince spawn (" + mins.ToString("0.0") + " min): " + travelled.ToString("0") + " m, " + trips + " trips, stuck " + stucks
                     + " (repath " + repaths + ", hop tries " + teleports + "), blocked steps " + blocked + ", no destination " + noGoal + ", deepest water " + deepest.ToString("0.0") + " m"
-                    + "\nbody: " + (grounded ? "on the ground" : "in the air, falling " + (-velocity.y).ToString("0.0") + " m/s") + ", landings " + landings + ", hardest landing " + (-hardestLanding).ToString("0.0") + " m/s"
+                    + "\nbody: " + (grounded ? "on the ground" : "in the air, falling " + (-velocity.y).ToString("0.0") + " m/s") + ", landings " + landings + ", steep slides " + slides + ", stopped by: steep " + steepStops + ", rock/no-clip " + rockStops + ", walls slid along " + wallHits + ", hardest landing " + (-hardestLanding).ToString("0.0") + " m/s"
                     + "\n" + Guard.Describe();
             }
 
@@ -1421,6 +1518,15 @@ namespace Oxide.Plugins
                 lastTick = Time.time;
             }
 
+            // The game's no-clip test on its own, without counting anything.
+            public bool WouldNoClip(Vector3 from, Vector3 to)
+            {
+                if (ConVar.AntiHack.noclip_protection <= 0) return false;
+                Collider hit;
+                var offset = BasePlayer.NoClipOffset();
+                return AntiHack.TestNoClipping(body, from + offset, to + offset, BasePlayer.NoClipRadius(ConVar.AntiHack.noclip_margin), ConVar.AntiHack.noclip_backtracking, out hit, false, null, false, false, false);
+            }
+
             // AntiHack.ShouldIgnore, minus the parts that need a connection.
             private bool Ignored()
             {
@@ -1444,6 +1550,8 @@ namespace Oxide.Plugins
                 {
                     // The server snaps the player back and resets its anti-cheat timers.
                     tickRejects++;
+                    Refusals++;
+                    LastRefusal = "tick jump";
                     Reset(from);
                     return false;
                 }
@@ -1540,8 +1648,12 @@ namespace Oxide.Plugins
                     }
                 }
 
+                if (!accepted) { Refusals++; LastRefusal = lastViolationType; }
                 return accepted;
             }
+
+            public int Refusals;
+            public string LastRefusal = "none";
 
             // AntiHack.AddViolation and EnforceViolations.
             private void Violation(string type, float amount)
