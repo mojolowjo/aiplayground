@@ -1280,6 +1280,29 @@ namespace Oxide.Plugins
                 Vector3 from;
                 corners.Clear(); cornerJumps.Clear(); cornerTrusted.Clear();
                 if (!Nearest(body.transform.position, 3f, out from)) return false;
+                // The map's routes never go off a ledge, but a player often just drops down. So
+                // for anything within 60 m, first try a straight line with the body, drops
+                // included (never more than SafeDrop); use the map's route only if that fails.
+                if (Vector3.Distance(from, to) < 60f)
+                {
+                    var straight = new List<Vector3> { body.transform.position, to };
+                    if (!Wet(straight))
+                    {
+                        var direct = Walkable(straight, to);
+                        if (direct != null)
+                        {
+                            Straight++;
+                            corners.AddRange(direct);
+                            foreach (var kv in routeJumps) cornerJumps[kv.Key] = kv.Value;
+                            foreach (var t in routeTrusted) cornerTrusted.Add(t);
+                            corner = 1;
+                            goal = to;
+                            state = "travelling (straight)";
+                            ResetStuck();
+                            return true;
+                        }
+                    }
+                }
                 path.Reset();
                 if (!RustNavMeshHelpers.CalculatePath(from, to, RustNavMeshHelpers.AllAreas, path, false)) return false;
                 if (path.status != NavMeshPathStatus.PathComplete || path.corners.Count < 2) return false;
@@ -1324,7 +1347,7 @@ namespace Oxide.Plugins
             private readonly HashSet<int> routeTrusted = new HashSet<int>();
             private readonly Dictionary<int, Vector3> cornerJumps = new Dictionary<int, Vector3>();
             private readonly HashSet<int> cornerTrusted = new HashSet<int>();
-            public int TrailsUsed, TrailJumps;
+            public int TrailsUsed, TrailJumps, Straight;
 
             private class Ahead { public int Seg, Step; public Vector3 P; }
 
@@ -1492,6 +1515,7 @@ namespace Oxide.Plugins
                         var p = dryLegs.Position;
                         var f = new Vector3(way[w].x - p.x, 0f, way[w].z - p.z);
                         if (f.magnitude < 0.35f) { reached = true; break; }
+                        if (dryLegs.Grounded && DropAhead(p, f.normalized) > SafeDrop) break; // a fall that would hurt
                         vy = dryLegs.Grounded ? -2f : vy + Physics.gravity.y * dt;
                         var d = f.normalized * Mathf.Min(WalkSpeed * 1.5f, f.magnitude / dt);
                         dryLegs.Move(new Vector3(d.x, vy, d.z) * dt);
@@ -1612,6 +1636,12 @@ namespace Oxide.Plugins
                 if (legs == null) legs = new CharacterBody(body);
                 legs.Place(pos);
                 var wasGrounded = legs.Grounded;
+                // Walking off a ledge is fine, but not one it would take fall damage from.
+                if (wasGrounded && dir != Vector3.zero && DropAhead(pos, dir) > SafeDrop)
+                {
+                    lastStop = "a drop of more than " + SafeDrop + " m ahead (fall damage)";
+                    dir = Vector3.zero;
+                }
                 fallSpeed = wasGrounded ? -2f : fallSpeed + Physics.gravity.y * dt;
                 var next = legs.Move(new Vector3(dir.x * spd, fallSpeed, dir.z * spd) * dt);
                 if (legs.Grounded && !wasGrounded && fallSpeed < -15f) body.ApplyFallDamageFromVelocity(fallSpeed); // what a player's landing report does
@@ -1629,6 +1659,18 @@ namespace Oxide.Plugins
             }
 
             private void OnDestroy() { legs?.Dispose(); dryLegs?.Dispose(); }
+
+            // Fall damage starts at a 15 m/s landing, about an 11.5 m fall. Stay under 10 m.
+            private const float SafeDrop = 10f;
+
+            // How far down the ground is just past the body's front edge (99 if no ground in 12 m).
+            private static float DropAhead(Vector3 pos, Vector3 dir)
+            {
+                RaycastHit hit;
+                var at = pos + dir * (BasePlayer.GetRadius() + 0.3f) + Vector3.up * 0.6f;
+                if (Physics.Raycast(at, Vector3.down, out hit, 12.6f, GroundMask | LayerMask.GetMask("Water"), QueryTriggerInteraction.Collide)) return pos.y - hit.point.y;
+                return 99f;
+            }
 
             // Why the last step didn't happen, for the stuck report.
             private string lastStop = "nothing";
@@ -1856,7 +1898,7 @@ namespace Oxide.Plugins
                 return "roaming " + Roaming + ", looking " + body.viewAngles.x.ToString("0") + "° down, " + state + (corners.Count > 0 ? " to " + goal + " at " + speed + " m/s, " + Vector3.Distance(goal, body.transform.position).ToString("0") + " m left" : "")
                     + "\nsince spawn (" + mins.ToString("0.0") + " min): " + travelled.ToString("0") + " m, " + trips + " trips, stuck " + stucks
                     + " (repath " + repaths + ", hop tries " + teleports + "), blocked steps " + blocked + ", no destination " + noGoal + ", deepest water " + deepest.ToString("0.0") + " m"
-                    + "\nroutes turned down before walking: too steep " + RejectedSteep + ", through rock/cliff/wall " + RejectedBlocked + "; steps nudged off walls " + Nudged + "; player trails used " + TrailsUsed + " (" + Trails.All.Count + " trails loaded), trail jumps " + TrailJumps + "; jumps " + jumps
+                    + "\nroutes turned down before walking: too steep " + RejectedSteep + ", through rock/cliff/wall " + RejectedBlocked + "; steps nudged off walls " + Nudged + "; straight-line routes " + Straight + "; player trails used " + TrailsUsed + " (" + Trails.All.Count + " trails loaded), trail jumps " + TrailJumps + "; jumps " + jumps
                     + "\n" + Guard.Describe();
             }
 
