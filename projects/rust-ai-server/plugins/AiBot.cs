@@ -455,7 +455,7 @@ namespace Oxide.Plugins
                 cc.height = BasePlayer.GetHeight(false);
                 cc.center = Vector3.up * (cc.height / 2f);
                 cc.stepOffset = 0.5f;
-                cc.slopeLimit = 45f;
+                cc.slopeLimit = 50f; // the navigation map's own limit; steeper bits need a hop
                 cc.skinWidth = 0.05f;
                 cc.minMoveDistance = 0f;
                 // Don't collide with the bot's own body.
@@ -1470,6 +1470,7 @@ namespace Oxide.Plugins
             // waypoint, a player trail through there is used; if there is none, the route is
             // turned down. Returns the route to walk, or null.
             private CharacterBody dryLegs;
+            private Vector3 lastDry;
 
             // The route as points every half metre along the map's line.
             private static List<Vector3> Densify(List<Vector3> pts)
@@ -1510,13 +1511,21 @@ namespace Oxide.Plugins
                         return route;
                     }
                     var reached = false;
-                    for (var t = 0; t < 12; t++)
+                    var dryHops = 0;
+                    for (var t = 0; t < 16; t++)
                     {
                         var p = dryLegs.Position;
                         var f = new Vector3(way[w].x - p.x, 0f, way[w].z - p.z);
                         if (f.magnitude < 0.35f) { reached = true; break; }
                         if (dryLegs.Grounded && DropAhead(p, f.normalized) > SafeDrop) break; // a fall that would hurt
-                        vy = dryLegs.Grounded ? -2f : vy + Physics.gravity.y * dt;
+                        var hop = false;
+                        if (dryLegs.Grounded && t > 0 && dryHops < 3 && new Vector2(p.x - lastDry.x, p.z - lastDry.z).magnitude < 0.05f)
+                        {
+                            hop = true; // stalled: the walker would hop here, so the dry run does too
+                            dryHops++;
+                        }
+                        lastDry = p;
+                        vy = hop ? HopSpeed : dryLegs.Grounded ? -2f : vy + Physics.gravity.y * dt;
                         var d = f.normalized * Mathf.Min(WalkSpeed * 1.5f, f.magnitude / dt);
                         dryLegs.Move(new Vector3(d.x, vy, d.z) * dt);
                     }
@@ -1606,8 +1615,14 @@ namespace Oxide.Plugins
                 {
                     blocked++;
                     lastStop = legs.Bumped ? "its body bumped into " + legs.BumpedInto : "it couldn't get any further this step";
-                    // Something knee to chest high in the way: jump it, like a player would.
-                    if (legs.Bumped && TryJump(pos, dir)) return;
+                    // Stalled: hop, like a player does on a steep bit or over a lip of rock.
+                    if (legs.Grounded && Time.time >= nextHop && (corners[corner].y > pos.y - 0.2f || legs.Bumped))
+                    {
+                        hopNow = true;
+                        nextHop = Time.time + HopCooldown;
+                        hops++;
+                    }
+                    else if (legs.Bumped && TryJump(pos, dir)) return;
                     if (Vector3.Distance(pos, goal) < 2f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
                 }
                 lastDir = dir;
@@ -1642,7 +1657,8 @@ namespace Oxide.Plugins
                     lastStop = "a drop of more than " + SafeDrop + " m ahead (fall damage)";
                     dir = Vector3.zero;
                 }
-                fallSpeed = wasGrounded ? -2f : fallSpeed + Physics.gravity.y * dt;
+                if (hopNow && wasGrounded) { fallSpeed = HopSpeed; hopNow = false; }
+                else fallSpeed = wasGrounded ? -2f : fallSpeed + Physics.gravity.y * dt;
                 var next = legs.Move(new Vector3(dir.x * spd, fallSpeed, dir.z * spd) * dt);
                 if (legs.Grounded && !wasGrounded && fallSpeed < -15f) body.ApplyFallDamageFromVelocity(fallSpeed); // what a player's landing report does
                 if ((next - pos).sqrMagnitude < 0.000001f) return pos;
@@ -1659,6 +1675,15 @@ namespace Oxide.Plugins
             }
 
             private void OnDestroy() { legs?.Dispose(); dryLegs?.Dispose(); }
+
+            // A hop: the take-off speed for 1.4 m, just under the game's 1.5 m jump height
+            // (BasePlayer.GetJumpHeight), so the fly check allows it as it does a player's jump.
+            private static readonly float HopSpeed = Mathf.Sqrt(2f * -Physics.gravity.y * 1.4f);
+            private const float HopCooldown = 0.7f;
+            private bool hopNow;
+            private float nextHop;
+            private int hops;
+            public bool Airborne => jumping || (legs != null && !legs.Grounded);
 
             // Fall damage starts at a 15 m/s landing, about an 11.5 m fall. Stay under 10 m.
             private const float SafeDrop = 10f;
@@ -1884,10 +1909,10 @@ namespace Oxide.Plugins
                     if (corners.Count == 0) body.NetworkPositionTick();
                 }
                 var running = corners.Count > 0 && speed > WalkSpeed;
-                if (body.modelState.sprinting != running || body.modelState.onground == jumping)
+                if (body.modelState.sprinting != running || body.modelState.onground == Airborne)
                 {
                     body.modelState.sprinting = running;
-                    body.modelState.onground = !jumping;
+                    body.modelState.onground = !Airborne;
                     body.SendModelState();
                 }
             }
@@ -1898,7 +1923,7 @@ namespace Oxide.Plugins
                 return "roaming " + Roaming + ", looking " + body.viewAngles.x.ToString("0") + "° down, " + state + (corners.Count > 0 ? " to " + goal + " at " + speed + " m/s, " + Vector3.Distance(goal, body.transform.position).ToString("0") + " m left" : "")
                     + "\nsince spawn (" + mins.ToString("0.0") + " min): " + travelled.ToString("0") + " m, " + trips + " trips, stuck " + stucks
                     + " (repath " + repaths + ", hop tries " + teleports + "), blocked steps " + blocked + ", no destination " + noGoal + ", deepest water " + deepest.ToString("0.0") + " m"
-                    + "\nroutes turned down before walking: too steep " + RejectedSteep + ", through rock/cliff/wall " + RejectedBlocked + "; steps nudged off walls " + Nudged + "; straight-line routes " + Straight + "; player trails used " + TrailsUsed + " (" + Trails.All.Count + " trails loaded), trail jumps " + TrailJumps + "; jumps " + jumps
+                    + "\nroutes turned down before walking: too steep " + RejectedSteep + ", through rock/cliff/wall " + RejectedBlocked + "; steps nudged off walls " + Nudged + "; straight-line routes " + Straight + "; player trails used " + TrailsUsed + " (" + Trails.All.Count + " trails loaded), trail jumps " + TrailJumps + "; hops " + hops + "; jumps " + jumps
                     + "\n" + Guard.Describe();
             }
 
