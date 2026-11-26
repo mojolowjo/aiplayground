@@ -917,7 +917,7 @@ namespace Oxide.Plugins
             foreach (var kv in CurrentFlee()) if (!t.Best.ContainsKey(kv.Key)) t.Best[kv.Key] = kv.Value; // settings added since training started
             // The best needs its own score first (2 chases), and gets re-checked every 4th chase,
             // since people chase differently from one go to the next.
-            if (t.BestChases < 2 || t.Chases.Count % 4 == 3) return new Dictionary<string, float>(t.Best);
+            if (t.BestChases < MinReps || t.Chases.Count % 4 == 3) return new Dictionary<string, float>(t.Best);
             if (t.Pending != null) return new Dictionary<string, float>(t.Pending);
             var trial = new Dictionary<string, float>();
             foreach (var kv in t.Best)
@@ -973,6 +973,9 @@ namespace Oxide.Plugins
         // from the full chase history each time (so nothing drifts or gets lost on a reload).
         // Best = lowest average among settings with 2+ chases. A new variation with one good
         // chase gets a second go before it can win.
+        // How many rounds a setting needs before it can be called the best (m0j: the more reps the better).
+        private const int MinReps = 10;
+
         private static string Key(Dictionary<string, float> s) =>
             s == null ? "" : string.Join(";", s.OrderBy(kv => kv.Key).Select(kv => kv.Key + "=" + kv.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)).ToArray());
 
@@ -994,7 +997,7 @@ namespace Oxide.Plugins
             var bestGroup = groups.FirstOrDefault(g => g.Key == bestKey);
             var bestAvg = bestGroup != null ? bestGroup.Avg : float.MaxValue;
             var bestCautious = bestGroup != null ? bestGroup.Cautious : float.MaxValue;
-            var winner = groups.Where(g => g.N >= 3).OrderBy(g => g.Cautious).FirstOrDefault();
+            var winner = groups.Where(g => g.N >= MinReps).OrderBy(g => g.Cautious).FirstOrDefault();
             var note = "";
             if (winner != null && winner.Key != bestKey && winner.Cautious < bestCautious)
             {
@@ -1007,10 +1010,10 @@ namespace Oxide.Plugins
             t.BestChases = groups.Where(g => g.Key == bestKey).Select(g => g.N).FirstOrDefault();
             var mine = groups.FirstOrDefault(g => g.Key == Key(trial));
             t.Pending = null;
-            if (mine != null && mine.Key != bestKey && mine.N < 3 && mine.Avg < bestAvg)
+            if (mine != null && mine.Key != bestKey && mine.N < MinReps && mine.Avg < bestAvg)
             {
                 t.Pending = new Dictionary<string, float>(trial);
-                note += "; looks better than the best (" + bestAvg.ToString("0.00") + "), trying it again to be sure (" + mine.N + " of 3)";
+                note += "; looks better than the best (" + bestAvg.ToString("0.00") + "), trying it again to be sure (" + mine.N + " of " + MinReps + ")";
             }
             else if (mine != null && mine.Key == bestKey) note += "; that was the best settings, now avg " + mine.Avg.ToString("0.00") + " over " + mine.N;
             else if (note == "") note = "; not better than the best (" + (bestAvg < float.MaxValue ? bestAvg.ToString("0.00") : "unscored") + ")";
