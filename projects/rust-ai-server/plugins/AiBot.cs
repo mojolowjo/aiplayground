@@ -309,6 +309,7 @@ namespace Oxide.Plugins
                 }
                 case "chop": case "mine": case "barrel": case "loot": return StartJob(verb, user);
                 case "path": return PathToCrosshair(user);
+                case "hide": return ShowHiding(user);
                 case "route":
                 {
                     var dump = walker.DumpRoute();
@@ -864,7 +865,14 @@ namespace Oxide.Plugins
             if (gone) return;
             var coverStillGood = d.HasCover && !CanSee(a.eyes.position, d.Cover);
             if (coverStillGood && walker.Busy) return;
-            if (!seen && !walker.Busy) return; // hidden and standing still: stay put
+            if (!seen && !walker.Busy)
+            {
+                // Hidden and standing: keep getting further away while staying out of sight,
+                // like a player slipping away behind cover. Checked every 1.5 s.
+                d.NextPick = now + 1.5f;
+                PickCover(d, a, true);
+                return;
+            }
             PickCover(d, a);
         }
 
@@ -895,7 +903,7 @@ namespace Oxide.Plugins
             return null;
         }
 
-        private class Cand { public Vector3 Spot; public float Depth, Time, Exposed, Away, Climb, Score; public bool Routed; }
+        private class Cand { public Vector3 Spot; public float Depth, Time, Exposed, Away, Climb, Gain, Score; public bool Routed; }
 
         private static readonly int FloorMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed");
 
@@ -930,45 +938,66 @@ namespace Oxide.Plugins
                 || !Physics.Linecast(eyes, feet + Vector3.up * 0.9f, SightMask, QueryTriggerInteraction.Ignore);
         }
 
-        private void PickCover(Danger d, BasePlayer a)
+        // Every candidate hiding spot around "me" from an attacker at "them" looking from "eyes",
+        // with its cheap score (no route yet). Rejected spots go into "rejected" with the reason,
+        // for /bot hide. Retreat: it's already hidden, so only spots well further away count,
+        // and every metre gained is worth extra (keep the distance growing while out of sight).
+        private List<Cand> CoverCandidates(Vector3 me, Vector3 them, Vector3 eyes, bool retreat, out int tops, out int open, List<KeyValuePair<Vector3, string>> rejected = null)
         {
-            var me = bot.transform.position;
-            var them = a.transform.position;
             var away = me - them; away.y = 0f;
             if (away.sqrMagnitude < 0.01f) away = Vector3.forward;
             away.Normalize();
-            var eyes = a.eyes.position;
             // Where the attacker could see from in a moment: here, a step left or right, a step closer.
             var side = Vector3.Cross(Vector3.up, away);
             var views = new[] { eyes, eyes + side * 4f, eyes - side * 4f, eyes + away * 4f };
             var myDist = Vector3.Distance(me, them);
             var o = odds;
-
-            // 1. Candidates in rings, every 3 m out to FleeRadius, in 24 directions.
             var cands = new List<Cand>();
-            int tops = 0, open = 0, steep = 0;
-            string lastSteep = null;
+            tops = 0; open = 0;
             for (var r = 3f; r <= o.FleeRadius; r += 3f)
                 for (var ang = 0; ang < 360; ang += 15)
                 {
                     var dir = Quaternion.Euler(0f, ang, 0f) * away;
                     Vector3 spot;
                     if (!Walker.Nearest(me + dir * r, 1.5f, out spot)) continue;
-                    if (Walker.WaterDepth(spot) > Walker.MaxWater) continue;
-                    if (spot.y - me.y > o.FleeMaxRise) continue; // up on a boulder or ledge: it can't get there without jumping
-                    if (Vector3.Distance(spot, them) < myDist) continue; // no running towards them
-                    // 2. Deep cover: hidden from where they are now (required), and how many of the other views.
-                    if (CanSee(eyes, spot)) continue;
-                    var why = CoverProblem(spot, them); if (why == 1) { tops++; continue; } if (why == 2) { open++; continue; }
+                    Action<string> no = why => { if (rejected != null) rejected.Add(new KeyValuePair<Vector3, string>(spot, why)); };
+                    if (Walker.WaterDepth(spot) > Walker.MaxWater) { no("water"); continue; }
+                    if (spot.y - me.y > o.FleeMaxRise) { no("too high"); continue; }
+                    var awayFrom = Vector3.Distance(spot, them);
+                    if (awayFrom < myDist + (retreat ? 4f : 0f)) { no(retreat ? "not further away" : "towards them"); continue; }
+                    if (CanSee(eyes, spot)) { no("seen"); continue; }
+                    var why2 = CoverProblem(spot, them);
+                    if (why2 == 1) { tops++; no("top"); continue; }
+                    if (why2 == 2) { open++; no("open"); continue; }
                     var hidden = 0;
                     foreach (var v in views) { if (!SeesHead(v, spot)) hidden++; if (!SeesChest(v, spot)) hidden++; }
-                    var c = new Cand { Spot = spot, Depth = hidden / (views.Length * 2f), Away = Vector3.Distance(spot, them), Climb = Mathf.Max(0f, spot.y - me.y) };
+                    var c = new Cand { Spot = spot, Depth = hidden / (views.Length * 2f), Away = awayFrom, Climb = Mathf.Max(0f, spot.y - me.y) };
                     c.Time = Vector3.Distance(me, spot) / Walker.SprintSpeed;
-                    c.Score = c.Depth * o.FleeDepth - c.Time * o.FleeTime + c.Away * o.FleeDistance - c.Climb * o.FleeClimb;
+                    c.Gain = awayFrom - myDist;
+                    c.Score = CoverScore(c, retreat);
                     cands.Add(c);
                 }
-            // 3. Real routes for the best few: travel time along the route and time spent in view on the way.
             cands.Sort((x, y) => y.Score.CompareTo(x.Score));
+            return cands;
+        }
+
+        private float CoverScore(Cand c, bool retreat)
+        {
+            var o = odds;
+            return c.Depth * o.FleeDepth - c.Time * o.FleeTime - c.Exposed * o.FleeExposed + c.Away * o.FleeDistance - c.Climb * o.FleeClimb
+                + (retreat ? c.Gain * o.FleeRetreat : 0f);
+        }
+
+        private void PickCover(Danger d, BasePlayer a, bool retreat = false)
+        {
+            var me = bot.transform.position;
+            var them = a.transform.position;
+            var eyes = a.eyes.position;
+            var o = odds;
+            int tops, open, steep = 0;
+            string lastSteep = null;
+            var cands = CoverCandidates(me, them, eyes, retreat, out tops, out open);
+            // Real routes for the best few: travel time along the route and time spent in view on the way.
             Cand best = null;
             // Routes for up to 8 candidates, until 3 have passed the stricter danger route rules.
             var routed = 0;
@@ -993,7 +1022,8 @@ namespace Oxide.Plugins
                 c.Time = length / Walker.SprintSpeed;
                 c.Exposed = seen / Walker.SprintSpeed;
                 c.Climb = climb;
-                c.Score = c.Depth * o.FleeDepth - c.Time * o.FleeTime - c.Exposed * o.FleeExposed + c.Away * o.FleeDistance - c.Climb * o.FleeClimb;
+                if (retreat && c.Exposed > o.FleeRetreatMaxView) { steep++; lastSteep = "would be seen on the way"; continue; } // already hidden: don't step out
+                c.Score = CoverScore(c, retreat);
                 c.Routed = true;
                 if (best == null || c.Score > best.Score) best = c;
             }
@@ -1015,13 +1045,69 @@ namespace Oxide.Plugins
                 }
                 return;
             }
+            // Already hidden with nowhere better: stay put rather than step into view.
+            if (retreat) { walker.Halt(); return; }
             // No cover within reach: just sprint straight away from them.
             d.HasCover = false;
+            var away = me - them; away.y = 0f;
+            if (away.sqrMagnitude < 0.01f) away = Vector3.forward;
+            away.Normalize();
             for (var r = 30f; r >= 10f; r -= 10f)
             {
                 Vector3 spot;
                 if (Walker.Nearest(me + away * r, 4f, out spot) && walker.GoTo(spot, true)) { d.Picks++; return; }
             }
+        }
+
+        // /bot hide: the hiding spots around you, scored exactly as the bot scores them when it
+        // runs, with the bot as the attacker (or the spot you look at, if the bot is far away).
+        // Drawn for 20 s: green = its top 3, yellow = other hiding spots, red = rejected, with why.
+        private string ShowHiding(BasePlayer user)
+        {
+            if (user == null) return "Only works in game.";
+            Vector3 them, eyes;
+            string from;
+            if (Alive && Vector3.Distance(bot.transform.position, user.transform.position) < 100f)
+            {
+                them = bot.transform.position;
+                eyes = bot.eyes.position;
+                from = saved.Name;
+            }
+            else
+            {
+                RaycastHit aim;
+                if (!Physics.Raycast(user.eyes.HeadRay(), out aim, 200f, FloorMask, QueryTriggerInteraction.Ignore)) return "The bot is far away: look at the spot the attacker should be at.";
+                them = aim.point;
+                eyes = aim.point + Vector3.up * 1.5f;
+                from = "the spot you're looking at";
+            }
+            LoadOdds();
+            var rejected = new List<KeyValuePair<Vector3, string>>();
+            int tops, open;
+            var cands = CoverCandidates(user.transform.position, them, eyes, false, out tops, out open, rejected);
+            const float secs = 20f;
+            user.SendConsoleCommand("ddraw.sphere", secs, Color.magenta, eyes, 0.4f);
+            user.SendConsoleCommand("ddraw.text", secs, Color.magenta, eyes + Vector3.up * 0.6f, "attacker");
+            for (var i = 0; i < cands.Count; i++)
+            {
+                var c = cands[i];
+                var top3 = i < 3;
+                user.SendConsoleCommand("ddraw.sphere", secs, top3 ? Color.green : Color.yellow, c.Spot + Vector3.up * 0.3f, top3 ? 0.45f : 0.25f);
+                if (top3 || i < 10)
+                    user.SendConsoleCommand("ddraw.text", secs, Color.white, c.Spot + Vector3.up * (top3 ? 1.6f : 1f),
+                        (top3 ? "#" + (i + 1) + " " : "") + c.Score.ToString("0.0") + (top3 ? " (cover " + c.Depth.ToString("0.00") + ", " + c.Time.ToString("0.0") + " s run, " + c.Away.ToString("0") + " m away)" : ""));
+            }
+            var shown = 0;
+            foreach (var r in rejected)
+            {
+                if (r.Value == "seen" || r.Value == "towards them") continue; // too many to draw; the rest say something
+                if (++shown > 60) break;
+                user.SendConsoleCommand("ddraw.sphere", secs, Color.red, r.Key + Vector3.up * 0.3f, 0.2f);
+                user.SendConsoleCommand("ddraw.text", secs, Color.red, r.Key + Vector3.up * 0.8f, r.Value);
+            }
+            var seen = rejected.Count(r => r.Value == "seen");
+            return "Hiding spots around you from " + from + " (" + Vector3.Distance(them, user.transform.position).ToString("0") + " m): " + cands.Count + " good (green = best 3, yellow = rest), "
+                + seen + " in their view, " + tops + " on top of something, " + open + " with nothing to hide behind (red, labelled). Scores are before routes; the bot then also counts time in view on the way. Shown for 20 s.";
         }
 
         private void CalmDown(string why)
@@ -1061,6 +1147,9 @@ namespace Oxide.Plugins
             // and jumps): steepest uphill slope, biggest single step up, highest cover spot above
             // where it stands, and whether a route may need a jump (0 = no, 1 = yes).
             public float FleeMaxSlope = 45f, FleeMaxStep = 0.5f, FleeMaxRise = 1f, FleeJumps = 0f;
+            // Once hidden it keeps going: to spots at least 4 m further away, still hidden, with
+            // at most FleeRetreatMaxView seconds in view on the way; each metre gained is worth FleeRetreat.
+            public float FleeRetreat = 0.3f, FleeRetreatMaxView = 0.3f;
             // Standing on an edge: ground must be within this many metres of its middle, or it
             // slides off (0.5 = never slide, like the plain character controller).
             public float PerchRadius = 0.25f;
