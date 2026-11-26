@@ -333,7 +333,13 @@ namespace Oxide.Plugins
             if (!Physics.Raycast(user.eyes.HeadRay(), out aim, 400f, LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed"), QueryTriggerInteraction.Ignore))
                 return "Point your crosshair at the ground (within 400 m).";
             Vector3 spot;
-            if (!Walker.Nearest(aim.point, 6f, out spot)) return "That spot isn't walkable.";
+            // The exact spot you point at, if a player could stand there (flat enough, room
+            // for the body). The navigation map leaves out thin things like the top of a half
+            // wall, so its nearest point would be the ground beside it.
+            var standable = Vector3.Angle(aim.normal, Vector3.up) <= 50f
+                && !Physics.CheckCapsule(aim.point + Vector3.up * 0.55f, aim.point + Vector3.up * 1.4f, 0.4f, LayerMask.GetMask("World", "Default", "Construction", "Deployed", "Tree"), QueryTriggerInteraction.Ignore);
+            if (standable) spot = aim.point;
+            else if (!Walker.Nearest(aim.point, 6f, out spot)) return "That spot isn't walkable.";
             EndJob(null);
             walker.SetRoaming(false);
             var steep = walker.RejectedSteep;
@@ -2188,6 +2194,7 @@ namespace Oxide.Plugins
                     }
                     var reached = false;
                     var dryHops = 0;
+                    var dryHopY = float.MaxValue;
                     for (var t = 0; t < 16; t++)
                     {
                         var p = dryLegs.Position;
@@ -2203,7 +2210,11 @@ namespace Oxide.Plugins
                         lastDry = p;
                         vy = hop ? HopSpeed : dryLegs.Grounded ? -2f : vy + Physics.gravity.y * dt;
                         var d = f.normalized * Mathf.Min(WalkSpeed * 1.5f, f.magnitude / dt);
+                        if (hop) dryHopY = p.y;
                         dryLegs.Move(new Vector3(d.x, vy, d.z) * dt);
+                        // Same limit as the real body: no landing more than a jump's height up.
+                        if (dryLegs.Grounded && dryLegs.Position.y - dryHopY > MaxJumpUp) { dryLegs.Place(p); break; }
+                        if (dryLegs.Grounded && vy <= 0f) dryHopY = float.MaxValue;
                     }
                     if (reached)
                     {
@@ -2337,6 +2348,17 @@ namespace Oxide.Plugins
                 else fallSpeed = wasGrounded ? -2f : fallSpeed + Physics.gravity.y * dt;
                 var next = legs.Move(new Vector3(dir.x * spd, fallSpeed, dir.z * spd) * dt);
                 next = OffTheEdge(next, dt);
+                // The body's round bottom lets it slide up onto an edge as high as its middle, so
+                // at the top of a jump it could climb onto things taller than a player (a box
+                // over 1.8 m). A player's jump only gets their feet about 1.5 m up (the game's
+                // jump height), so anything it would end up standing on higher than that is refused.
+                if (!landedSinceHop && legs.Grounded && next.y - hopFrom.y > MaxJumpUp)
+                {
+                    legs.Place(pos);
+                    next = pos;
+                    fallSpeed = Mathf.Min(fallSpeed, 0f);
+                    TooHighLandings++;
+                }
                 if (legs.Grounded && !wasGrounded && fallSpeed < -15f) body.ApplyFallDamageFromVelocity(fallSpeed); // what a player's landing report does
                 if (!landedSinceHop) hopPeak = Mathf.Max(hopPeak, next.y);
                 if (!landedSinceHop && fallSpeed <= 0f && legs.OnFooting)
@@ -2374,6 +2396,8 @@ namespace Oxide.Plugins
             // So: standing needs ground within PerchRadius of its middle. If it's only on the
             // corner, it slides off that edge, or steps back onto it if the drop would hurt.
             public static float PerchRadius = 0.25f;
+            public const float MaxJumpUp = 1.5f; // BasePlayer jump height: the highest a player's feet can land after a jump
+            public int TooHighLandings;
             public int PerchSlides, PerchBacks;
 
             private Vector3 OffTheEdge(Vector3 feet, float dt)
