@@ -150,7 +150,7 @@ export class Online {
     this.ctrl = new NetCtrl(this, m);
     if (m.state) this.ctrl.resync(m);
     const foe = m.names[1 - m.side];
-    const emotes = PR.ARENAS.filter(a => a.emote && save.arenaMax >= a.n).map(a => a.emote);
+    const emotes = PR.ownedEmotes(save);
     app.screen.begin(this.ctrl, { foe, foeLvl: m.levelText || '', me: save.name, arena: m.arena || 1, pausable: false, emotes, onEnd: () => {} });
     if (m.countdown) app.screen.msg('Ready…', m.countdown);
   }

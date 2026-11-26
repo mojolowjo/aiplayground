@@ -36,4 +36,11 @@ assert.equal(s.unlocked.length, CARD_IDS.length, 'everything unlocked at 285 Key
 s.glory = 1800; assert.equal(PR.botLevel(s), 7); s.glory = 2100; assert.equal(PR.botLevel(s), 8); s.glory = 2500; assert.equal(PR.botLevel(s), 9);
 // Old or broken saves are repaired.
 assert.equal(PR.fixSave({ deck: ['nope'], levels: { imps: 99 } }).levels.imps, 9);
+// Emotes come when you move on from an arena; Arena 10's at the top of the ladder.
+s = PR.newSave();
+assert.deepEqual(PR.ownedEmotes(s), [], 'no emotes at the start');
+s.glory = 190; out = PR.applyBotResult(s, { result: 'win', rival: 'pip', watch: 0 });
+assert.equal(s.arenaMax, 2); assert.deepEqual(out.newEmotes, ['Jobs done!']); assert.deepEqual(PR.ownedEmotes(s), ['Jobs done!']);
+s.glory = 2390; out = PR.applyBotResult(s, { result: 'win', rival: 'assim', watch: 0 });
+assert.ok(out.newEmotes.includes('Beep boop.') && out.newEmotes.includes('THE ROOOK'), 'arenas skipped and the champion mark');
 console.log('progress tests passed');

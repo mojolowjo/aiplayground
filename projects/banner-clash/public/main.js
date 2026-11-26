@@ -218,7 +218,7 @@ function renderArenas() {
       <small>${fmt(a.glory)} Glory · ${a.n === 10 ? 'level 7 to 9' : 'level ' + a.bot} · ${esc(a.style)}</small><br>
       <small>Rival: <span style="color:${r.color}">${esc(r.name)}</span>${rec ? ` · ${rec.w}-${rec.l}` : ''}</small>
       ${rec && rec.w + rec.l + rec.d >= 2 ? `<br><small>${esc(PR.HABITS[r.id])}</small>` : ''}
-      <br><small>Emote: ${a.emote ? (reached ? '"' + esc(a.emote) + '"' : 'locked') : 'none yet'}</small></div>`;
+      <br><small>Emote: ${a.emote ? (PR.emoteEarned(save, a.n) ? '"' + esc(a.emote) + '"' : (a.n < 10 ? 'earned when you reach the next arena' : `earned at ${fmt(PR.CHAMPION_GLORY)} Glory`)) : 'none'}</small></div>`;
     list.append(p);
   }
 }
@@ -398,7 +398,7 @@ export const screen = {
     $('#emoteBtn').onclick = () => {
       const box = $('#emotes'); box.classList.toggle('hidden');
       box.innerHTML = '';
-      if (!this.emoteList.length) box.innerHTML = '<small>Reach new arenas to unlock emotes.</small>';
+      if (!this.emoteList.length) box.innerHTML = '<small>Move on from an arena to earn its emote.</small>';
       for (const em of this.emoteList) { const b = el('button', {}, esc(em)); b.onclick = () => { this.emote(em, true); box.classList.add('hidden'); }; box.append(b); }
     };
     window.addEventListener('keydown', e => {
@@ -445,7 +445,7 @@ function startBotMatch({ tryCard } = {}) {
   if (new URLSearchParams(location.search).has('demo')) ctrl.bot2 = new Bot({ side: 0, rival: rivalById('rook'), seed: seed + 7 });   // watch two bots play (testing)
   const origUpdate = ctrl.update.bind(ctrl);
   ctrl.update = (now, onTick) => { const r = origUpdate(now, onTick); for (const e of r.events) if (e.e === 'play' && e.side === 0) plays.push({ card: e.card, lane: laneOf(e.x), enemySide: DEF[e.card].type === 'troop' || ownY(0, e.y) < 17 * MT }); return r; };
-  const emotes = PR.ARENAS.filter(a => a.emote && save.arenaMax >= a.n).map(a => a.emote);
+  const emotes = PR.ownedEmotes(save);
   screen.begin(ctrl, { foe: rival.name, foeLvl: practice ? 'practice' : `Lv ${lvl}${save.eased ? ' eased' : ''}`, me: save.name, arena: practice ? 1 : arena, pausable: true, emotes,
     onEnd: b => practice ? endPractice(b, tryCard) : endBotMatch(b, rival, plays) });
 }
@@ -475,7 +475,8 @@ function endBotMatch(b, rival, plays) {
     <div class="reward"><span>Coins</span><b>+${fmt(out.coins)}</b></div>
     <div class="reward"><span>Keys</span><b>+${out.keys}</b></div>
     <div class="reward"><span>Glory</span><b>${out.glory >= 0 ? '+' : ''}${out.glory}${result === 'win' && wasEased ? ' (eased bot)' : ''}</b></div>
-    ${out.arenaUp ? `<p style="color:var(--gold)">New arena: ${esc(PR.arenaInfo(out.arenaUp).name)}!${PR.arenaInfo(out.arenaUp).emote ? `<br><small>Emote unlocked: "${esc(PR.arenaInfo(out.arenaUp).emote)}"</small>` : ''}</p>` : ''}
+    ${out.arenaUp ? `<p style="color:var(--gold)">New arena: ${esc(PR.arenaInfo(out.arenaUp).name)}!</p>` : ''}
+    ${out.newEmotes?.length ? `<p><small>Emote unlocked: ${out.newEmotes.map(e => '"' + esc(e) + '"').join(', ')}</small></p>` : ''}
     ${out.eased && !wasEased ? '<p><small>3 losses in a row: the next bots play one level lower until you win.</small></p>' : ''}`;
   const row = el('div', { className: 'row', style: 'justify-content:center' });
   if (out.picks) { const pick = el('button', { className: 'ok' }, 'Pick a card'); pick.onclick = () => { show('home'); openOffer(); }; row.append(pick); }

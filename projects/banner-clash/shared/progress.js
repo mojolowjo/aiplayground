@@ -67,6 +67,11 @@ export function fixSave(s) {
 export const arenaOf = glory => { let a = 1; for (const ar of ARENAS) if (glory >= ar.glory) a = ar.n; return a; };
 export const arenaInfo = n => ARENAS[Math.max(1, Math.min(10, n)) - 1];
 export const gloryFloor = s => arenaInfo(s.arenaMax).glory;
+// Emotes: an arena's emote is earned by moving on from it (reaching the next arena). Arena 10 has no next arena,
+// so its emote is earned at CHAMPION_GLORY, the top of the bot ladder (a guess at "moving on" from the last arena).
+export const CHAMPION_GLORY = 2400;
+export const emoteEarned = (s, n) => n < 10 ? s.arenaMax > n : !!s.champion;
+export const ownedEmotes = s => ARENAS.filter(a => a.emote && emoteEarned(s, a.n)).map(a => a.emote);
 export const currentArena = s => Math.max(arenaOf(s.glory), 1);
 
 // Bot card level for the arena you are in (Arena 10 climbs 7, 8, 9 at 1,800 / 2,100 / 2,400 Glory).
@@ -148,7 +153,10 @@ export function applyBotResult(s, r) {
   s.keys += PROG.keys[r.result];
   s.glory = Math.max(gloryFloor(s), s.glory + glory);
   const newArena = arenaOf(s.glory);
+  const emotesBefore = ownedEmotes(s);
   if (newArena > s.arenaMax) s.arenaMax = newArena;
+  if (s.glory >= CHAMPION_GLORY) s.champion = true;
+  const newEmotes = ownedEmotes(s).filter(e => !emotesBefore.includes(e));
   // Losing-streak help.
   if (r.result === 'loss') { s.lossStreak++; if (s.lossStreak >= PROG.easedAfter) s.eased = true; }
   else if (r.result === 'win') { s.lossStreak = 0; s.eased = false; }
@@ -165,7 +173,7 @@ export function applyBotResult(s, r) {
   for (const p of r.plays || []) { s.profile.cards[p.card] = (s.profile.cards[p.card] || 0) + 1; if (p.enemySide) s.profile.lanes[p.lane]++; }
   s.profile.favLane = s.profile.lanes[0] === s.profile.lanes[1] ? null : s.profile.lanes[0] > s.profile.lanes[1] ? 0 : 1;
   s.counter++;
-  return { coins, glory: s.glory - before.glory, keys: s.keys - before.keys, arenaUp: arenaOf(s.glory) > before.arena ? arenaOf(s.glory) : 0,
+  return { coins, glory: s.glory - before.glory, keys: s.keys - before.keys, arenaUp: arenaOf(s.glory) > before.arena ? arenaOf(s.glory) : 0, newEmotes,
     eased: s.eased, picks: picksWaiting(s) };
 }
 function learn(notes, plays) {
