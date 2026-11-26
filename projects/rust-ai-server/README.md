@@ -207,6 +207,12 @@ would clear (typically 0.74 m), low bumps, and monument parts too tall to jump.
 | `/lab problems [metres] [around\|jump\|step]` / `/lab problems off` | Shows the map test's problem spots around you (default 150 m, nearest 80), following you as you move, coloured by the likely move: red go around (too tall, or cliffs and rocks with the game's no-climb walls), yellow jump, green step over. A word filters to one kind; `off` hides them |
 | `/lab clear` | Forgets the route |
 
+Testers (permission `movelab.tester`, not admin) can use `/lab rec` and `/lab stop` only; they
+can't see routes or markers, because the game only draws those for admins. Relyx is a tester.
+
+    .\rcon.ps1 "c.grant user <steamid64> movelab.tester"
+    .\rcon.ps1 "c.revoke user <steamid64> movelab.tester"
+
 If the server is opened to other players, tell them movement can be recorded.
 
 ## Roadmap

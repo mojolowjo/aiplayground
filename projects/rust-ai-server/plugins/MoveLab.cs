@@ -86,12 +86,25 @@ namespace Oxide.Plugins
             return s;
         }
 
+        // Testers (not admins) may record their own movement and nothing else. The game only
+        // draws debug lines for admins, so routes and markers stay admin-only anyway.
+        private const string TesterPerm = "movelab.tester";
+
+        private void Init() => permission.RegisterPermission(TesterPerm, this);
+
         [ChatCommand("lab")]
         private void Lab(BasePlayer player, string command, string[] args)
         {
-            if (!player.IsAdmin) return;
             var verb = args.Length > 0 ? args[0].ToLowerInvariant() : "";
             var s = Of(player);
+            if (!player.IsAdmin)
+            {
+                if (!permission.UserHasPermission(player.UserIDString, TesterPerm)) return;
+                if (verb == "rec") { SendReply(player, StartRec(player, s)); return; }
+                if (verb == "stop") { SendReply(player, StopRec(player, s)); return; }
+                SendReply(player, "Tester commands: /lab rec to start recording your movement, /lab stop to finish. Play normally; that's the point.");
+                return;
+            }
             switch (verb)
             {
                 case "route": SendReply(player, Route(player, s)); return;
