@@ -89,9 +89,14 @@ Everything goes through the game's own code, so it behaves as it does for a play
   anti-cheat rules for distance and line of sight. The hit then goes to the tool's own attack
   code (`BaseMelee.DoAttackShared`): damage, gathering, tool wear, impact effects. The swing rate
   is the tool's own cooldown. After two misses it steps 0.6 m closer; after eight it gives up.
-- Crates: opens the loot the way a player's "open" does (`PlayerOpenLoot`), takes one item every
-  0.35 s, then closes it, which is what makes an empty crate despawn.
-- Pickups: takes the item out of the world and gives it to the player, as the pickup button does.
+- Crates, dropped bags and pickups: a player's client sends the server short messages (RPCs)
+  such as "open this" or "pick this up". The bot calls the same server handlers with itself as
+  the sender (`StorageContainer.RPC_OpenLoot`, `WorldItem.Pickup`), after the same rule the server
+  checks first (within 3 m and in plain sight). Taking an item repeats the steps of the "move
+  item" handler (`PlayerInventory.MoveItem`) for a quick-move into its own inventory, including
+  its refusals, because that handler reads its arguments from network bytes the bot can't send.
+  It takes one item every 0.35 s, then closes the loot, which is what makes an empty crate
+  despawn.
 
 Gathering sends the "+wood" popup as a client command; for a bot the game runs that on the
 server, so the plugin registers an empty `note.inv` command to keep it out of the log.
