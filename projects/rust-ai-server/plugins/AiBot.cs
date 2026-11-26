@@ -69,6 +69,8 @@ namespace Oxide.Plugins
             try { saved = Interface.Oxide.DataFileSystem.ReadObject<Saved>(FileName); } catch { saved = null; }
             KeepIdsReserved();
             jobTimer = timer.Every(0.2f, TickJob);
+            Trails.Load();
+            timer.Every(600f, Trails.Load); // pick up new recordings every 10 minutes
             if (saved == null || string.IsNullOrEmpty(saved.Name)) { saved = null; return; }
             var index = Array.IndexOf(Names, saved.Name);
             if (index < 0) { Puts("Unknown bot name " + saved.Name + ", not restoring it."); saved = null; return; }
@@ -428,6 +430,125 @@ namespace Oxide.Plugins
         // would log "Command 'note.inv' not found". This swallows it. Real clients are unaffected:
         // theirs goes over the network, not through the server's command list.
         [ConsoleCommand("note.inv")] private void BotNote(ConsoleSystem.Arg arg) { }
+
+        #endregion
+
+        #region Player trails
+
+        // Every movement recording (MoveLab) is a path a real player proved walkable, including
+        // where they jumped. Where the bot's route is blocked and a player went through, the bot
+        // follows the player's line there and jumps where they jumped. Loaded from
+        // carbon\data\MoveLab at start, every 10 minutes, and on aibot.trails.
+        public class TrailPoint
+        {
+            public Vector3 P;
+            public bool Jump;  // the player jumped from here...
+            public Vector3 Land; // ...and landed here
+        }
+
+        public static class Trails
+        {
+            public static readonly List<List<TrailPoint>> All = new List<List<TrailPoint>>();
+            private static readonly Dictionary<long, List<KeyValuePair<int, int>>> grid = new Dictionary<long, List<KeyValuePair<int, int>>>();
+            private const float GridCell = 2f;
+            public static int Points, Jumps;
+
+            private class Sample { public float X, Y, Z; public bool Ground, Jump; }
+            private class Rec { public List<Sample> Samples; }
+
+            public static void Load()
+            {
+                All.Clear();
+                grid.Clear();
+                Points = Jumps = 0;
+                string[] files;
+                try { files = System.IO.Directory.GetFiles(System.IO.Path.Combine(Interface.Oxide.DataDirectory, "MoveLab"), "*.json"); }
+                catch { return; }
+                foreach (var f in files)
+                {
+                    Rec rec;
+                    try { rec = Interface.Oxide.DataFileSystem.ReadObject<Rec>("MoveLab/" + System.IO.Path.GetFileNameWithoutExtension(f)); }
+                    catch { continue; }
+                    if (rec?.Samples == null || rec.Samples.Count < 2) continue;
+                    var trail = new List<TrailPoint>();
+                    var s = rec.Samples;
+                    for (var i = 0; i < s.Count; i++)
+                    {
+                        var p = new Vector3(s[i].X, s[i].Y, s[i].Z);
+                        var jumpStart = s[i].Jump && (i == 0 || !s[i - 1].Jump) && s[i].Ground;
+                        if (jumpStart)
+                        {
+                            // Where it came down: the first grounded sample after being in the air.
+                            var air = false;
+                            for (var k = i + 1; k < s.Count && k < i + 60; k++)
+                            {
+                                if (!s[k].Ground) air = true;
+                                else if (air)
+                                {
+                                    trail.Add(new TrailPoint { P = p, Jump = true, Land = new Vector3(s[k].X, s[k].Y, s[k].Z) });
+                                    Jumps++;
+                                    break;
+                                }
+                            }
+                            continue;
+                        }
+                        if (!s[i].Ground) continue;
+                        if (trail.Count > 0 && !trail[trail.Count - 1].Jump && Vector3.Distance(trail[trail.Count - 1].P, p) < 0.4f) continue;
+                        if (trail.Count > 0 && Vector3.Distance(trail[trail.Count - 1].P, p) > 4f && !trail[trail.Count - 1].Jump)
+                        {
+                            // A gap (teleport, respawn, lag): start a new trail.
+                            AddTrail(trail);
+                            trail = new List<TrailPoint>();
+                        }
+                        trail.Add(new TrailPoint { P = p });
+                    }
+                    AddTrail(trail);
+                }
+            }
+
+            private static void AddTrail(List<TrailPoint> trail)
+            {
+                if (trail.Count < 3) return;
+                var id = All.Count;
+                All.Add(trail);
+                for (var i = 0; i < trail.Count; i++)
+                {
+                    var key = Key(trail[i].P);
+                    List<KeyValuePair<int, int>> list;
+                    if (!grid.TryGetValue(key, out list)) grid[key] = list = new List<KeyValuePair<int, int>>();
+                    list.Add(new KeyValuePair<int, int>(id, i));
+                    Points++;
+                }
+            }
+
+            private static long Key(Vector3 p) => ((long)Mathf.FloorToInt(p.x / GridCell) << 32) ^ (uint)Mathf.FloorToInt(p.z / GridCell);
+
+            // Trail points within 'range' of a spot, as (trail, index).
+            public static IEnumerable<KeyValuePair<int, int>> Near(Vector3 at, float range)
+            {
+                var r = Mathf.CeilToInt(range / GridCell);
+                int cx = Mathf.FloorToInt(at.x / GridCell), cz = Mathf.FloorToInt(at.z / GridCell);
+                for (var dx = -r; dx <= r; dx++)
+                    for (var dz = -r; dz <= r; dz++)
+                    {
+                        List<KeyValuePair<int, int>> list;
+                        if (!grid.TryGetValue(((long)(cx + dx) << 32) ^ (uint)(cz + dz), out list)) continue;
+                        foreach (var kv in list)
+                        {
+                            var p = All[kv.Key][kv.Value].P;
+                            if (new Vector2(p.x - at.x, p.z - at.z).magnitude <= range && Mathf.Abs(p.y - at.y) < 2f) yield return kv;
+                        }
+                    }
+            }
+        }
+
+        [ConsoleCommand("aibot.trails")]
+        private void ConTrails(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !arg.IsAdmin) return;
+            Trails.Load();
+            arg.ReplyWith("Player trails loaded: " + Trails.All.Count + " trails, " + Trails.Points + " points, " + Trails.Jumps + " jumps.");
+        }
 
         #endregion
 
@@ -923,7 +1044,7 @@ namespace Oxide.Plugins
             private const float StuckSeconds = 3f, StuckDistance = 0.6f;
             private const float MaxStepUp = 1f, MaxDrop = 2f;
 
-            private static readonly int GroundMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed");
+            private static readonly int GroundMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed", "Vehicle Large"); // Vehicle Large: the harbor bridge and other big things players stand on
             private static readonly int BlockMask = LayerMask.GetMask("World", "Default", "Construction", "Deployed", "Tree");
 
             public bool Roaming { get; private set; }
@@ -992,7 +1113,7 @@ namespace Oxide.Plugins
             // A straight line, for the last few metres the navmesh doesn't cover.
             public void WalkStraight(Vector3 to)
             {
-                corners.Clear();
+                corners.Clear(); cornerJumps.Clear(); cornerTrusted.Clear();
                 corners.Add(body.transform.position);
                 corners.Add(to);
                 corner = 1;
@@ -1009,7 +1130,7 @@ namespace Oxide.Plugins
             // anti-cheat history instead of being checked.
             public void TeleportTo(Vector3 pos)
             {
-                corners.Clear();
+                corners.Clear(); cornerJumps.Clear(); cornerTrusted.Clear();
                 body.MovePosition(pos);
                 Guard.Reset(pos);
                 ResetStuck();
@@ -1075,7 +1196,7 @@ namespace Oxide.Plugins
             private bool SetPath(Vector3 to)
             {
                 Vector3 from;
-                corners.Clear();
+                corners.Clear(); cornerJumps.Clear(); cornerTrusted.Clear();
                 if (!Nearest(body.transform.position, 3f, out from)) return false;
                 path.Reset();
                 if (!RustNavMeshHelpers.CalculatePath(from, to, RustNavMeshHelpers.AllAreas, path, false)) return false;
@@ -1086,6 +1207,8 @@ namespace Oxide.Plugins
                 var walk = Walkable(pts, to);
                 if (walk == null) return false;
                 corners.AddRange(walk);
+                foreach (var kv in routeJumps) cornerJumps[kv.Key] = kv.Value;
+                foreach (var t in routeTrusted) cornerTrusted.Add(t);
                 corner = 1;
                 goal = to;
                 state = "travelling";
@@ -1110,8 +1233,87 @@ namespace Oxide.Plugins
             public int Nudged;
             private static readonly float[] Nudges = { 0.3f, -0.3f, 0.55f, -0.55f, 0.8f, -0.8f };
 
+            // Trail steps in the last route Walkable made: where to jump (route index -> landing)
+            // and which points came from a player's trail (the walker trusts those).
+            private readonly Dictionary<int, Vector3> routeJumps = new Dictionary<int, Vector3>();
+            private readonly HashSet<int> routeTrusted = new HashSet<int>();
+            private readonly Dictionary<int, Vector3> cornerJumps = new Dictionary<int, Vector3>();
+            private readonly HashSet<int> cornerTrusted = new HashSet<int>();
+            public int TrailsUsed, TrailJumps;
+
+            private class Ahead { public int Seg, Step; public Vector3 P; }
+
+            // From a blocked spot, find a player's trail that starts close by and comes back to
+            // this route at least 2 m further on. Returns the trail points to walk, or null.
+            private List<TrailPoint> TrailBridge(Vector3 from, List<Vector3> pts, int i, int k, int n, Vector3 offset, float radius, out int rejoinSeg, out int rejoinStep)
+            {
+                rejoinSeg = rejoinStep = -1;
+                if (Trails.All.Count == 0) return null;
+                // The route ahead, as half-metre points, up to 40 m.
+                var ahead = new List<Ahead>();
+                var dist = 0f;
+                var lastP = from;
+                for (int ci = i, ck = k; ci < pts.Count && dist < 40f; ci++, ck = 1)
+                {
+                    var nn = Mathf.Max(1, Mathf.CeilToInt(Vector3.Distance(pts[ci - 1], pts[ci]) / 0.5f));
+                    for (; ck <= nn; ck++)
+                    {
+                        var p = Vector3.Lerp(pts[ci - 1], pts[ci], ck / (float)nn);
+                        dist += Vector3.Distance(lastP, p);
+                        lastP = p;
+                        ahead.Add(new Ahead { Seg = ci, Step = ck, P = p });
+                    }
+                }
+                // The nearest few trail points, one per trail.
+                var starts = new List<KeyValuePair<int, int>>();
+                var seenTrails = new HashSet<int>();
+                var near = new List<KeyValuePair<int, int>>(Trails.Near(from, 2.5f));
+                near.Sort((a, b) => Vector3.Distance(Trails.All[a.Key][a.Value].P, from).CompareTo(Vector3.Distance(Trails.All[b.Key][b.Value].P, from)));
+                foreach (var kv in near)
+                {
+                    if (!seenTrails.Add(kv.Key)) continue;
+                    starts.Add(kv);
+                    if (starts.Count >= 6) break;
+                }
+                List<TrailPoint> best = null;
+                var bestLen = float.MaxValue;
+                foreach (var st in starts)
+                {
+                    var tr = Trails.All[st.Key];
+                    if (Vector3.Distance(from, tr[st.Value].P) > 0.6f && Blocked(from, tr[st.Value].P, offset, radius)) continue;
+                    foreach (var dirn in new[] { 1, -1 })
+                    {
+                        var len = 0f;
+                        var prevP = tr[st.Value].P;
+                        for (int m = st.Value, steps = 0; m >= 0 && m < tr.Count && steps < 120 && len < bestLen; m += dirn, steps++)
+                        {
+                            if (dirn < 0 && tr[m].Jump && m != st.Value) break; // a jump can't be done backwards
+                            len += Vector3.Distance(prevP, tr[m].P);
+                            prevP = tr[m].P;
+                            Ahead hit = null;
+                            for (var a = 4; a < ahead.Count; a++)
+                            {
+                                var q = ahead[a].P;
+                                if (new Vector2(q.x - prevP.x, q.z - prevP.z).magnitude < 1.2f && Mathf.Abs(q.y - prevP.y) < 1.2f) { hit = ahead[a]; break; }
+                            }
+                            if (hit == null) continue;
+                            var seg = new List<TrailPoint>();
+                            for (var x = st.Value; x != m + dirn; x += dirn) seg.Add(tr[x]);
+                            best = seg;
+                            bestLen = len;
+                            rejoinSeg = hit.Seg;
+                            rejoinStep = hit.Step;
+                            break;
+                        }
+                    }
+                }
+                return best;
+            }
+
             private List<Vector3> Walkable(List<Vector3> pts, Vector3 to)
             {
+                routeJumps.Clear();
+                routeTrusted.Clear();
                 var offset = BasePlayer.NoClipOffset();
                 var radius = BasePlayer.NoClipRadius(ConVar.AntiHack.noclip_margin);
                 var route = new List<Vector3>();
@@ -1150,7 +1352,31 @@ namespace Oxide.Plugins
                                 Nudged++;
                                 break;
                             }
-                            if (!freed) { RejectedBlocked++; return null; }
+                            if (!freed)
+                            {
+                                // Blocked, but maybe a player got through here: follow their trail.
+                                int rejoinSeg, rejoinStep;
+                                var trail = TrailBridge(prev, pts, i, k, n, offset, radius, out rejoinSeg, out rejoinStep);
+                                if (trail == null) { RejectedBlocked++; return null; }
+                                TrailsUsed++;
+                                foreach (var tp in trail)
+                                {
+                                    if (tp.Jump) routeJumps[route.Count] = tp.Land;
+                                    routeTrusted.Add(route.Count);
+                                    route.Add(tp.P);
+                                }
+                                prev = route[route.Count - 1];
+                                last = prev;
+                                shift = Vector3.zero;
+                                // Carry on from where the trail rejoined the route.
+                                i = rejoinSeg;
+                                k = rejoinStep;
+                                seg = pts[i] - pts[i - 1];
+                                seg.y = 0f;
+                                side = Vector3.Cross(Vector3.up, seg.normalized);
+                                n = Mathf.Max(1, Mathf.CeilToInt(seg.magnitude / 0.5f));
+                                continue;
+                            }
                         }
                         else if (shift != Vector3.zero)
                         {
@@ -1209,7 +1435,18 @@ namespace Oxide.Plugins
                     var dir = flat / d;
                     var move = Mathf.Min(left, d);
                     Vector3 next;
-                    if (Blocked(pos, dir) || !Ground(pos + dir * move, out next))
+                    // A player jumped from here: do the same jump to where they landed.
+                    Vector3 land;
+                    if (pos == start && d < 0.6f && cornerJumps.TryGetValue(corner, out land))
+                    {
+                        StartTrailJump(pos, land);
+                        corner++;
+                        return;
+                    }
+                    // Steps a player walked are trusted past the walker's own obstacle check
+                    // (the server's checks still apply to every step).
+                    var trusted = cornerTrusted.Contains(corner);
+                    if ((!trusted && Blocked(pos, dir)) || !Ground(pos + dir * move, out next))
                     {
                         // Something knee to chest high in the way: jump it, like a player would.
                         if (pos == start && TryJump(pos, dir)) return;
@@ -1288,6 +1525,18 @@ namespace Oxide.Plugins
             private float jumpT, jumpPeak;
             private Vector3 jumpFrom, jumpTo;
             private int jumps;
+
+            private void StartTrailJump(Vector3 pos, Vector3 land)
+            {
+                jumping = true;
+                jumpT = 0f;
+                jumpFrom = pos;
+                jumpTo = land;
+                jumpPeak = Mathf.Clamp(Mathf.Max(0f, land.y - pos.y) + 0.6f, 0.6f, 1.45f);
+                jumps++;
+                TrailJumps++;
+                state = "jumping (like a player did here)";
+            }
 
             private bool TryJump(Vector3 pos, Vector3 dir)
             {
@@ -1430,7 +1679,7 @@ namespace Oxide.Plugins
 
             private void EndTrip(string newState)
             {
-                corners.Clear();
+                corners.Clear(); cornerJumps.Clear(); cornerTrusted.Clear();
                 state = newState;
             }
 
@@ -1459,7 +1708,7 @@ namespace Oxide.Plugins
                 return "roaming " + Roaming + ", looking " + body.viewAngles.x.ToString("0") + "° down, " + state + (corners.Count > 0 ? " to " + goal + " at " + speed + " m/s, " + Vector3.Distance(goal, body.transform.position).ToString("0") + " m left" : "")
                     + "\nsince spawn (" + mins.ToString("0.0") + " min): " + travelled.ToString("0") + " m, " + trips + " trips, stuck " + stucks
                     + " (repath " + repaths + ", hop tries " + teleports + "), blocked steps " + blocked + ", no destination " + noGoal + ", deepest water " + deepest.ToString("0.0") + " m"
-                    + "\nroutes turned down before walking: too steep " + RejectedSteep + ", through rock/cliff/wall " + RejectedBlocked + "; steps nudged off walls " + Nudged + "; jumps " + jumps
+                    + "\nroutes turned down before walking: too steep " + RejectedSteep + ", through rock/cliff/wall " + RejectedBlocked + "; steps nudged off walls " + Nudged + "; player trails used " + TrailsUsed + " (" + Trails.All.Count + " trails loaded), trail jumps " + TrailJumps + "; jumps " + jumps
                     + "\n" + Guard.Describe();
             }
 
