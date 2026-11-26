@@ -31,6 +31,15 @@ If the plugin is unloaded or fails to compile, the server is open, so check `c.p
 
 `ownerid` makes that account admin, which spectating needs.
 
+## Building anywhere
+
+`server.cfg` turns on `creative.freeplacement`: a player in the game's own creative mode can
+place walls and deployables anywhere, monuments included, with no placement checks. Only
+players given creative mode get it (m0j has it):
+
+    .\rcon.ps1 "creative.togglecreativemodeuser m0j true"
+    .\rcon.ps1 "creative.freebuild true"   # optional: building costs nothing
+
 ## Ports
 
 | Port | Protocol | Forward? |
