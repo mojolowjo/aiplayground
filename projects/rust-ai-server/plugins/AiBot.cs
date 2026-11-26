@@ -323,7 +323,7 @@ namespace Oxide.Plugins
             var blocked = walker.RejectedBlocked;
             if (!walker.GoTo(spot, Vector3.Distance(bot.transform.position, spot) > 25f))
             {
-                var why = walker.RejectedSteep > steep ? "the only route climbs steeper than 35 degrees"
+                var why = walker.RejectedSteep > steep ? "the only route climbs steeper than 45 degrees"
                     : walker.RejectedBlocked > blocked ? "the only route goes through a cliff, rock or wall it can't get past"
                     : "the map has no route there";
                 return "No route for " + saved.Name + ": " + why + ".";
@@ -456,14 +456,22 @@ namespace Oxide.Plugins
             private class Sample { public float X, Y, Z; public bool Ground, Jump; }
             private class Rec { public List<Sample> Samples; }
 
+            private static string loadedSignature = "";
+
+            // Reading the recordings takes about half a second, so it only happens when a
+            // recording was added or changed.
             public static void Load()
             {
-                All.Clear();
-                grid.Clear();
-                Points = Jumps = 0;
                 string[] files;
                 try { files = System.IO.Directory.GetFiles(System.IO.Path.Combine(Interface.Oxide.DataDirectory, "MoveLab"), "*.json"); }
                 catch { return; }
+                var sig = new StringBuilder();
+                foreach (var file in files) sig.Append(file).Append(new System.IO.FileInfo(file).Length).Append('|');
+                if (sig.ToString() == loadedSignature) return;
+                loadedSignature = sig.ToString();
+                All.Clear();
+                grid.Clear();
+                Points = Jumps = 0;
                 foreach (var f in files)
                 {
                     Rec rec;
@@ -1219,11 +1227,14 @@ namespace Oxide.Plugins
             // The game's navigation map is built for NPCs and is generous: it counts slopes up to
             // 50 degrees and anything under 0.75 m as walkable, and ignores the invisible walls
             // that stop players climbing cliffs and rocks. Recorded players never walked up
-            // more than about 35 degrees. So walk the route in thought first, every half metre,
+            // more than 39 degrees. So walk the route in thought first, every half metre,
             // and turn it down if it climbs steeper than that or crosses anything the game's
             // own no-clip check would refuse. The last few metres before the goal aren't
             // checked, so actions can still get right up to a tree or rock.
-            private const float MaxUphill = 35f, GoalSlack = 3f;
+            // 1,758 recorded uphill stretches (m0j and Relyx): 99% under 30 degrees, none over 39.
+            // The check samples the route, which reads a bit steeper than a player's smoothed path,
+            // so the limit sits above the steepest real climb and is measured over 2 m.
+            private const float MaxUphill = 45f, SlopeRun = 2f, GoalSlack = 3f;
             public int RejectedSteep, RejectedBlocked;
 
             // The map's routes hug walls (its edge sits about 0.3 m from them), closer than a
@@ -1386,7 +1397,7 @@ namespace Oxide.Plugins
                         }
                         // Slope over at least a metre, so small bumps don't count.
                         var flat = new Vector2(next.x - last.x, next.z - last.z).magnitude;
-                        if (flat >= 1f)
+                        if (flat >= SlopeRun)
                         {
                             if (Mathf.Atan2(next.y - last.y, flat) * Mathf.Rad2Deg > MaxUphill) { RejectedSteep++; return null; }
                             last = next;
