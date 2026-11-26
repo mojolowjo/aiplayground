@@ -271,14 +271,6 @@ namespace Oxide.Plugins
                 case "roam": EndJob(null); walker.SetRoaming(true); Save(); return saved.Name + " is roaming.";
                 case "stop": EndJob(null); walker.SetRoaming(false); Save(); return saved.Name + " stopped.";
                 case "inv": return Inventory();
-                case "drop":
-                {
-                    // Test: an admin teleport 15 m straight up, then it falls like a player would.
-                    EndJob(null);
-                    walker.SetRoaming(false);
-                    walker.TeleportTo(bot.transform.position + Vector3.up * 15f);
-                    return saved.Name + " is 15 m up and falling. Health before: " + bot.health.ToString("0.0");
-                }
                 case "unstuck":
                 {
                     // An admin teleport out of a rock or wall, to the nearest walkable spot 2 to 8 m away.
@@ -361,7 +353,6 @@ namespace Oxide.Plugins
         [ConsoleCommand("aibot.barrel")] private void ConBarrel(ConsoleSystem.Arg arg) => FromConsole(arg, "barrel");
         [ConsoleCommand("aibot.loot")] private void ConLoot(ConsoleSystem.Arg arg) => FromConsole(arg, "loot");
         [ConsoleCommand("aibot.inv")] private void ConInv(ConsoleSystem.Arg arg) => FromConsole(arg, "inv");
-        [ConsoleCommand("aibot.drop")] private void ConDrop(ConsoleSystem.Arg arg) => FromConsole(arg, "drop");
         [ConsoleCommand("aibot.unstuck")] private void ConUnstuck(ConsoleSystem.Arg arg) => FromConsole(arg, "unstuck");
 
         // The game runs a bot's client commands on the server (BasePlayer.BotCommand). Gathering and
@@ -386,8 +377,8 @@ namespace Oxide.Plugins
             public BasePlayer Asker;
             public Dictionary<string, int> Before;
             public float Next, Until, Started;
-            public bool Approached, Opened;
-            public int Swings, Taken, Misses, Steps;
+            public bool Approached, Opened, Stepped;
+            public int Swings, Taken, Misses;
             public string LastHit;
             public List<BaseEntity> Drops;
 
@@ -566,28 +557,20 @@ namespace Oxide.Plugins
                     if (!InReach(j)) { j.Phase = "walk"; j.Approached = false; j.Until = Time.time + 20f; return; }
                     if (walker.Busy) return; // stepping closer
                     if (j.Misses >= 8) { EndJob(name + " kept missing the " + Noun(j.Kind) + " (last swing hit " + j.LastHit + ") and gave up."); return; }
+                    if (j.Misses >= 2 && j.Misses % 2 == 0 && !j.Stepped)
+                    {
+                        // Two misses in a row: out of the tool's reach, or something in the way. Step in.
+                        j.Stepped = true;
+                        var toward = t.transform.position - bot.transform.position;
+                        toward.y = 0f;
+                        walker.WalkStraight(bot.transform.position + toward.normalized * 0.6f);
+                        return;
+                    }
+                    if (j.Misses % 2 == 1) j.Stepped = false;
                     var melee = EquipTool(j);
                     if (melee == null) return; // switching, or EndJob already said why
                     if (melee.HasAttackCooldown()) return;
-                    Vector3 spot;
-                    if (!FindAim(t, melee, out spot))
-                    {
-                        // No part of it within the tool's reach from here: step in, and if that
-                        // doesn't do it, work round to another side, like a player would.
-                        if (++j.Steps > 8)
-                        {
-                            var layers = new HashSet<string>();
-                            foreach (var c in t.GetComponentsInChildren<Collider>()) layers.Add(LayerMask.LayerToName(c.gameObject.layer));
-                            EndJob(name + " could not get within reach of the " + Noun(j.Kind) + " (" + Vector3.Distance(bot.eyes.position, t.ClosestPoint(bot.eyes.position)).ToString("0.0") + " m from the eyes; its colliders: " + string.Join(", ", layers) + ").");
-                            return;
-                        }
-                        var toward = t.transform.position - bot.transform.position;
-                        toward.y = 0f;
-                        var side = j.Steps % 3 == 0 ? Quaternion.Euler(0f, j.Steps % 2 == 0 ? 70f : -70f, 0f) * toward.normalized : toward.normalized;
-                        walker.WalkStraight(bot.transform.position + side * 0.7f);
-                        return;
-                    }
-                    Swing(j, melee, spot);
+                    Swing(j, melee);
                     return;
 
                 case "pickup":
@@ -682,54 +665,10 @@ namespace Oxide.Plugins
             return t.CenterPoint();
         }
 
-        // Where to look so the swing lands: the X marker or bonus spot if it can be reached,
-        // otherwise the nearest part of the target along any line of sight within the tool's
-        // reach, the way a player aims at the bit of rock in front of them.
-        private bool FindAim(BaseEntity t, BaseMelee melee, out Vector3 point)
-        {
-            var eyes = bot.eyes.position;
-            var reach = melee.maxDistance;
-            point = Vector3.zero;
-            float d;
-            var preferred = AimPoint(t, eyes);
-            if (RayToTarget(eyes, preferred - eyes, reach, t, out point, out d)) return true;
-            var flat = preferred - eyes;
-            flat.y = 0f;
-            var baseYaw = Mathf.Atan2(flat.x, flat.z) * Mathf.Rad2Deg;
-            var best = float.MaxValue;
-            for (var yaw = -40f; yaw <= 40f; yaw += 10f)
-                for (var pitch = -10f; pitch <= 75f; pitch += 8.5f)
-                {
-                    Vector3 p;
-                    if (!RayToTarget(eyes, Quaternion.Euler(pitch, baseYaw + yaw, 0f) * Vector3.forward, reach, t, out p, out d) || d >= best) continue;
-                    best = d;
-                    point = p;
-                }
-            return best < float.MaxValue;
-        }
-
-        // True if the first thing along the ray (other than the bot) is the target, within reach.
-        private bool RayToTarget(Vector3 from, Vector3 dir, float reach, BaseEntity t, out Vector3 point, out float distance)
-        {
-            point = Vector3.zero;
-            distance = float.MaxValue;
-            RaycastHit first = default(RaycastHit);
-            var found = false;
-            foreach (var hit in Physics.RaycastAll(from, dir.normalized, reach, 1220225809, QueryTriggerInteraction.Ignore))
-            {
-                if (hit.GetEntity() == bot) continue;
-                if (!found || hit.distance < first.distance) { first = hit; found = true; }
-            }
-            if (!found || first.GetEntity() != t) return false;
-            point = first.point;
-            distance = first.distance;
-            return true;
-        }
-
-        private void Swing(Job j, BaseMelee melee, Vector3 spot)
+        private void Swing(Job j, BaseMelee melee)
         {
             var t = j.Target;
-            walker.Face(spot);
+            walker.Face(AimPoint(t, bot.eyes.position));
             melee.StartAttackCooldown(melee.repeatDelay);
             bot.SignalBroadcast(BaseEntity.Signal.Attack, string.Empty, null);
             if (melee.swingEffect.isValid)
@@ -743,7 +682,7 @@ namespace Oxide.Plugins
                 if (hit == t) { j.Misses = 0; return; }
                 j.Misses++;
                 j.LastHit = hit == null ? "nothing" : hit is BasePlayer ? ((BasePlayer)hit).displayName : hit.ShortPrefabName;
-                Puts(saved.Name + "'s swing at the " + Noun(j.Kind) + " hit " + j.LastHit + " instead (reach " + melee.maxDistance.ToString("0.0") + " m, target " + Vector3.Distance(bot.eyes.position, t.ClosestPoint(bot.eyes.position)).ToString("0.0") + " m from the eyes)");
+                Puts(saved.Name + "'s swing at the " + Noun(j.Kind) + " hit " + j.LastHit + " instead");
             });
         }
 
@@ -914,8 +853,10 @@ namespace Oxide.Plugins
             private const float WalkSpeed = 2.6f, RunSpeed = 5.2f;
             private const float Step = 0.05f;
             private const float StuckSeconds = 3f, StuckDistance = 0.6f;
+            private const float MaxStepUp = 1f, MaxDrop = 2f;
 
             private static readonly int GroundMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed");
+            private static readonly int BlockMask = LayerMask.GetMask("World", "Default", "Construction", "Deployed", "Tree");
 
             public bool Roaming { get; private set; }
             public bool Working; // an action is running: no wandering or looking around
@@ -999,8 +940,6 @@ namespace Oxide.Plugins
             {
                 corners.Clear();
                 body.MovePosition(pos);
-                velocity = Vector3.zero;
-                grounded = true;
                 Guard.Reset(pos);
                 ResetStuck();
             }
@@ -1015,11 +954,7 @@ namespace Oxide.Plugins
                 if (body.IsWounded() || body.isMounted) { ResetStuck(); return; }
 
                 if (corners.Count > 0) Walk(dt);
-                else
-                {
-                    Idle();
-                    if (corners.Count == 0) Move(Vector3.zero, false, dt); // still subject to gravity
-                }
+                else Idle();
 
                 if (corners.Count > 0 || !Working) lookPitch = 0f; // eyes ahead while walking or idle
                 yaw = Mathf.MoveTowardsAngle(yaw, lookYaw, 300f * dt);
@@ -1095,18 +1030,42 @@ namespace Oxide.Plugins
                 return false;
             }
 
-            // Steering: the path says which way to go; the body decides how far it actually gets.
             private void Walk(float dt)
             {
                 var pos = body.transform.position;
-                var wish = Vector3.zero;
-                while (corner < corners.Count)
+                var left = speed * dt;
+                var start = pos;
+                while (left > 0f && corner < corners.Count)
                 {
                     var flat = corners[corner] - pos;
                     flat.y = 0f;
-                    if (flat.magnitude < 0.35f) { corner++; continue; }
-                    wish = flat.normalized;
-                    break;
+                    var d = flat.magnitude;
+                    if (d < 0.15f) { corner++; continue; }
+                    var dir = flat / d;
+                    var move = Mathf.Min(left, d);
+                    Vector3 next;
+                    if (Blocked(pos, dir) || !Ground(pos + dir * move, out next))
+                    {
+                        blocked++;
+                        if (Vector3.Distance(pos, goal) < 2f) corner = corners.Count; // close enough
+                        break;
+                    }
+                    left -= move;
+                    pos = next;
+                    lastDir = dir;
+                    lookYaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+                }
+
+                if (pos != start)
+                {
+                    // Every move is a tick: the server's checks decide whether it happens.
+                    if (Guard.Receive(start, pos, speed > WalkSpeed))
+                    {
+                        travelled += Vector3.Distance(start, pos);
+                        deepest = Mathf.Max(deepest, WaterDepth(pos));
+                        body.MovePosition(pos);
+                    }
+                    if (Guard.Kicked) { Roaming = false; EndTrip("kicked by anti-cheat"); return; }
                 }
                 if (corner >= corners.Count)
                 {
@@ -1114,165 +1073,27 @@ namespace Oxide.Plugins
                     waitUntil = Time.time + UnityEngine.Random.Range(1f, 7f);
                     return;
                 }
-                lastDir = wish;
-                lookYaw = Mathf.Atan2(wish.x, wish.z) * Mathf.Rad2Deg;
-                var moved = Move(wish, speed > WalkSpeed, dt);
-                if (Guard.Kicked) { Roaming = false; EndTrip("kicked by anti-cheat"); return; }
-                if (moved < 0.2f * speed * dt)
-                {
-                    blocked++;
-                    if (Vector3.Distance(pos, goal) < 2f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
-                }
                 CheckStuck();
             }
 
-            #region Body
-
-            // A player-sized body moved the way a player's client moves one: it has a velocity,
-            // speeds up and slows down, slides along whatever it bumps into, steps up low ledges,
-            // can't walk up slopes steeper than SlopeLimit, and falls under gravity. A player's
-            // movement code runs on their own computer and isn't on the server, so the numbers
-            // below are mine; the speed itself is the game's (BasePlayer.GetSpeed), and every move
-            // still goes through the server's checks (TickGuard).
-            private const float GroundAccel = 30f, AirAccel = 3f;
-            private const float StepHeight = 0.25f, SlopeLimit = 55f, Skin = 0.02f, Snap = 0.35f;
-            private const float SpeedMargin = 0.97f; // stay just under the anti-cheat's own limit
-            private static readonly float MinGroundNormal = Mathf.Cos(SlopeLimit * Mathf.Deg2Rad);
-            private static readonly int SolidMask = 1503731969 | LayerMask.GetMask("Terrain"); // what the no-clip check treats as solid, plus the ground
-
-            private Vector3 velocity;
-            private bool grounded = true;
-            private float hardestLanding;
-            private int landings;
-
-            private float Radius => BasePlayer.GetRadius();
-            private float Height => BasePlayer.GetHeight(false);
-
-            // One movement step. Returns how far it moved sideways.
-            private float Move(Vector3 wish, bool run, float dt)
+            private static bool Blocked(Vector3 pos, Vector3 dir)
             {
-                var start = body.transform.position;
-                if (grounded && wish == Vector3.zero && velocity.sqrMagnitude < 0.0001f)
-                {
-                    // Standing still: only check the ground is still there.
-                    RaycastHit under;
-                    if (ProbeGround(start, Snap, out under)) return 0f;
-                    grounded = false;
-                }
-
-                var target = wish * body.GetSpeed(run ? 1f : 0f, 0f, 0f) * SpeedMargin;
-                var flat = Vector3.MoveTowards(new Vector3(velocity.x, 0f, velocity.z), target, (grounded ? GroundAccel : AirAccel) * dt);
-                velocity.x = flat.x;
-                velocity.z = flat.z;
-                velocity.y = grounded ? 0f : velocity.y + Physics.gravity.y * dt;
-
-                // Sideways first (the sweep starts above step height, so low bumps and ledges
-                // are left to the ground check), then up or down onto the ground.
-                var end = Slide(start, new Vector3(velocity.x, 0f, velocity.z) * dt);
-                RaycastHit ground;
-                if (grounded)
-                {
-                    // Stick to the ground going downhill and step up ledges; walk off a drop.
-                    if (ProbeGround(end, Snap, out ground)) end.y = ground.point.y;
-                    else grounded = false;
-                }
-                else
-                {
-                    var dy = velocity.y * dt;
-                    if (dy <= 0f && ProbeGround(end, Mathf.Max(0.05f, -dy), out ground))
-                    {
-                        end.y = ground.point.y;
-                        Land();
-                        grounded = true;
-                        velocity.y = 0f;
-                    }
-                    else end.y += dy;
-                }
-
-                if ((end - start).sqrMagnitude < 0.000001f) return 0f;
-                // Every move is a tick: the server's checks decide whether it happens.
-                if (!Guard.Receive(start, end, run))
-                {
-                    velocity = Vector3.zero;
-                    return 0f;
-                }
-                body.MovePosition(end);
-                var d = new Vector2(end.x - start.x, end.z - start.z).magnitude;
-                travelled += Vector3.Distance(start, end);
-                deepest = Mathf.Max(deepest, WaterDepth(end));
-                return d;
+                RaycastHit hit;
+                // Chest and knee height, the same 0.34 m radius the no-clip check uses, so the
+                // walker stops at logs and rocks instead of having the move refused.
+                return Physics.SphereCast(pos + Vector3.up * 1.3f - dir * 0.1f, 0.34f, dir, out hit, 0.5f, BlockMask, QueryTriggerInteraction.Ignore)
+                    || Physics.SphereCast(pos + Vector3.up * 0.6f - dir * 0.1f, 0.34f, dir, out hit, 0.5f, BlockMask, QueryTriggerInteraction.Ignore);
             }
 
-            // What the client reports when a player lands (BasePlayer.OnPlayerLanded): the fall
-            // speed goes to the game's own fall-damage code.
-            private void Land()
+            // Ground under a point at about the same height; false for cliffs, walls and deep water.
+            private static bool Ground(Vector3 at, out Vector3 ground)
             {
-                landings++;
-                hardestLanding = Mathf.Min(hardestLanding, velocity.y);
-                if (velocity.y < -15f) body.ApplyFallDamageFromVelocity(velocity.y);
+                RaycastHit hit;
+                ground = at;
+                if (!Physics.Raycast(at + Vector3.up * MaxStepUp, Vector3.down, out hit, MaxStepUp + MaxDrop, GroundMask, QueryTriggerInteraction.Ignore)) return false;
+                ground = hit.point;
+                return WaterDepth(ground) <= MaxWater + 0.4f;
             }
-
-            // Collide and slide: move until something is in the way, then slide along it.
-            private Vector3 Slide(Vector3 pos, Vector3 move)
-            {
-                for (var i = 0; i < 4 && move.sqrMagnitude > 0.00000001f; i++)
-                {
-                    RaycastHit hit;
-                    if (!Cast(pos, move, move.magnitude + Skin, out hit))
-                    {
-                        pos += move;
-                        break;
-                    }
-                    var dir = move.normalized;
-                    var travel = Mathf.Max(0f, hit.distance - Skin);
-                    pos += dir * travel;
-                    move -= dir * travel;
-                    // Slide sideways along whatever is in the way.
-                    var n = new Vector3(hit.normal.x, 0f, hit.normal.z).normalized;
-                    if (n == Vector3.zero) break;
-                    move = Vector3.ProjectOnPlane(move, n);
-                    velocity = Vector3.ProjectOnPlane(velocity, n);
-                }
-                return pos;
-            }
-
-            // The body's capsule, from step height up to the head, swept along a move.
-            private bool Cast(Vector3 feet, Vector3 move, float distance, out RaycastHit nearest)
-            {
-                nearest = default(RaycastHit);
-                var r = Radius;
-                var bottom = feet + Vector3.up * (r + StepHeight);
-                var top = feet + Vector3.up * Mathf.Max(Height - r, r + StepHeight);
-                var found = false;
-                foreach (var hit in Physics.CapsuleCastAll(bottom, top, r, move.normalized, distance, SolidMask, QueryTriggerInteraction.Ignore))
-                {
-                    if (hit.distance <= 0f) continue; // already touching at the start
-                    if (hit.GetEntity() == body) continue;
-                    if (!found || hit.distance < nearest.distance) { nearest = hit; found = true; }
-                }
-                return found;
-            }
-
-            // Walkable ground from step height above the feet down to 'below' metres under them.
-            // Ground that is higher (a ledge up to StepHeight) is how it steps up.
-            private bool ProbeGround(Vector3 feet, float below, out RaycastHit ground)
-            {
-                ground = default(RaycastHit);
-                var r = Radius * 0.9f;
-                var from = feet + Vector3.up * (StepHeight + r + 0.1f);
-                foreach (var hit in Physics.SphereCastAll(from, r, Vector3.down, StepHeight + 0.1f + below, SolidMask, QueryTriggerInteraction.Ignore))
-                {
-                    if (hit.GetEntity() == body || hit.normal.y < MinGroundNormal) continue;
-                    if (hit.distance <= 0f) continue;
-                    if (ground.collider == null || hit.distance < ground.distance) ground = hit;
-                }
-                if (ground.collider == null) return false;
-                // Where the feet go: the bottom of the probe sphere where it touched.
-                ground.point = new Vector3(feet.x, from.y - ground.distance - r, feet.z);
-                return true;
-            }
-
-            #endregion
 
             private void ResetStuck()
             {
@@ -1347,10 +1168,10 @@ namespace Oxide.Plugins
                     if (corners.Count == 0) body.NetworkPositionTick();
                 }
                 var running = corners.Count > 0 && speed > WalkSpeed;
-                if (body.modelState.sprinting != running || body.modelState.onground != grounded)
+                if (body.modelState.sprinting != running || !body.modelState.onground)
                 {
                     body.modelState.sprinting = running;
-                    body.modelState.onground = grounded;
+                    body.modelState.onground = true;
                     body.SendModelState();
                 }
             }
@@ -1361,7 +1182,6 @@ namespace Oxide.Plugins
                 return "roaming " + Roaming + ", looking " + body.viewAngles.x.ToString("0") + "° down, " + state + (corners.Count > 0 ? " to " + goal + " at " + speed + " m/s, " + Vector3.Distance(goal, body.transform.position).ToString("0") + " m left" : "")
                     + "\nsince spawn (" + mins.ToString("0.0") + " min): " + travelled.ToString("0") + " m, " + trips + " trips, stuck " + stucks
                     + " (repath " + repaths + ", hop tries " + teleports + "), blocked steps " + blocked + ", no destination " + noGoal + ", deepest water " + deepest.ToString("0.0") + " m"
-                    + "\nbody: " + (grounded ? "on the ground" : "in the air, falling " + (-velocity.y).ToString("0.0") + " m/s") + ", landings " + landings + ", hardest landing " + (-hardestLanding).ToString("0.0") + " m/s"
                     + "\n" + Guard.Describe();
             }
 
@@ -1472,11 +1292,9 @@ namespace Oxide.Plugins
                     var ducking = body.modelState.ducked ? 1f : 0f;
                     var maxSpeed = Mathf.Lerp(Mathf.Lerp(2.8f, 5.5f, running ? 1f : 0f), 1.7f, ducking) * (1f - body.clothingMoveSpeedReduction);
                     var delta = to - from;
-                    // Up and down only count while swimming (and only at protection 3+).
-                    var swimming = body.IsSwimming();
-                    var dist = swimming && ConVar.AntiHack.speedhack_protection >= 3 ? delta.magnitude : new Vector2(delta.x, delta.z).magnitude;
+                    var dist = ConVar.AntiHack.speedhack_protection >= 3 ? delta.magnitude : new Vector2(delta.x, delta.z).magnitude;
                     var budget = maxSpeed * dt;
-                    if (!swimming && dist > budget && TerrainMeta.HeightMap != null)
+                    if (dist > budget && TerrainMeta.HeightMap != null)
                     {
                         // Running downhill is allowed to be a bit faster.
                         var n = TerrainMeta.HeightMap.GetNormal(from);
