@@ -821,6 +821,7 @@ namespace Oxide.Plugins
             public bool WasRoaming;
             public float SeenTime, LastTick; // seconds the attacker could see it since it reacted
             public Dictionary<string, float> Trial; // the settings tried in this chase (training mode)
+            public bool Skip; // /bot train skip: don't count this chase
         }
 
         #region Training
@@ -911,7 +912,7 @@ namespace Oxide.Plugins
             {
                 When = DateTime.UtcNow.ToString("u"), Attacker = d.Attacker != null ? d.Attacker.displayName : "?", Ended = ended,
                 Seconds = (float)Math.Round(secs, 1), SeenSeconds = (float)Math.Round(d.SeenTime, 1), Score = (float)Math.Round(score, 3),
-                Closest = d.Closest < float.MaxValue ? (float)Math.Round(d.Closest, 1) : -1f, Hits = d.Hits, Settings = d.Trial ?? CurrentFlee(),
+                Closest = d.Closest < float.MaxValue ? (float)Math.Round(d.Closest, 1) : -1f, Hits = d.Hits, Settings = d.Trial ?? CurrentFlee(), Excluded = d.Skip,
             };
             t.Chases.Add(chase);
             var msg = "[train] chase " + t.Chases.Count + ": in view " + chase.SeenSeconds + " of " + chase.Seconds + " s, " + d.Hits + " hits" + (died ? ", died" : "") + " -> score " + chase.Score.ToString("0.00");
@@ -971,6 +972,17 @@ namespace Oxide.Plugins
         {
             var t = Train();
             if (arg == "on") { t.On = true; if (t.Best == null) { t.Best = CurrentFlee(); t.BestScore = float.MaxValue; t.BestChases = 0; } Interface.Oxide.DataFileSystem.WriteObject(TrainingFile, t); return "Training on: every chase tries slightly different running-away settings and keeps what makes it harder to see. Hit it and chase it; each chase reports its score."; }
+            if (arg == "skip")
+            {
+                // Leave a chase out of the averages: the one running now, or else the last one.
+                if (danger != null) { danger.Skip = true; return "This chase won't count for training."; }
+                var last = t.Chases.LastOrDefault();
+                if (last == null) return "No chases to skip.";
+                last.Excluded = true;
+                if (t.On && t.Best != null) Judge(t, t.Best, 0f);
+                Interface.Oxide.DataFileSystem.WriteObject(TrainingFile, t);
+                return "Left out the last chase (" + last.When.Substring(11, 5) + ", score " + last.Score.ToString("0.00") + ").";
+            }
             if (arg == "off") { t.On = false; if (t.Best != null) { ApplyFlee(t.Best); Interface.Oxide.DataFileSystem.WriteObject(OddsFile, odds); } Interface.Oxide.DataFileSystem.WriteObject(TrainingFile, t); return "Training off; keeping the best settings found."; }
             var sb = new StringBuilder("Training " + (t.On ? "ON" : "off") + ", " + t.Chases.Count + " chases recorded.\n");
             if (t.Best != null) sb.AppendLine("Best so far (score " + (t.BestScore < 1e30f ? t.BestScore.ToString("0.00") : "not scored yet") + " over " + t.BestChases + " chases): " + string.Join(", ", t.Best.Select(kv => kv.Key.Replace("Flee", "").ToLowerInvariant() + " " + kv.Value.ToString("0.###")).ToArray()));
@@ -2709,6 +2721,7 @@ namespace Oxide.Plugins
                         for (int m = st.Value, steps = 0; m >= 0 && m < tr.Count && steps < 120 && len < bestLen; m += dirn, steps++)
                         {
                             if (dirn < 0 && tr[m].Jump && m != st.Value) break; // a jump can't be done backwards
+                            if (ThroughClosedDoor(prevP, tr[m].P)) break; // the player went through a door that's shut now
                             len += Vector3.Distance(prevP, tr[m].P);
                             prevP = tr[m].P;
                             Ahead hit = null;
@@ -2734,6 +2747,20 @@ namespace Oxide.Plugins
             // From where the body got stuck, find a player trail that starts within 2.5 m and comes
             // back to the route's waypoints at least 2 m further on (within 40 m). Returns the trail
             // points to walk and the waypoint it rejoins at, or null.
+            // A recorded trail can pass through a door that was open then. Doors are entities, so
+            // check for a closed one between two trail points at chest height.
+            private static bool ThroughClosedDoor(Vector3 a, Vector3 b)
+            {
+                if ((a - b).sqrMagnitude < 0.0001f) return false;
+                var hits = Physics.RaycastAll(a + Vector3.up * 1f, (b - a).normalized, Vector3.Distance(a, b) + 0.3f, ~0, QueryTriggerInteraction.Ignore);
+                foreach (var h in hits)
+                {
+                    var door = h.collider.GetComponentInParent<Door>();
+                    if (door != null && !door.IsOpen()) return true;
+                }
+                return false;
+            }
+
             private List<TrailPoint> TrailBridge(Vector3 from, List<Vector3> way, int w, out int rejoin)
             {
                 rejoin = -1;
@@ -2755,6 +2782,7 @@ namespace Oxide.Plugins
                         for (int m = st.Value, steps = 0; m >= 0 && m < tr.Count && steps < 120 && len < bestLen; m += dirn, steps++)
                         {
                             if (dirn < 0 && tr[m].Jump && m != st.Value) break; // a jump can't be done backwards
+                            if (ThroughClosedDoor(prevP, tr[m].P)) break; // the player went through a door that's shut now
                             len += Vector3.Distance(prevP, tr[m].P);
                             prevP = tr[m].P;
                             var hit = -1;
