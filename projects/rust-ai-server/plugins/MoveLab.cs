@@ -43,7 +43,7 @@ namespace Oxide.Plugins
             public float StartTime, LastSample;
             public Vector3 LastPos;
             public bool WasGround = true, JumpHeld;
-            public Timer Overlay;
+            public Timer Overlay, RouteDraw;
             public float OverlayRadius;
         }
 
@@ -72,7 +72,7 @@ namespace Oxide.Plugins
 
         private void Unload()
         {
-            foreach (var s in sessions.Values) StopOverlay(s);
+            foreach (var s in sessions.Values) { StopOverlay(s); s.RouteDraw?.Destroy(); }
         }
 
         private readonly Dictionary<ulong, Session> sessions = new Dictionary<ulong, Session>();
@@ -106,7 +106,12 @@ namespace Oxide.Plugins
                     SendReply(player, StartOverlay(player, s, radius));
                     return;
                 }
-                case "clear": s.Route = null; SendReply(player, "Route cleared."); return;
+                case "clear":
+                    s.Route = null;
+                    s.RouteDraw?.Destroy();
+                    s.RouteDraw = null;
+                    SendReply(player, "Route cleared; the lines fade within " + OverlaySeconds + " s. (Lines from before this update can't be removed and run out on their own within 2 minutes.)");
+                    return;
             }
             SendReply(player, "/lab route | rec | stop | problems [radius|off] | clear");
         }
@@ -129,19 +134,26 @@ namespace Oxide.Plugins
             s.Route = corners;
             var length = 0f;
             for (var i = 1; i < corners.Count; i++) length += Vector3.Distance(corners[i - 1], corners[i]);
-            DrawRoute(player, corners);
+            // Short-lived lines, redrawn while the route is kept, so /lab clear can make them go.
+            s.RouteDraw?.Destroy();
+            DrawRoute(player, corners, OverlaySeconds + 0.5f);
+            s.RouteDraw = timer.Every(OverlaySeconds, () =>
+            {
+                if (player == null || !player.IsConnected || s.Route != corners) { s.RouteDraw?.Destroy(); return; }
+                DrawRoute(player, corners, OverlaySeconds + 0.5f);
+            });
             return "Route drawn: " + corners.Count + " corners, " + length.ToString("0") + " m" + (path.status == NavMeshPathStatus.PathComplete ? "" : " (partial: the map can't reach that exact spot)")
-                + ". Green line, blue corners, for 2 minutes. /lab rec to record yourself walking it.";
+                + ". Green line, blue corners, until /lab clear. /lab rec to record yourself walking it.";
         }
 
-        private void DrawRoute(BasePlayer player, List<Vector3> corners)
+        private static void DrawRoute(BasePlayer player, List<Vector3> corners, float seconds)
         {
             var up = Vector3.up * 0.3f;
-            for (var i = 1; i < corners.Count; i++) Draw(player, "ddraw.line", Color.green, corners[i - 1] + up, corners[i] + up);
+            for (var i = 1; i < corners.Count; i++) player.SendConsoleCommand("ddraw.line", seconds, Color.green, corners[i - 1] + up, corners[i] + up);
             for (var i = 0; i < corners.Count; i++)
             {
-                Draw(player, "ddraw.sphere", Color.blue, corners[i] + up, 0.3f);
-                Draw(player, "ddraw.text", Color.white, corners[i] + Vector3.up * 1.2f, i == 0 ? "start" : i == corners.Count - 1 ? "end" : i.ToString());
+                player.SendConsoleCommand("ddraw.sphere", seconds, Color.blue, corners[i] + up, 0.3f);
+                player.SendConsoleCommand("ddraw.text", seconds, Color.white, corners[i] + Vector3.up * 1.2f, i == 0 ? "start" : i == corners.Count - 1 ? "end" : i.ToString());
             }
         }
 
