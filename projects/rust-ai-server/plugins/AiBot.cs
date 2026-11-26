@@ -1615,13 +1615,12 @@ namespace Oxide.Plugins
                 var flat = corners[corner] - pos;
                 flat.y = 0f;
                 var dir = flat.normalized;
-                // A player jumped from here: do the same jump to where they landed.
+                // A player jumped from here: jump too, heading for where they landed.
                 Vector3 land;
-                if (flat.magnitude < 0.8f && cornerJumps.TryGetValue(corner, out land))
+                if (flat.magnitude < 0.8f && cornerJumps.TryGetValue(corner, out land) && Jump())
                 {
-                    StartTrailJump(pos, land);
+                    TrailJumps++;
                     corner++;
-                    return;
                 }
                 var next = MoveBody(pos, dir, speed, dt);
                 var progress = new Vector2(next.x - pos.x, next.z - pos.z).magnitude;
@@ -1629,17 +1628,8 @@ namespace Oxide.Plugins
                 {
                     blocked++;
                     lastStop = legs.Bumped ? "its body bumped into " + legs.BumpedInto : "it couldn't get any further this step";
-                    // Stalled: hop, like a player does on a steep bit or over a lip of rock.
-                    // Like a player: one jump, then it has to land on proper footing (not a face
-                    // too steep to stand on) before it can jump again. No jumping in mid-air.
-                    if (legs.OnFooting && landedSinceHop && Time.time >= nextHop && (corners[corner].y > pos.y - 0.2f || legs.Bumped))
-                    {
-                        hopNow = true;
-                        landedSinceHop = false;
-                        nextHop = Time.time + HopCooldown;
-                        hops++;
-                    }
-                    else if (legs.OnFooting && landedSinceHop && legs.Bumped && TryJump(pos, dir)) { landedSinceHop = false; return; }
+                    // Stalled going up, or against something: jump, like a player would.
+                    if (corners[corner].y > pos.y - 0.2f || legs.Bumped) Jump();
                     if (Vector3.Distance(pos, goal) < 2f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
                 }
                 lastDir = dir;
@@ -1699,6 +1689,20 @@ namespace Oxide.Plugins
             private static readonly float HopSpeed = Mathf.Sqrt(2f * -Physics.gravity.y * 1.4f);
             private const float HopCooldown = 0.7f;
             private bool hopNow, landedSinceHop = true;
+
+            // The one jump: a real jump with the body (up off the ground with the take-off speed
+            // for 1.4 m, carrying on in the direction it was going), used for steep bits, for
+            // anything in the way, and where a recorded player jumped. Like a player: only from
+            // proper footing, and only once it has landed from the last one. Returns true if it jumped.
+            private bool Jump()
+            {
+                if (legs == null || !legs.OnFooting || !landedSinceHop || Time.time < nextHop) return false;
+                hopNow = true;
+                landedSinceHop = false;
+                nextHop = Time.time + HopCooldown;
+                hops++;
+                return true;
+            }
             private float nextHop;
             private int hops;
             public bool Airborne => jumping || (legs != null && !legs.Grounded);
@@ -1941,7 +1945,7 @@ namespace Oxide.Plugins
                 return "roaming " + Roaming + ", looking " + body.viewAngles.x.ToString("0") + "° down, " + state + (corners.Count > 0 ? " to " + goal + " at " + speed + " m/s, " + Vector3.Distance(goal, body.transform.position).ToString("0") + " m left" : "")
                     + "\nsince spawn (" + mins.ToString("0.0") + " min): " + travelled.ToString("0") + " m, " + trips + " trips, stuck " + stucks
                     + " (repath " + repaths + ", hop tries " + teleports + "), blocked steps " + blocked + ", no destination " + noGoal + ", deepest water " + deepest.ToString("0.0") + " m"
-                    + "\nroutes turned down before walking: too steep " + RejectedSteep + ", through rock/cliff/wall " + RejectedBlocked + "; steps nudged off walls " + Nudged + "; straight-line routes " + Straight + "; player trails used " + TrailsUsed + " (" + Trails.All.Count + " trails loaded), trail jumps " + TrailJumps + "; hops " + hops + "; jumps " + jumps
+                    + "\nroutes turned down before walking: too steep " + RejectedSteep + ", through rock/cliff/wall " + RejectedBlocked + "; steps nudged off walls " + Nudged + "; straight-line routes " + Straight + "; player trails used " + TrailsUsed + " (" + Trails.All.Count + " trails loaded), jumps " + hops + " (" + TrailJumps + " of them where a recorded player jumped)"
                     + "\n" + Guard.Describe();
             }
 
