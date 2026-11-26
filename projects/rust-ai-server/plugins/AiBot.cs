@@ -1808,6 +1808,19 @@ namespace Oxide.Plugins
 
             public void Halt() => EndTrip(Working ? "working" : "standing");
 
+            // Route points come from the map or from a line through the air, and can sit up to
+            // a metre or so above the real ground (on rocks, near the goal). Aiming at a point in
+            // the air made it jump at nothing. Each point is put on the ground right under it.
+            private static void SnapToGround(List<Vector3> pts)
+            {
+                for (var i = 1; i < pts.Count; i++)
+                {
+                    RaycastHit hit;
+                    if (Physics.Raycast(pts[i] + Vector3.up * 0.5f, Vector3.down, out hit, 2.5f, GroundMask, QueryTriggerInteraction.Ignore))
+                        pts[i] = hit.point;
+                }
+            }
+
             // An admin teleport (/bot here): like the game's own teleport, it resets the
             // anti-cheat history instead of being checked.
             public void TeleportTo(Vector3 pos)
@@ -1936,7 +1949,7 @@ namespace Oxide.Plugins
                         if (direct != null)
                         {
                             Straight++;
-                            corners.AddRange(direct);
+                            corners.AddRange(direct); SnapToGround(corners);
                             foreach (var kv in routeJumps) cornerJumps[kv.Key] = kv.Value;
                             foreach (var t in routeTrusted) cornerTrusted.Add(t);
                             corner = 1;
@@ -1955,7 +1968,7 @@ namespace Oxide.Plugins
                 if (Wet(pts)) return false;
                 var walk = Walkable(pts, to);
                 if (walk == null) return false;
-                corners.AddRange(walk);
+                corners.AddRange(walk); SnapToGround(corners);
                 foreach (var kv in routeJumps) cornerJumps[kv.Key] = kv.Value;
                 foreach (var t in routeTrusted) cornerTrusted.Add(t);
                 corner = 1;
