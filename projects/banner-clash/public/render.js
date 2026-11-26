@@ -98,6 +98,7 @@ export class Renderer {
   // view: { alpha, ghost: { card, x, y, ok } , me, battle, debug }
   draw(b, view = {}) {
     const g = this.g, s = b.s, alpha = view.alpha ?? 1, now = performance.now();
+    this.towerLv = s.players.map(p => p.towerLevel || 1);
     if (!this.bg) this.drawGround();
     g.drawImage(this.bg, 0, 0);
     // River shimmer.
@@ -159,7 +160,19 @@ export class Renderer {
     // Cannon/window.
     g.fillStyle = '#2a2a34'; g.fillRect(x - 8, y + 4, 16, 12);
     const top = y < CH / 2;                                       // towers at the top of the screen show their bar underneath
-    this.hpBar(x, top ? y + r + 22 : y - r - 46, keep ? 96 : 76, u.hp, u.maxHp, team, true);
+    const by = top ? y + r + 22 : y - r - 46, bw = keep ? 96 : 76;
+    this.hpBar(x, by, bw, u.hp, u.maxHp, team, true);
+    this.lvBadge(x - bw / 2 - 14, by + 3, this.towerLv?.[u.side] || 1, team, 13);
+  }
+
+  // A small square with the level number, at the left end of a health bar.
+  lvBadge(x, y, lvl, team, size = 11) {
+    const g = this.g, h = size;
+    g.fillStyle = '#111'; g.fillRect(x - h / 2 - 2, y - h / 2 - 2, h + 4, h + 4);
+    g.fillStyle = team; g.fillRect(x - h / 2, y - h / 2, h, h);
+    g.fillStyle = '#fff'; g.font = `bold ${h - 1}px monospace`; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(String(lvl), x, y + 1);
+    g.textAlign = 'left'; g.textBaseline = 'alphabetic';
   }
 
   hpBar(x, y, w, hp, max, team, always) {
@@ -203,8 +216,10 @@ export class Renderer {
       g.fillStyle = '#fff4b0'; g.fillRect(x - 6, y + fy * (spr.height / 2 - 2) - 6, 12, 12);
       g.fillStyle = '#ffb030'; g.fillRect(x - 3, y + fy * (spr.height / 2 - 2) - 3, 6, 6);
     }
-    if (u.kind === 'building') this.hpBar(x, y - spr.height / 2 - 10, 40, u.hp, u.maxHp, TEAM[u.side], false);
-    else this.hpBar(x, y - spr.height / 2 - 8 + bob, Math.max(20, spr.width * 0.8), u.hp, u.maxHp, TEAM[u.side], false);
+    // Health bar (only once hurt) with the unit's level always shown at its left end.
+    const bw = u.kind === 'building' ? 40 : Math.max(20, spr.width * 0.8), by = u.kind === 'building' ? y - spr.height / 2 - 10 : y - spr.height / 2 - 8 + bob;
+    this.hpBar(x, by, bw, u.hp, u.maxHp, TEAM[u.side], false);
+    if (u.lvl && u.deploy <= 0 && !(u.hidden && u.side !== me)) this.lvBadge(x - bw / 2 - 9, by + 3, u.lvl, TEAM[u.side]);
     if (u.shield > 0) { g.fillStyle = '#c8d0d8'; g.fillRect(x - spr.width * 0.4, y - spr.height / 2 - 14 + bob, spr.width * 0.8 * Math.min(1, u.shield / 200), 4); }
   }
 
