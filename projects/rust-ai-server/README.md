@@ -204,7 +204,7 @@ would clear (typically 0.74 m), low bumps, and monument parts too tall to jump.
 |---|---|
 | `/lab route` | Draws the route the bot would take from you to the spot you look at, for 2 minutes |
 | `/lab rec` / `/lab stop` | Records your position, view, jumps, crouching and sprinting, then reports where you left the route and what you jumped over. Saved in `carbon\data\MoveLab\` |
-| `/lab problems` | Draws the map test's problem spots within 150 m |
+| `/lab problems [metres]` / `/lab problems off` | Shows the map test's problem spots around you (default 150 m, nearest 80), following you as you move; `off` hides them |
 | `/lab clear` | Forgets the route |
 
 If the server is opened to other players, tell them movement can be recorded.

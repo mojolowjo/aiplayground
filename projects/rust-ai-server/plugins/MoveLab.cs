@@ -43,6 +43,36 @@ namespace Oxide.Plugins
             public float StartTime, LastSample;
             public Vector3 LastPos;
             public bool WasGround = true, JumpHeld;
+            public Timer Overlay;
+            public float OverlayRadius;
+        }
+
+        // The game's debug drawing can't be erased, so the overlay is redrawn with short-lived
+        // markers while it's on; turning it off just stops redrawing and they fade out.
+        private const float OverlaySeconds = 6f;
+
+        private string StartOverlay(BasePlayer player, Session s, float radius)
+        {
+            StopOverlay(s);
+            s.OverlayRadius = radius;
+            var first = Problems(player, radius, OverlaySeconds + 0.5f);
+            s.Overlay = timer.Every(OverlaySeconds, () =>
+            {
+                if (player == null || !player.IsConnected) { StopOverlay(s); return; }
+                Problems(player, s.OverlayRadius, OverlaySeconds + 0.5f);
+            });
+            return first + " It follows you as you move. /lab problems off to hide it, /lab problems <metres> to change the radius.";
+        }
+
+        private static void StopOverlay(Session s)
+        {
+            s.Overlay?.Destroy();
+            s.Overlay = null;
+        }
+
+        private void Unload()
+        {
+            foreach (var s in sessions.Values) StopOverlay(s);
         }
 
         private readonly Dictionary<ulong, Session> sessions = new Dictionary<ulong, Session>();
@@ -66,10 +96,19 @@ namespace Oxide.Plugins
                 case "route": SendReply(player, Route(player, s)); return;
                 case "rec": SendReply(player, StartRec(player, s)); return;
                 case "stop": SendReply(player, StopRec(player, s)); return;
-                case "problems": SendReply(player, Problems(player)); return;
+                case "problems":
+                {
+                    var opt = args.Length > 1 ? args[1].ToLowerInvariant() : "";
+                    if (opt == "off") { StopOverlay(s); SendReply(player, "Problem overlay off (the last markers fade within " + OverlaySeconds + " s)."); return; }
+                    float radius;
+                    if (!float.TryParse(opt, out radius)) radius = 150f;
+                    radius = Mathf.Clamp(radius, 10f, 1000f);
+                    SendReply(player, StartOverlay(player, s, radius));
+                    return;
+                }
                 case "clear": s.Route = null; SendReply(player, "Route cleared."); return;
             }
-            SendReply(player, "/lab route | rec | stop | problems | clear");
+            SendReply(player, "/lab route | rec | stop | problems [radius|off] | clear");
         }
 
         #region Route
@@ -241,22 +280,36 @@ namespace Oxide.Plugins
         private class ProbeFile { public List<ProbeProblem> problems; }
         private class ProbeProblem { public string Kind, Object; public float X, Y, Z, Height; }
 
-        private string Problems(BasePlayer player)
+        private ProbeFile probeCache;
+        private DateTime probeCacheTime;
+
+        private ProbeFile Probe()
         {
-            ProbeFile file;
-            try { file = Interface.Oxide.DataFileSystem.ReadObject<ProbeFile>("NavProbe"); } catch { file = null; }
+            // Re-read the file at most every 30 s, so a new navprobe run shows up.
+            if (probeCache != null && (DateTime.UtcNow - probeCacheTime).TotalSeconds < 30) return probeCache;
+            try { probeCache = Interface.Oxide.DataFileSystem.ReadObject<ProbeFile>("NavProbe"); } catch { probeCache = null; }
+            probeCacheTime = DateTime.UtcNow;
+            return probeCache;
+        }
+
+        private const int MaxMarkers = 80;
+
+        private string Problems(BasePlayer player, float radius, float seconds)
+        {
+            var file = Probe();
             if (file?.problems == null || file.problems.Count == 0) return "No map test results yet (navprobe.run in the console).";
             var me = player.transform.position;
-            var near = file.problems.Select(p => new { p, at = new Vector3(p.X, p.Y, p.Z) })
-                .Where(x => Vector3.Distance(x.at, me) < 150f).OrderBy(x => Vector3.Distance(x.at, me)).Take(30).ToList();
+            var inRange = file.problems.Select(p => new { p, at = new Vector3(p.X, p.Y, p.Z) })
+                .Where(x => Vector3.Distance(x.at, me) < radius).OrderBy(x => Vector3.Distance(x.at, me)).ToList();
+            var near = inRange.Take(MaxMarkers).ToList();
             foreach (var x in near)
             {
-                Draw(player, "ddraw.sphere", Color.red, x.at + Vector3.up * 0.5f, 0.5f);
-                Draw(player, "ddraw.text", Color.yellow, x.at + Vector3.up * 1.6f, x.p.Kind + "\n" + x.p.Object + (x.p.Height > 0 ? " " + x.p.Height.ToString("0.00") + " m" : ""));
+                player.SendConsoleCommand("ddraw.sphere", seconds, Color.red, x.at + Vector3.up * 0.5f, 0.5f);
+                player.SendConsoleCommand("ddraw.text", seconds, Color.yellow, x.at + Vector3.up * 1.6f, x.p.Kind + "\n" + x.p.Object + (x.p.Height > 0 ? " " + x.p.Height.ToString("0.00") + " m" : ""));
             }
-            if (near.Count == 0) return "No problem spots within 150 m. The nearest is " + file.problems.Min(p => Vector3.Distance(new Vector3(p.X, p.Y, p.Z), me)).ToString("0") + " m away.";
+            if (near.Count == 0) return "No problem spots within " + radius.ToString("0") + " m. The nearest is " + file.problems.Min(p => Vector3.Distance(new Vector3(p.X, p.Y, p.Z), me)).ToString("0") + " m away.";
             var n = near[0];
-            return near.Count + " problem spots within 150 m drawn in red. Nearest: " + n.p.Kind + " (" + n.p.Object + ") " + Vector3.Distance(n.at, me).ToString("0") + " m away.";
+            return inRange.Count + " problem spots within " + radius.ToString("0") + " m" + (inRange.Count > MaxMarkers ? " (showing the nearest " + MaxMarkers + ")" : "") + ". Nearest: " + n.p.Kind + " (" + n.p.Object + ") " + Vector3.Distance(n.at, me).ToString("0") + " m away.";
         }
 
         #endregion
