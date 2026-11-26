@@ -67,6 +67,7 @@ Windows Firewall needs an inbound allow rule for RustDedicated.exe on Private ne
 | `/bot info` | `aibot.info` | Name, position, health, gear, what it is doing, and counters since spawn. |
 | `/bot brain` | `aibot.brain` | The bot decides for itself what to do (see Brain). `/bot stop` or `/bot roam` turns it off. |
 | `/bot hide` | | Shows the hiding spots around you, scored as the bot scores them when it runs from the bot (or from where you look, if the bot is over 100 m away): green = best 3, yellow = other good spots, red = rejected with the reason. 20 s. |
+| `/bot train [on\|off]` | `aibot.train` | Training for running away: each chase (attacker within 30 m) tries a variation of the flee settings and is scored by how much of the first 30 s it was in view (+0.1 per extra hit, +1 if killed); a variation that beats the best over 2 chases becomes the best. Without on/off: status and last chases. Data in `carbon\data\AiBotTraining.json`. |
 | `/bot odds` | `aibot.odds` | Shows the brain's numbers in plain words. |
 | `/bot set <choice> <field> <value>` | `aibot.set ...` | Changes one, e.g. `/bot set chop base 2`, `/bot set barrel nearboost 8`, `/bot set runshare 0.5`. Saved to `AiBotBrain.json`; used from the next decision. |
 | `/bot roam` / `/bot stop` | `aibot.roam` / `aibot.stop` | Start or stop wandering. |

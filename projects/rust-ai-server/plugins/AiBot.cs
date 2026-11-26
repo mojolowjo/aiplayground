@@ -216,6 +216,7 @@ namespace Oxide.Plugins
         {
             if (player == null || player != bot) return;
             Puts(saved?.Name + " died at " + player.transform.position);
+            EndChase(danger, "killed", true);
             if (danger != null) Puts("[danger] " + saved?.Name + " was killed by " + (danger.Attacker != null ? danger.Attacker.displayName : "?") + " after " + (Time.time - danger.Started).ToString("0") + " s on the run (" + danger.Picks + " runs, broke line of sight " + danger.LosBreaks + " times).");
             danger = null;
             EndJob(saved?.Name + " died.");
@@ -422,8 +423,16 @@ namespace Oxide.Plugins
             if (!player.IsAdmin) return;
             var verb = args.Length > 0 ? args[0].ToLowerInvariant() : "";
             if (verb == "odds") { SendReply(player, ShowOdds()); return; }
+            if (verb == "train") { SendReply(player, TrainCommand(args.Length > 1 ? args[1].ToLowerInvariant() : "")); return; }
             if (verb == "set") { SendReply(player, SetOdd(args.Skip(1).ToArray())); return; }
             SendReply(player, Run(verb, player));
+        }
+
+        [ConsoleCommand("aibot.train")]
+        private void ConTrain(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !arg.IsAdmin) return;
+            arg.ReplyWith(TrainCommand((arg.GetString(0) ?? "").ToLowerInvariant()));
         }
 
         [ConsoleCommand("aibot.odds")]
@@ -809,7 +818,150 @@ namespace Oxide.Plugins
             public int Picks, LosBreaks, Hits;
             public float Closest = float.MaxValue, Damage;
             public bool WasRoaming;
+            public float SeenTime, LastTick; // seconds the attacker could see it since it reacted
+            public Dictionary<string, float> Trial; // the settings tried in this chase (training mode)
         }
+
+        #region Training
+
+        // Training (/bot train on): every chase tries a variation of the running-away settings
+        // around the best so far. After the chase it's scored (lower is better): the share of the
+        // first 30 s the attacker could see it, plus 0.1 per hit after it reacted, plus 1 if it
+        // died. Each setting keeps a running average of its chases; a variation that beats the
+        // best average over 2+ chases becomes the new best and is saved to the odds file.
+        private static readonly string[] TrainedFields = { "FleeDepth", "FleeTime", "FleeExposed", "FleeDistance", "FleeRetreat", "FleeRadius" };
+
+        private class Training
+        {
+            public bool On;
+            public Dictionary<string, float> Best;
+            public float BestScore = float.MaxValue;
+            public int BestChases;
+            public List<Chase> Chases = new List<Chase>();
+            public Dictionary<string, float> Pending; // a promising variation waiting for a second chase
+            public float PendingScore;
+        }
+
+        private class Chase
+        {
+            public string When, Attacker, Ended;
+            public float Seconds, SeenSeconds, Score, Closest;
+            public int Hits;
+            public Dictionary<string, float> Settings;
+        }
+
+        private Training training;
+        private const string TrainingFile = "AiBotTraining";
+
+        private Training Train()
+        {
+            if (training != null) return training;
+            try { training = Interface.Oxide.DataFileSystem.ReadObject<Training>(TrainingFile); } catch { training = null; }
+            if (training == null) training = new Training();
+            if (training.Chases == null) training.Chases = new List<Chase>();
+            return training;
+        }
+
+        private Dictionary<string, float> CurrentFlee()
+        {
+            var d = new Dictionary<string, float>();
+            foreach (var f in TrainedFields) d[f] = (float)typeof(Odds).GetField(f).GetValue(odds);
+            return d;
+        }
+
+        private void ApplyFlee(Dictionary<string, float> s)
+        {
+            foreach (var kv in s) typeof(Odds).GetField(kv.Key)?.SetValue(odds, kv.Value);
+        }
+
+        // At the start of a chase in training mode: the pending variation if one needs a second
+        // look, otherwise a new random variation (each setting x0.7 to x1.4) around the best.
+        private Dictionary<string, float> NextTrial()
+        {
+            var t = Train();
+            if (t.Best == null) t.Best = CurrentFlee();
+            // The best needs its own score first (2 chases), and gets re-checked every 4th chase,
+            // since people chase differently from one go to the next.
+            if (t.BestChases < 2 || t.Chases.Count % 4 == 3) return new Dictionary<string, float>(t.Best);
+            if (t.Pending != null) return new Dictionary<string, float>(t.Pending);
+            var trial = new Dictionary<string, float>();
+            foreach (var kv in t.Best)
+            {
+                var v = kv.Value * UnityEngine.Random.Range(0.7f, 1.4f);
+                if (kv.Key == "FleeRadius") v = Mathf.Clamp(v, 15f, 60f);
+                trial[kv.Key] = (float)Math.Round(v, 3);
+            }
+            return trial;
+        }
+
+        private void EndChase(Danger d, string ended, bool died)
+        {
+            if (d == null || !d.Reacted) return;
+            var secs = Time.time - d.ReactAt;
+            if (secs < 3f && !died) return; // too short to say anything
+            if (d.Closest > 30f && !died) { Puts("[train] not counted: " + (d.Attacker != null ? d.Attacker.displayName : "?") + " never came within 30 m, so it wasn't a chase"); if (Train().On && training.Best != null) ApplyFlee(training.Best); return; }
+            var window = Mathf.Min(secs, 30f);
+            var score = Mathf.Min(d.SeenTime, window) / Mathf.Max(window, 1f) + 0.1f * Mathf.Max(0, d.Hits - 1) + (died ? 1f : 0f);
+            var t = Train();
+            var chase = new Chase
+            {
+                When = DateTime.UtcNow.ToString("u"), Attacker = d.Attacker != null ? d.Attacker.displayName : "?", Ended = ended,
+                Seconds = (float)Math.Round(secs, 1), SeenSeconds = (float)Math.Round(d.SeenTime, 1), Score = (float)Math.Round(score, 3),
+                Closest = d.Closest < float.MaxValue ? (float)Math.Round(d.Closest, 1) : -1f, Hits = d.Hits, Settings = d.Trial ?? CurrentFlee(),
+            };
+            t.Chases.Add(chase);
+            var msg = "[train] chase " + t.Chases.Count + ": in view " + chase.SeenSeconds + " of " + chase.Seconds + " s, " + d.Hits + " hits" + (died ? ", died" : "") + " -> score " + chase.Score.ToString("0.00");
+            if (t.On && d.Trial != null)
+            {
+                if (t.Pending != null && SameSettings(t.Pending, d.Trial))
+                {
+                    var avg = (t.PendingScore + score) / 2f;
+                    if (avg < t.BestScore)
+                    {
+                        t.Best = new Dictionary<string, float>(d.Trial);
+                        t.BestScore = avg;
+                        t.BestChases = 2;
+                        msg += "; confirmed over 2 chases (avg " + avg.ToString("0.00") + "), NEW BEST";
+                    }
+                    else msg += "; second chase didn't hold up (avg " + avg.ToString("0.00") + " vs best " + t.BestScore.ToString("0.00") + ")";
+                    t.Pending = null;
+                }
+                else if (SameSettings(t.Best, d.Trial))
+                {
+                    t.BestScore = t.BestChases == 0 ? score : (t.BestScore * t.BestChases + score) / (t.BestChases + 1);
+                    t.BestChases++;
+                }
+                else if (score < t.BestScore || t.BestChases == 0)
+                {
+                    t.Pending = new Dictionary<string, float>(d.Trial);
+                    t.PendingScore = score;
+                    msg += "; looks better, trying it once more to be sure";
+                }
+                // Back to the best settings between chases, saved for good.
+                ApplyFlee(t.Best);
+                Interface.Oxide.DataFileSystem.WriteObject(OddsFile, odds);
+            }
+            Interface.Oxide.DataFileSystem.WriteObject(TrainingFile, t);
+            Puts(msg);
+            if (d.Attacker != null && d.Attacker.IsConnected) SendReply(d.Attacker, msg.Replace("[train] ", ""));
+        }
+
+        private static bool SameSettings(Dictionary<string, float> a, Dictionary<string, float> b) =>
+            a != null && b != null && a.Count == b.Count && a.All(kv => b.ContainsKey(kv.Key) && Mathf.Abs(b[kv.Key] - kv.Value) < 0.0005f);
+
+        private string TrainCommand(string arg)
+        {
+            var t = Train();
+            if (arg == "on") { t.On = true; if (t.Best == null) { t.Best = CurrentFlee(); t.BestScore = float.MaxValue; t.BestChases = 0; } Interface.Oxide.DataFileSystem.WriteObject(TrainingFile, t); return "Training on: every chase tries slightly different running-away settings and keeps what makes it harder to see. Hit it and chase it; each chase reports its score."; }
+            if (arg == "off") { t.On = false; if (t.Best != null) { ApplyFlee(t.Best); Interface.Oxide.DataFileSystem.WriteObject(OddsFile, odds); } Interface.Oxide.DataFileSystem.WriteObject(TrainingFile, t); return "Training off; keeping the best settings found."; }
+            var sb = new StringBuilder("Training " + (t.On ? "ON" : "off") + ", " + t.Chases.Count + " chases recorded.\n");
+            if (t.Best != null) sb.AppendLine("Best so far (score " + (t.BestScore < float.MaxValue ? t.BestScore.ToString("0.00") : "not scored yet") + " over " + t.BestChases + " chases): " + string.Join(", ", t.Best.Select(kv => kv.Key.Replace("Flee", "").ToLowerInvariant() + " " + kv.Value.ToString("0.###")).ToArray()));
+            foreach (var c in t.Chases.Skip(Math.Max(0, t.Chases.Count - 5))) sb.AppendLine("  " + c.When.Substring(11, 5) + " in view " + c.SeenSeconds + "/" + c.Seconds + " s, hits " + c.Hits + ", score " + c.Score.ToString("0.00"));
+            sb.Append("Score = share of the first 30 s in your view, +0.1 per extra hit, +1 if it died; lower is better. /bot train on|off");
+            return sb.ToString();
+        }
+
+        #endregion
 
         private Danger danger;
         private Timer dangerTimer;
@@ -843,6 +995,8 @@ namespace Oxide.Plugins
                 walker.SetRoaming(false);
                 walker.Working = false;
                 Puts("[danger] " + saved.Name + " was hit by " + d.Attacker.displayName + ", reacted after " + ((d.ReactAt - d.Started) * 1000f).ToString("0") + " ms; running for cover.");
+                d.LastTick = now;
+                if (Train().On) { d.Trial = NextTrial(); ApplyFlee(d.Trial); }
             }
             if (bot.health < d.LastHealth) d.Damage += d.LastHealth - bot.health;
             d.LastHealth = bot.health;
@@ -852,6 +1006,8 @@ namespace Oxide.Plugins
             var dist = gone ? float.MaxValue : Vector3.Distance(a.transform.position, bot.transform.position);
             if (!gone) d.Closest = Mathf.Min(d.Closest, dist);
             var seen = !gone && dist < 300f && CanSee(a.eyes.position, bot.transform.position);
+            if (seen) d.SeenTime += now - d.LastTick;
+            d.LastTick = now;
             if (d.Seen && !seen) d.LosBreaks++;
             d.Seen = seen;
             if (seen) d.HiddenSince = -1f;
@@ -1117,6 +1273,7 @@ namespace Oxide.Plugins
             if (d == null || !Alive) return;
             Puts("[danger] " + saved.Name + " calmed down (" + why + ") after " + (Time.time - d.Started).ToString("0") + " s: hit " + d.Hits + " times for " + d.Damage.ToString("0")
                 + " damage, closest " + (d.Closest < float.MaxValue ? d.Closest.ToString("0") + " m" : "?") + ", broke line of sight " + d.LosBreaks + " times, " + d.Picks + " runs, health " + bot.health.ToString("0") + ".");
+            EndChase(d, why, false);
             walker.Halt();
             if (saved.Brain) mind.Until = Time.time + StopLength();
             else if (d.WasRoaming) walker.SetRoaming(true);
