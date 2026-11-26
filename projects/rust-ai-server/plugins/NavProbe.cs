@@ -33,6 +33,22 @@ namespace Oxide.Plugins
         private readonly List<Problem> problems = new List<Problem>();
         private readonly RustNavMeshPath path = new RustNavMeshPath();
         private Timer runner;
+        private Vector3? area;
+        private float areaRadius;
+        private int runStart;
+
+        private class SavedFile { public List<Problem> problems; }
+
+        private void LoadPrevious()
+        {
+            if (problems.Count > 0) return;
+            try
+            {
+                var f = Interface.Oxide.DataFileSystem.ReadObject<SavedFile>("NavProbe");
+                if (f?.problems != null) problems.AddRange(f.problems);
+            }
+            catch { }
+        }
         private int wanted, done, noPath, clean;
         private float metres, metresBad;
         private ConsoleSystem.Arg asker;
@@ -65,8 +81,26 @@ namespace Oxide.Plugins
         {
             if (arg.Connection != null && !arg.IsAdmin) return;
             runner?.Destroy();
-            problems.Clear();
             wanted = Mathf.Clamp(arg.GetInt(0, 2000), 1, 20000);
+            // Optional area: navprobe.run <routes> <x> <z> <radius>, or "here"/"bot" in place of x z.
+            area = null;
+            var where = arg.GetString(1, "");
+            if (where == "bot" || where == "here")
+            {
+                var who = where == "bot" ? (BasePlayer.bots.Count > 0 ? BasePlayer.bots[0] : null) : arg.Player();
+                if (who == null) { arg.ReplyWith("No " + where + " to centre on."); return; }
+                area = who.transform.position;
+                areaRadius = arg.GetFloat(2, 60f);
+            }
+            else if (where != "")
+            {
+                area = new Vector3(arg.GetFloat(1), 0f, arg.GetFloat(2));
+                areaRadius = arg.GetFloat(3, 60f);
+            }
+            // A whole-island run starts a fresh list; an area run adds to it.
+            if (area == null) problems.Clear();
+            else LoadPrevious();
+            runStart = problems.Count;
             done = noPath = clean = 0;
             metres = metresBad = 0f;
             asker = arg;
@@ -79,7 +113,13 @@ namespace Oxide.Plugins
         {
             done++;
             var size = TerrainMeta.Size.x * 0.48f;
-            var a = new Vector3(UnityEngine.Random.Range(-size, size), 0f, UnityEngine.Random.Range(-size, size));
+            Vector3 a;
+            if (area.HasValue)
+            {
+                var r = UnityEngine.Random.insideUnitCircle * areaRadius;
+                a = area.Value + new Vector3(r.x, 0f, r.y);
+            }
+            else a = new Vector3(UnityEngine.Random.Range(-size, size), 0f, UnityEngine.Random.Range(-size, size));
             a.y = TerrainMeta.HeightMap.GetHeight(a);
             NavMeshHit hit;
             if (!RustNavMeshHelpers.SamplePosition(a, out hit, 5f, RustNavMeshHelpers.AllAreas, false)) { noPath++; return; }
@@ -213,13 +253,13 @@ namespace Oxide.Plugins
             runner = null;
             var tested = done - noPath;
             var sb = new StringBuilder();
-            sb.AppendLine("NavProbe: " + tested + " routes tested (" + noPath + " skipped, no route), " + metres.ToString("0") + " m walked in thought.");
+            sb.AppendLine("NavProbe" + (area.HasValue ? " (area " + MapHelper.PositionToString(area.Value) + ", radius " + areaRadius + " m)" : " (whole island)") + ": " + tested + " routes tested (" + noPath + " skipped, no route), " + metres.ToString("0") + " m walked in thought.");
             sb.AppendLine("  clean: " + clean + " (" + (tested > 0 ? 100f * clean / tested : 0f).ToString("0") + "%), with a problem: " + (tested - clean) + ". Problems per km of route: " + (metres > 0 ? (tested - clean) / (metres / 1000f) : 0f).ToString("0.0"));
             sb.AppendLine("  by kind:");
-            foreach (var g in problems.GroupBy(p => p.Kind).OrderByDescending(g => g.Count()))
+            foreach (var g in problems.Skip(runStart).GroupBy(p => p.Kind).OrderByDescending(g => g.Count()))
                 sb.AppendLine("    " + g.Count() + "  " + g.Key + (g.Any(p => p.Height > 0) ? "  (median height " + Median(g.Select(p => p.Height)).ToString("0.00") + " m)" : ""));
             sb.AppendLine("  by object (top 15):");
-            foreach (var g in problems.GroupBy(p => p.Object).OrderByDescending(g => g.Count()).Take(15))
+            foreach (var g in problems.Skip(runStart).GroupBy(p => p.Object).OrderByDescending(g => g.Count()).Take(15))
                 sb.AppendLine("    " + g.Count() + "  " + g.Key + "  [" + string.Join(", ", g.Select(p => p.Layer).Distinct()) + "]  median height " + Median(g.Select(p => p.Height)).ToString("0.00") + " m");
             Interface.Oxide.DataFileSystem.WriteObject("NavProbe", new { summary = sb.ToString(), problems });
             Puts(sb.ToString());
