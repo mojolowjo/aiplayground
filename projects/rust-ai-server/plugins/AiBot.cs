@@ -1009,6 +1009,12 @@ namespace Oxide.Plugins
             t.BestScore = bestAvg;
             t.BestChases = groups.Where(g => g.Key == bestKey).Select(g => g.N).FirstOrDefault();
             var mine = groups.FirstOrDefault(g => g.Key == Key(trial));
+            // A re-check of the best must not drop the setting that is part way through its reps.
+            if (mine != null && mine.Key == bestKey)
+            {
+                if (t.Pending != null && Key(t.Pending) == bestKey) t.Pending = null;
+                return note + "; that was the best settings, now avg " + mine.Avg.ToString("0.00") + " over " + mine.N;
+            }
             t.Pending = null;
             if (mine != null && mine.Key != bestKey && mine.N < MinReps && mine.Avg < bestAvg)
             {
