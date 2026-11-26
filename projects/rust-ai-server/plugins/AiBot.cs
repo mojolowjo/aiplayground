@@ -271,6 +271,22 @@ namespace Oxide.Plugins
                 case "roam": EndJob(null); walker.SetRoaming(true); Save(); return saved.Name + " is roaming.";
                 case "stop": EndJob(null); walker.SetRoaming(false); Save(); return saved.Name + " stopped.";
                 case "inv": return Inventory();
+                case "unstuck":
+                {
+                    // An admin teleport out of a rock or wall, to the nearest walkable spot 2 to 8 m away.
+                    var here = bot.transform.position;
+                    for (var i = 0; i < 30; i++)
+                    {
+                        var r = UnityEngine.Random.insideUnitCircle.normalized * (2f + i * 0.2f);
+                        Vector3 spot;
+                        if (!Walker.Nearest(here + new Vector3(r.x, 0f, r.y), 2f, out spot) || Vector3.Distance(spot, here) < 1.5f) continue;
+                        if (AntiHack.TestInsideTerrain(spot) || Physics.CheckCapsule(spot + Vector3.up * 0.6f, spot + Vector3.up * 1.4f, 0.34f, 1503731969, QueryTriggerInteraction.Ignore)) continue;
+                        EndJob(null);
+                        walker.TeleportTo(spot);
+                        return saved.Name + " moved " + Vector3.Distance(spot, here).ToString("0.0") + " m to " + spot + ".";
+                    }
+                    return "No free spot nearby.";
+                }
                 case "chop": case "mine": case "barrel": case "loot": return StartJob(verb, user);
                 case "here":
                     if (user == null) return "Only works in game.";
@@ -283,7 +299,7 @@ namespace Oxide.Plugins
                     Save();
                     return saved.Name + " is here, standing still.";
             }
-            return "Use spawn, info, roam, stop, here, kill, chop, mine, barrel, loot or inv.";
+            return "Use spawn, info, roam, stop, here, unstuck, kill, chop, mine, barrel, loot or inv.";
         }
 
         private static Vector3 InFrontOf(BasePlayer user)
@@ -337,6 +353,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("aibot.barrel")] private void ConBarrel(ConsoleSystem.Arg arg) => FromConsole(arg, "barrel");
         [ConsoleCommand("aibot.loot")] private void ConLoot(ConsoleSystem.Arg arg) => FromConsole(arg, "loot");
         [ConsoleCommand("aibot.inv")] private void ConInv(ConsoleSystem.Arg arg) => FromConsole(arg, "inv");
+        [ConsoleCommand("aibot.unstuck")] private void ConUnstuck(ConsoleSystem.Arg arg) => FromConsole(arg, "unstuck");
 
         // The game runs a bot's client commands on the server (BasePlayer.BotCommand). Gathering and
         // pickups send "note.inv" (the item popup), which the server doesn't know, so every hit
@@ -839,7 +856,7 @@ namespace Oxide.Plugins
             private const float MaxStepUp = 1f, MaxDrop = 2f;
 
             private static readonly int GroundMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed");
-            private static readonly int BlockMask = LayerMask.GetMask("World", "Default", "Construction", "Deployed");
+            private static readonly int BlockMask = LayerMask.GetMask("World", "Default", "Construction", "Deployed", "Tree");
 
             public bool Roaming { get; private set; }
             public bool Working; // an action is running: no wandering or looking around
@@ -868,13 +885,17 @@ namespace Oxide.Plugins
                 startedAt = Time.time;
                 lastDir = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
                 body.modelState.onground = true;
+                Guard = new TickGuard(body);
                 SetLook();
                 Roaming = roam;
                 waitUntil = Time.time + 2f;
             }
 
+            public TickGuard Guard { get; private set; }
+
             public void SetRoaming(bool on)
             {
+                if (on) Guard.Kicked = false;
                 Roaming = on;
                 waitUntil = Time.time + 1f;
                 EndTrip("standing");
@@ -913,10 +934,13 @@ namespace Oxide.Plugins
 
             public void Halt() => EndTrip(Working ? "working" : "standing");
 
+            // An admin teleport (/bot here): like the game's own teleport, it resets the
+            // anti-cheat history instead of being checked.
             public void TeleportTo(Vector3 pos)
             {
                 corners.Clear();
                 body.MovePosition(pos);
+                Guard.Reset(pos);
                 ResetStuck();
             }
 
@@ -1034,9 +1058,14 @@ namespace Oxide.Plugins
 
                 if (pos != start)
                 {
-                    travelled += Vector3.Distance(start, pos);
-                    deepest = Mathf.Max(deepest, WaterDepth(pos));
-                    body.MovePosition(pos);
+                    // Every move is a tick: the server's checks decide whether it happens.
+                    if (Guard.Receive(start, pos, speed > WalkSpeed))
+                    {
+                        travelled += Vector3.Distance(start, pos);
+                        deepest = Mathf.Max(deepest, WaterDepth(pos));
+                        body.MovePosition(pos);
+                    }
+                    if (Guard.Kicked) { Roaming = false; EndTrip("kicked by anti-cheat"); return; }
                 }
                 if (corner >= corners.Count)
                 {
@@ -1050,7 +1079,10 @@ namespace Oxide.Plugins
             private static bool Blocked(Vector3 pos, Vector3 dir)
             {
                 RaycastHit hit;
-                return Physics.SphereCast(pos + Vector3.up * 1.3f - dir * 0.1f, 0.25f, dir, out hit, 0.5f, BlockMask, QueryTriggerInteraction.Ignore);
+                // Chest and knee height, the same 0.34 m radius the no-clip check uses, so the
+                // walker stops at logs and rocks instead of having the move refused.
+                return Physics.SphereCast(pos + Vector3.up * 1.3f - dir * 0.1f, 0.34f, dir, out hit, 0.5f, BlockMask, QueryTriggerInteraction.Ignore)
+                    || Physics.SphereCast(pos + Vector3.up * 0.6f - dir * 0.1f, 0.34f, dir, out hit, 0.5f, BlockMask, QueryTriggerInteraction.Ignore);
             }
 
             // Ground under a point at about the same height; false for cliffs, walls and deep water.
@@ -1111,8 +1143,10 @@ namespace Oxide.Plugins
                     if (!Nearest(body.transform.position + new Vector3(r.x, 0f, r.y), 4f, out spot)) continue;
                     if (WaterDepth(spot) > MaxWater) continue;
                     if (Vector3.Distance(spot, body.transform.position) < 1f) continue;
+                    // A hop is a move like any other, so the server's checks judge it too. A real
+                    // player can't hop, so expect these to be refused unless they are tiny.
                     teleports++;
-                    TeleportTo(spot);
+                    if (Guard.Receive(body.transform.position, spot, false)) { body.MovePosition(spot); ResetStuck(); }
                     return;
                 }
             }
@@ -1147,7 +1181,8 @@ namespace Oxide.Plugins
                 var mins = (Time.time - startedAt) / 60f;
                 return "roaming " + Roaming + ", looking " + body.viewAngles.x.ToString("0") + "° down, " + state + (corners.Count > 0 ? " to " + goal + " at " + speed + " m/s, " + Vector3.Distance(goal, body.transform.position).ToString("0") + " m left" : "")
                     + "\nsince spawn (" + mins.ToString("0.0") + " min): " + travelled.ToString("0") + " m, " + trips + " trips, stuck " + stucks
-                    + " (repath " + repaths + ", teleport " + teleports + "), blocked steps " + blocked + ", no destination " + noGoal + ", deepest water " + deepest.ToString("0.0") + " m";
+                    + " (repath " + repaths + ", hop tries " + teleports + "), blocked steps " + blocked + ", no destination " + noGoal + ", deepest water " + deepest.ToString("0.0") + " m"
+                    + "\n" + Guard.Describe();
             }
 
             public static bool Nearest(Vector3 pos, float range, out Vector3 found)
@@ -1162,6 +1197,196 @@ namespace Oxide.Plugins
             }
 
             public static float WaterDepth(Vector3 pos) => WaterLevel.GetWaterDepth(pos, false, false);
+        }
+
+        // The server's "receive a player tick" step, rebuilt for the bot. A real player's client
+        // sends a tick with its new position; the server first checks the jump from the last tick
+        // (BasePlayer.UpdatePositionFromTick), then its anti-cheat checks each move in this order:
+        // no-clip, speed, fly (AntiHack.ValidateMoves), plus inside-terrain (ValidateAgainstTerrain).
+        // A failed check adds violation points and, if that check is set to reject, the move is
+        // refused and the player stays where it was. Too many points and the player is kicked.
+        //
+        // The server only runs this for connected players, so the bot never goes through it. Where
+        // the game has a check we can call, it is called (AntiHack.TestNoClipping,
+        // AntiHack.TestInsideTerrain, AntiHack.IsInsideMesh). Speed and fly only exist as batch
+        // jobs for connected players (AntiHackJobs.*), so their maths is copied step for step.
+        // All limits come from the server's own antihack.* settings. Matches Rust 2636.
+        private class TickGuard
+        {
+            private readonly BasePlayer body;
+            private float lastTick;
+
+            // AntiHack.PlayerSpeedhackState / PlayerFlyhackState / PlayerState, one bot's worth.
+            private float speedPause, speedDistance;
+            private float flyPause, flyVertical, flyHorizontal;
+            private bool inAir;
+            private float violationLevel, lastViolationTime;
+            private string lastViolationType = "none";
+
+            public bool Kicked;
+            private int ticks, tickRejects, noclips, speeds, flies, terrains, kicks;
+
+            public TickGuard(BasePlayer player)
+            {
+                body = player;
+                lastTick = Time.time;
+            }
+
+            // What AntiHack.ResetTimer and an admin teleport do: forget the movement history.
+            public void Reset(Vector3 pos)
+            {
+                speedDistance = 0f;
+                flyVertical = flyHorizontal = 0f;
+                inAir = false;
+                lastTick = Time.time;
+            }
+
+            // AntiHack.ShouldIgnore, minus the parts that need a connection.
+            private bool Ignored()
+            {
+                if (body.IsAdmin && ConVar.AntiHack.userlevel < 1) return true;
+                if (body.IsDeveloper && ConVar.AntiHack.userlevel < 2) return true;
+                return body.IsSpectating() || body.isInvisible;
+            }
+
+            // Returns true if the move from 'from' to 'to' is accepted.
+            public bool Receive(Vector3 from, Vector3 to, bool running)
+            {
+                var dt = Mathf.Clamp(Time.time - lastTick, 0.001f, ConVar.AntiHack.maxdeltatime);
+                lastTick = Time.time;
+                ticks++;
+                Fade(dt);
+                if (Ignored()) return true;
+
+                // BasePlayer.UpdatePositionFromTick: one tick may not jump too far.
+                var maxTick = inAir ? ConVar.AntiHack.tick_max_distance_falling : ConVar.AntiHack.tick_max_distance;
+                if (Vector3.Distance(from, to) > maxTick + ConVar.AntiHack.tick_distance_forgiveness)
+                {
+                    // The server snaps the player back and resets its anti-cheat timers.
+                    tickRejects++;
+                    Reset(from);
+                    return false;
+                }
+
+                var accepted = true;
+
+                // No-clip: the game's own capsule test along the move.
+                if (ConVar.AntiHack.noclip_protection > 0)
+                {
+                    Collider hit;
+                    var offset = BasePlayer.NoClipOffset();
+                    if (AntiHack.TestNoClipping(body, from + offset, to + offset, BasePlayer.NoClipRadius(ConVar.AntiHack.noclip_margin), ConVar.AntiHack.noclip_backtracking, out hit, false, null, false, false, false))
+                    {
+                        noclips++;
+                        if (noclips <= 5) Interface.Oxide.LogInfo("[AiBot] no-clip flag: " + (hit != null ? hit.name + " layer " + LayerMask.LayerToName(hit.gameObject.layer) : "null") + " from " + from + " to " + to + " offset " + offset + " r " + BasePlayer.NoClipRadius(ConVar.AntiHack.noclip_margin));
+                        Violation("NoClip", ConVar.AntiHack.noclip_penalty);
+                        if (ConVar.AntiHack.noclip_reject) accepted = false;
+                    }
+                }
+
+                // Speed: AntiHackJobs.ProgressSpeedingStates, CalcSpeedHackSpeed, CalcDistAndBudget,
+                // AdjustDistBasedOnNormals, TestAreSpeeding.
+                if (accepted && ConVar.AntiHack.speedhack_protection > 0)
+                {
+                    speedPause = Mathf.Max(0f, speedPause - dt);
+                    var ducking = body.modelState.ducked ? 1f : 0f;
+                    var maxSpeed = Mathf.Lerp(Mathf.Lerp(2.8f, 5.5f, running ? 1f : 0f), 1.7f, ducking) * (1f - body.clothingMoveSpeedReduction);
+                    var delta = to - from;
+                    var dist = ConVar.AntiHack.speedhack_protection >= 3 ? delta.magnitude : new Vector2(delta.x, delta.z).magnitude;
+                    var budget = maxSpeed * dt;
+                    if (dist > budget && TerrainMeta.HeightMap != null)
+                    {
+                        // Running downhill is allowed to be a bit faster.
+                        var n = TerrainMeta.HeightMap.GetNormal(from);
+                        dist = Mathf.Max(0f, dist - Mathf.Max(0f, Vector3.Dot(new Vector3(n.x, 0f, n.z), new Vector3(delta.x, 0f, delta.z))) * ConVar.AntiHack.speedhack_slopespeed * dt);
+                    }
+                    var forgiveness = Mathf.Max(speedPause > 0f ? ConVar.AntiHack.speedhack_forgiveness_inertia : ConVar.AntiHack.speedhack_forgiveness, 0.1f);
+                    var cap = forgiveness + Mathf.Max(ConVar.AntiHack.speedhack_forgiveness, 0.1f);
+                    speedDistance = Mathf.Clamp(speedDistance, -cap, cap);
+                    speedDistance = Mathf.Clamp(speedDistance - budget, -cap, cap);
+                    var speeding = speedDistance > forgiveness;
+                    if (!speeding)
+                    {
+                        speedDistance = Mathf.Clamp(speedDistance + dist, -cap, cap);
+                        speeding = speedDistance > forgiveness;
+                    }
+                    if (speeding)
+                    {
+                        speeds++;
+                        Violation("SpeedHack", ConVar.AntiHack.speedhack_penalty);
+                        if (ConVar.AntiHack.speedhack_reject) accepted = false;
+                    }
+                }
+
+                // Fly: TestAreFlying's ground test (a capsule under the feet, in the middle of the
+                // move) and AntiHackJobs.TestAreFlyingJob's distance limits while in the air.
+                if (accepted && ConVar.AntiHack.flyhack_protection > 0)
+                {
+                    flyPause = Mathf.Max(0f, flyPause - dt);
+                    var mid = (from + to) * 0.5f;
+                    var radius = 0.5f - ConVar.AntiHack.flyhack_margin;
+                    var grounded = Physics.CheckCapsule(mid + new Vector3(0f, 0.5f - ConVar.AntiHack.flyhack_extrusion, 0f), mid + new Vector3(0f, 1.3f, 0f), radius, 1503895809, QueryTriggerInteraction.Ignore)
+                        || WaterLevel.GetWaterDepth(mid, false, false) > 0.01f;
+                    inAir = !grounded;
+                    if (inAir)
+                    {
+                        var d = to - from;
+                        var flat = new Vector2(d.x, d.z).magnitude;
+                        if (d.y >= 0f) flyVertical += d.y;
+                        if (Mathf.Abs(d.y) < flat) flyHorizontal += flat;
+                        var fv = flyPause > 0f ? ConVar.AntiHack.flyhack_forgiveness_vertical_inertia : ConVar.AntiHack.flyhack_forgiveness_vertical;
+                        var fh = flyPause > 0f ? ConVar.AntiHack.flyhack_forgiveness_horizontal_inertia : ConVar.AntiHack.flyhack_forgiveness_horizontal;
+                        if (flyVertical > BasePlayer.GetJumpHeight() + fv || flyHorizontal > 5f + fh)
+                        {
+                            flies++;
+                            Violation("FlyHack", ConVar.AntiHack.flyhack_penalty);
+                            if (ConVar.AntiHack.flyhack_reject) accepted = false;
+                        }
+                    }
+                    else flyVertical = flyHorizontal = 0f;
+                }
+
+                // Inside terrain or inside a rock: AntiHack.ValidateAgainstTerrain.
+                if (accepted && ConVar.AntiHack.terrain_protection > 0)
+                {
+                    var inside = AntiHack.TestInsideTerrain(to) || (ConVar.AntiHack.terrain_check_geometry && AntiHack.IsInsideMesh(to));
+                    if (inside)
+                    {
+                        terrains++;
+                        Violation("InsideTerrain", ConVar.AntiHack.terrain_penalty);
+                        accepted = false;
+                    }
+                }
+
+                return accepted;
+            }
+
+            // AntiHack.AddViolation and EnforceViolations.
+            private void Violation(string type, float amount)
+            {
+                violationLevel += amount;
+                lastViolationTime = Time.realtimeSinceStartup;
+                lastViolationType = type;
+                if (violationLevel > ConVar.AntiHack.maxviolation && ConVar.AntiHack.enforcementlevel > 0 && !Kicked)
+                {
+                    // A real player would be kicked here. The bot stops moving until /bot roam.
+                    Kicked = true;
+                    kicks++;
+                    Interface.Oxide.LogWarning("[AiBot] Anti-cheat would kick " + body.displayName + " (" + type + ", violation level " + violationLevel.ToString("0") + ")");
+                    violationLevel = 0f;
+                }
+            }
+
+            // AntiHack.FadeViolations.
+            private void Fade(float dt)
+            {
+                if (Time.realtimeSinceStartup - lastViolationTime > ConVar.AntiHack.relaxationpause)
+                    violationLevel = Mathf.Max(0f, violationLevel - ConVar.AntiHack.relaxationrate * dt);
+            }
+
+            public string Describe() =>
+                "anti-cheat: " + ticks + " moves checked; flagged: tick jump " + tickRejects + ", no-clip " + noclips + ", speed " + speeds + ", fly " + flies + ", inside terrain " + terrains
+                + "; violation level " + violationLevel.ToString("0.0") + "/" + ConVar.AntiHack.maxviolation + " (last " + lastViolationType + "), kicks " + kicks + (Kicked ? " [stopped: would have been kicked]" : "");
         }
     }
 }

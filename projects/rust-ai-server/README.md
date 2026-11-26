@@ -125,6 +125,42 @@ around, repeats. Paths that cross water deeper than 0.4 m are refused. If it mov
 0.6 m in 3 s it re-paths, then picks a new spot, then hops a few metres to the nearest walkable
 spot. The hop is a short teleport, so a bot boxed in by walls will hop out through them.
 
+### Movement checks (the server's tick process, rebuilt)
+
+A real player's client sends the server a tick with each new position, and the server checks it
+before accepting it. The server only does that for connected players, so it never runs for a
+bot. `TickGuard` in `AiBot.cs` rebuilds that step, and every move the bot makes goes through it:
+
+1. Tick jump: one move may not be longer than `antihack.tick_max_distance`
+   (`BasePlayer.UpdatePositionFromTick`). Refused moves reset the history, as the server does.
+2. No-clip: the game's own `AntiHack.TestNoClipping`, with the same offset and radius.
+3. Speed: the maths of the server's speed-check jobs (`AntiHackJobs.*`) copied step for step:
+   2.8 m/s walking, 5.5 running, 1.7 crouched, less with heavy clothing, a downhill allowance,
+   and the same forgiveness budget.
+4. Fly: the same ground test under the feet and the same limits while in the air.
+5. Inside terrain or rocks: the game's own `AntiHack.TestInsideTerrain` / `IsInsideMesh`.
+
+All limits come from the server's `antihack.*` settings. A failed check adds violation points
+and, where that check is set to reject, the move doesn't happen. Past `antihack.maxviolation` a
+player would be kicked; the bot stops moving until `/bot roam`. `/bot info` shows the counts.
+A hop when stuck is checked like any other move, so it's refused unless it is tiny.
+`/bot unstuck` is an admin teleport out of a rock or wall, like the game's own teleport. Matches
+Rust 2636: after a game update, compare it with the server's `AntiHack` code again.
+
+Tested: a deliberate 9 m/s run had 545 moves refused for speed; normal roaming had 1 flag in
+953 moves (a hop through a tree, correctly refused).
+
+## Roadmap
+
+- Movement option C: a client-style movement simulator (collide and slide, step up, gravity and
+  fall damage, jumping, crouching, swimming), sending its moves through `TickGuard`.
+- Keep the "brain" (decisions) behind a clean interface, separate from the "body" (movement,
+  actions). The goal is a bot that looks like a player, not a smart one, using our own simple
+  AI, not a downloaded LLM.
+- Multi-bot stage: try a companion process on the GPU that batches every bot's brain and
+  learned-movement work, while the server CPU keeps doing game, physics and anti-cheat. The
+  brain/body split is what makes that possible.
+
 ## Vanilla AI
 
 `config\server.cfg` turns off wildlife, scientist spawners, Bradley and events. A few built-in
