@@ -826,6 +826,29 @@ namespace Oxide.Plugins
 
         private class Cand { public Vector3 Spot; public float Depth, Time, Exposed, Away, Climb, Score; public bool Routed; }
 
+        private static readonly int FloorMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed");
+
+        // A hiding spot is somewhere with something solid right next to it on the attacker's side
+        // (a rock, tree, wall, or ground rising towards them), not the top of something where it
+        // is only hidden because the slope falls away. Two checks:
+        //  - the top of something: the ground 2.5 m around is lower on (nearly) every side
+        //  - nothing solid within CoverReach towards the attacker at chest height
+        private const float CoverReach = 6f;
+        private static int CoverProblem(Vector3 spot, Vector3 attacker)
+        {
+            var lower = 0;
+            for (var ang = 0; ang < 360; ang += 45)
+            {
+                var p = spot + Quaternion.Euler(0f, ang, 0f) * Vector3.forward * 2.5f;
+                RaycastHit hit;
+                if (!Physics.Raycast(p + Vector3.up * 3f, Vector3.down, out hit, 8f, FloorMask, QueryTriggerInteraction.Ignore) || hit.point.y < spot.y - 0.5f) lower++;
+            }
+            if (lower >= 6) return 1;
+            var toward = attacker - spot; toward.y = 0f;
+            var chest = spot + Vector3.up * 1.2f;
+            return Physics.Raycast(chest, toward.normalized, CoverReach, SightMask, QueryTriggerInteraction.Ignore) ? 0 : 2;
+        }
+
         private static bool SeesHead(Vector3 eyes, Vector3 feet) => !Physics.Linecast(eyes, feet + Vector3.up * 1.5f, SightMask, QueryTriggerInteraction.Ignore);
         private static bool SeesChest(Vector3 eyes, Vector3 feet) => !Physics.Linecast(eyes, feet + Vector3.up * 0.9f, SightMask, QueryTriggerInteraction.Ignore);
 
@@ -852,6 +875,7 @@ namespace Oxide.Plugins
 
             // 1. Candidates in rings, every 3 m out to FleeRadius, in 24 directions.
             var cands = new List<Cand>();
+            int tops = 0, open = 0;
             for (var r = 3f; r <= o.FleeRadius; r += 3f)
                 for (var ang = 0; ang < 360; ang += 15)
                 {
@@ -863,6 +887,7 @@ namespace Oxide.Plugins
                     if (Vector3.Distance(spot, them) < myDist) continue; // no running towards them
                     // 2. Deep cover: hidden from where they are now (required), and how many of the other views.
                     if (CanSee(eyes, spot)) continue;
+                    var why = CoverProblem(spot, them); if (why == 1) { tops++; continue; } if (why == 2) { open++; continue; }
                     var hidden = 0;
                     foreach (var v in views) { if (!SeesHead(v, spot)) hidden++; if (!SeesChest(v, spot)) hidden++; }
                     var c = new Cand { Spot = spot, Depth = hidden / (views.Length * 2f), Away = Vector3.Distance(spot, them), Climb = Mathf.Max(0f, spot.y - me.y) };
@@ -902,7 +927,13 @@ namespace Oxide.Plugins
                 var moved = !d.HasCover || Vector3.Distance(d.Cover, best.Spot) > 3f;
                 d.Cover = best.Spot; d.HasCover = true; d.Picks++;
                 if (moved) Puts("[danger] cover " + Vector3.Distance(me, best.Spot).ToString("0") + " m away, score " + best.Score.ToString("0.0") + " (depth " + best.Depth.ToString("0.00")
-                    + ", " + best.Time.ToString("0.0") + " s run, " + best.Exposed.ToString("0.0") + " s in view, ends " + best.Away.ToString("0") + " m from them, climb " + best.Climb.ToString("0.0") + " m; " + cands.Count + " hidden spots found)");
+                    + ", " + best.Time.ToString("0.0") + " s run, " + best.Exposed.ToString("0.0") + " s in view, ends " + best.Away.ToString("0") + " m from them, climb " + best.Climb.ToString("0.0") + " m; " + cands.Count + " hidden spots found, " + tops + " tops and " + open + " open spots skipped)");
+                if (a.IsAdmin)
+                {
+                    // Show the attacker (admins only see debug drawing) where it's heading.
+                    a.SendConsoleCommand("ddraw.sphere", 3f, Color.cyan, best.Spot + Vector3.up * 0.5f, 0.5f);
+                    a.SendConsoleCommand("ddraw.text", 3f, Color.white, best.Spot + Vector3.up * 2f, "cover " + best.Score.ToString("0.0"));
+                }
                 return;
             }
             // No cover within reach: just sprint straight away from them.
