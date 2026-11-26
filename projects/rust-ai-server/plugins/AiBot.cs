@@ -1172,8 +1172,13 @@ namespace Oxide.Plugins
                 return route;
             }
 
+            // The route check uses the same tests the walker will meet on the way: its own
+            // chest/knee check, then the game's no-clip test, so a route that passes can be walked.
             private bool Blocked(Vector3 a, Vector3 b, Vector3 offset, float radius)
             {
+                var dir = b - a;
+                dir.y = 0f;
+                if (dir.sqrMagnitude > 0.0001f && Blocked(a, dir.normalized)) return true;
                 if (ConVar.AntiHack.noclip_protection <= 0) return false;
                 Collider hit;
                 return AntiHack.TestNoClipping(body, a + offset, b + offset, radius, ConVar.AntiHack.noclip_backtracking, out hit, false, null, false, false, false);
@@ -1209,6 +1214,7 @@ namespace Oxide.Plugins
                         // Something knee to chest high in the way: jump it, like a player would.
                         if (pos == start && TryJump(pos, dir)) return;
                         blocked++;
+                        lastStop = WhyBlocked(pos, dir, move);
                         if (Vector3.Distance(pos, goal) < 2f) corner = corners.Count; // close enough
                         break;
                     }
@@ -1221,7 +1227,8 @@ namespace Oxide.Plugins
                 if (pos != start)
                 {
                     // Every move is a tick: the server's checks decide whether it happens.
-                    if (Guard.Receive(start, pos, speed > WalkSpeed))
+                    if (!Guard.Receive(start, pos, speed > WalkSpeed)) lastStop = "the anti-cheat refused the step (" + Guard.LastType + ")";
+                    else
                     {
                         travelled += Vector3.Distance(start, pos);
                         deepest = Mathf.Max(deepest, WaterDepth(pos));
@@ -1236,6 +1243,37 @@ namespace Oxide.Plugins
                     return;
                 }
                 CheckStuck();
+            }
+
+            // Why the last step didn't happen, for the stuck report.
+            private string lastStop = "nothing";
+
+            private string WhyBlocked(Vector3 pos, Vector3 dir, float move)
+            {
+                RaycastHit hit;
+                foreach (var h in new[] { 1.3f, 0.6f })
+                    if (Physics.SphereCast(pos + Vector3.up * h - dir * 0.1f, 0.34f, dir, out hit, 0.5f, BlockMask, QueryTriggerInteraction.Ignore))
+                        return (h > 1f ? "chest" : "knee") + "-height check hit " + Name(hit.collider) + " (" + LayerMask.LayerToName(hit.collider.gameObject.layer) + ", surface tilted " + Vector3.Angle(hit.normal, Vector3.up).ToString("0") + " deg, "
+                            + (HeightAhead(pos, dir, 0.9f) > 50f ? "too tall to jump" : HeightAhead(pos, dir, 0.9f).ToString("0.0") + " m tall") + ")";
+                var at = pos + dir * move;
+                if (!Physics.Raycast(at + Vector3.up * MaxStepUp, Vector3.down, out hit, MaxStepUp + MaxDrop, GroundMask, QueryTriggerInteraction.Ignore))
+                    return "no ground within 1 m up or 2 m down ahead (a drop or a hole)";
+                return "water ahead too deep (" + WaterDepth(hit.point).ToString("0.0") + " m)";
+            }
+
+            private static string Name(Collider c)
+            {
+                var e = c.GetComponentInParent<BaseEntity>();
+                var n = e != null ? e.ShortPrefabName : c.transform.root.name;
+                var i = n.IndexOf(" (", StringComparison.Ordinal);
+                return i > 0 ? n.Substring(0, i) : n;
+            }
+
+            private void ReportStuck()
+            {
+                var pos = body.transform.position;
+                Interface.Oxide.LogInfo("[AiBot] STUCK #" + stucks + " at " + pos.ToString("F1") + " (" + MapHelper.PositionToString(pos) + "), " + state
+                    + (corners.Count > 0 ? ", " + Vector3.Distance(pos, goal).ToString("0") + " m from its goal" : "") + ": " + lastStop);
             }
 
             #region Jump
@@ -1311,9 +1349,11 @@ namespace Oxide.Plugins
             {
                 RaycastHit hit;
                 // Chest and knee height, the same 0.34 m radius the no-clip check uses, so the
-                // walker stops at logs and rocks instead of having the move refused.
-                return Physics.SphereCast(pos + Vector3.up * 1.3f - dir * 0.1f, 0.34f, dir, out hit, 0.5f, BlockMask, QueryTriggerInteraction.Ignore)
-                    || Physics.SphereCast(pos + Vector3.up * 0.6f - dir * 0.1f, 0.34f, dir, out hit, 0.5f, BlockMask, QueryTriggerInteraction.Ignore);
+                // walker stops at logs and rocks instead of having the move refused. A gentle
+                // rock surface at knee height (under MaxUphill) is ground to walk up, not a wall.
+                if (Physics.SphereCast(pos + Vector3.up * 1.3f - dir * 0.1f, 0.34f, dir, out hit, 0.5f, BlockMask, QueryTriggerInteraction.Ignore)) return true;
+                return Physics.SphereCast(pos + Vector3.up * 0.6f - dir * 0.1f, 0.34f, dir, out hit, 0.5f, BlockMask, QueryTriggerInteraction.Ignore)
+                    && Vector3.Angle(hit.normal, Vector3.up) >= MaxUphill;
             }
 
             // Ground under a point at about the same height; false for cliffs, walls and deep water.
@@ -1342,6 +1382,7 @@ namespace Oxide.Plugins
                 }
                 if (Time.time - stuckSince < StuckSeconds) return;
                 stucks++;
+                ReportStuck();
                 stuckLevel++;
                 ResetStuck();
                 if (stuckLevel == 1)
@@ -1461,6 +1502,7 @@ namespace Oxide.Plugins
             private string lastViolationType = "none";
 
             public bool Kicked;
+            public string LastType => lastViolationType;
             private int ticks, tickRejects, noclips, speeds, flies, terrains, kicks;
 
             public TickGuard(BasePlayer player)
