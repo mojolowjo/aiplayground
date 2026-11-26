@@ -506,6 +506,17 @@ namespace Oxide.Plugins
             arg.ReplyWith(walker.GoTo(spot, arg.GetBool(2)) ? saved.Name + " is going to " + spot.ToString("F1") + ", " + Vector3.Distance(spot, bot.transform.position).ToString("0") + " m." : "No route: " + walker.lastPlanProblem);
         }
 
+        // Test: aibot.gotoxyz <x> <y> <z> - walk to that exact point (like /bot path on a standable spot).
+        [ConsoleCommand("aibot.gotoxyz")]
+        private void ConGotoXyz(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !arg.IsAdmin) return;
+            if (!Alive) { arg.ReplyWith("No bot."); return; }
+            var spot = new Vector3(arg.GetFloat(0), arg.GetFloat(1), arg.GetFloat(2));
+            BrainOff(); EndJob(null); walker.SetRoaming(false);
+            arg.ReplyWith(walker.GoTo(spot, false) ? saved.Name + " is going to " + spot.ToString("F1") + "." : "No route: " + walker.lastPlanProblem);
+        }
+
         [ConsoleCommand("aibot.spawn")] private void ConSpawn(ConsoleSystem.Arg arg) => FromConsole(arg, "spawn");
         [ConsoleCommand("aibot.info")] private void ConInfo(ConsoleSystem.Arg arg) => FromConsole(arg, "info");
         [ConsoleCommand("aibot.roam")] private void ConRoam(ConsoleSystem.Arg arg) => FromConsole(arg, "roam");
@@ -2150,7 +2161,25 @@ namespace Oxide.Plugins
 
             private List<Vector3> Walkable(List<Vector3> pts, Vector3 to)
             {
-                try { return DryRun(pts, to); }
+                try
+                {
+                    var r = DryRun(pts, to);
+                    // Last word on the finished route: no point more than a jump's height above
+                    // the one before it over a short distance (the top of a tall box, say).
+                    if (r != null)
+                        for (var i = 1; i < r.Count; i++)
+                        {
+                            var rise = r[i].y - r[i - 1].y;
+                            var run = new Vector2(r[i].x - r[i - 1].x, r[i].z - r[i - 1].z).magnitude;
+                            if (rise > MaxJumpUp && run < 2f)
+                            {
+                                lastPlanProblem = "a point " + rise.ToString("0.0") + " m up in " + run.ToString("0.0") + " m, higher than a player can jump";
+                                RejectedBlocked++;
+                                return null;
+                            }
+                        }
+                    return r;
+                }
                 finally { dryLegs?.Park(); } // out of the way, so the dry-run body never blocks anyone
             }
 
@@ -2365,9 +2394,13 @@ namespace Oxide.Plugins
                 // Any way up counts (a jump, or sliding up an edge): it may never end up standing
                 // more than a jump's height above where it last stood. Walking up a slope is fine,
                 // since that raises where it last stood a little at a time.
-                // Only a landing (in the air last step, standing now) is judged; while it keeps
-                // standing, or after a teleport, where it stands is simply the new reference.
-                if (legs.Grounded && (wasGrounded || next.y - lastStandY <= MaxJumpUp)) lastStandY = next.y;
+                // The reference only moves while it isn't in a jump: during a jump the controller
+                // can count as "standing" on the box's edge it's sliding up, which used to let the
+                // reference ride up with it. Now it stays at the take-off height until it lands.
+                if (legs.Grounded && next.y - lastStandY <= MaxJumpUp)
+                {
+                    if (landedSinceHop && !hopNow) lastStandY = next.y;
+                }
                 else if (legs.Grounded)
                 {
                     // Back off the edge a little and keep falling. This must not count as landing,
