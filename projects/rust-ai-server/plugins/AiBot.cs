@@ -499,6 +499,7 @@ namespace Oxide.Plugins
             if (odds.Source.IndexOf("edited", StringComparison.Ordinal) < 0) odds.Source += ", edited in game";
             Interface.Oxide.DataFileSystem.WriteObject(OddsFile, odds);
             Walker.PerchRadius = odds.PerchRadius;
+            Walker.DodgeAngle = odds.FleeZigzag;
             Puts("Brain odds changed: " + string.Join(" ", a));
             return "Set " + (i == 1 ? a[0] + " " : "") + field.Name + " = " + a[i + 1] + ". The bot uses it from its next decision.";
         }
@@ -829,7 +830,7 @@ namespace Oxide.Plugins
         // first 30 s the attacker could see it, plus 0.1 per hit after it reacted, plus 1 if it
         // died. Each setting keeps a running average of its chases; a variation that beats the
         // best average over 2+ chases becomes the new best and is saved to the odds file.
-        private static readonly string[] TrainedFields = { "FleeDepth", "FleeTime", "FleeExposed", "FleeDistance", "FleeRetreat", "FleeRadius" };
+        private static readonly string[] TrainedFields = { "FleeDepth", "FleeTime", "FleeExposed", "FleeDistance", "FleeRetreat", "FleeRadius", "FleeZigzag" };
 
         private class Training
         {
@@ -872,6 +873,7 @@ namespace Oxide.Plugins
         private void ApplyFlee(Dictionary<string, float> s)
         {
             foreach (var kv in s) typeof(Odds).GetField(kv.Key)?.SetValue(odds, kv.Value);
+            Walker.DodgeAngle = odds.FleeZigzag;
         }
 
         // At the start of a chase in training mode: the pending variation if one needs a second
@@ -880,6 +882,7 @@ namespace Oxide.Plugins
         {
             var t = Train();
             if (t.Best == null) t.Best = CurrentFlee();
+            foreach (var kv in CurrentFlee()) if (!t.Best.ContainsKey(kv.Key)) t.Best[kv.Key] = kv.Value; // settings added since training started
             // The best needs its own score first (2 chases), and gets re-checked every 4th chase,
             // since people chase differently from one go to the next.
             if (t.BestChases < 2 || t.Chases.Count % 4 == 3) return new Dictionary<string, float>(t.Best);
@@ -1006,6 +1009,7 @@ namespace Oxide.Plugins
             var dist = gone ? float.MaxValue : Vector3.Distance(a.transform.position, bot.transform.position);
             if (!gone) d.Closest = Mathf.Min(d.Closest, dist);
             var seen = !gone && dist < 300f && CanSee(a.eyes.position, bot.transform.position);
+            walker.Dodge = seen; // weave while it can be seen, run straight once hidden
             if (seen) d.SeenTime += now - d.LastTick;
             d.LastTick = now;
             if (d.Seen && !seen) d.LosBreaks++;
@@ -1274,6 +1278,7 @@ namespace Oxide.Plugins
             Puts("[danger] " + saved.Name + " calmed down (" + why + ") after " + (Time.time - d.Started).ToString("0") + " s: hit " + d.Hits + " times for " + d.Damage.ToString("0")
                 + " damage, closest " + (d.Closest < float.MaxValue ? d.Closest.ToString("0") + " m" : "?") + ", broke line of sight " + d.LosBreaks + " times, " + d.Picks + " runs, health " + bot.health.ToString("0") + ".");
             EndChase(d, why, false);
+            walker.Dodge = false;
             walker.Halt();
             if (saved.Brain) mind.Until = Time.time + StopLength();
             else if (d.WasRoaming) walker.SetRoaming(true);
@@ -1307,6 +1312,8 @@ namespace Oxide.Plugins
             // Once hidden it keeps going: to spots at least 4 m further away, still hidden, with
             // at most FleeRetreatMaxView seconds in view on the way; each metre gained is worth FleeRetreat.
             public float FleeRetreat = 0.3f, FleeRetreatMaxView = 0.3f;
+            // Weaving while it can be seen: up to this many degrees off its line (0 = run straight).
+            public float FleeZigzag = 35f;
             // Standing on an edge: ground must be within this many metres of its middle, or it
             // slides off (0.5 = never slide, like the plain character controller).
             public float PerchRadius = 0.25f;
@@ -1359,7 +1366,7 @@ namespace Oxide.Plugins
             var t = System.IO.File.GetLastWriteTimeUtc(path);
             if (t == oddsTime) return;
             oddsTime = t;
-            try { odds = Interface.Oxide.DataFileSystem.ReadObject<Odds>(OddsFile) ?? new Odds(); Walker.PerchRadius = odds.PerchRadius; Puts("Brain odds loaded (" + odds.Source + ")."); }
+            try { odds = Interface.Oxide.DataFileSystem.ReadObject<Odds>(OddsFile) ?? new Odds(); Walker.PerchRadius = odds.PerchRadius; Walker.DodgeAngle = odds.FleeZigzag; Puts("Brain odds loaded (" + odds.Source + ")."); }
             catch (Exception e) { Puts("Brain odds file is broken, keeping the old odds: " + e.Message); }
         }
 
@@ -1988,6 +1995,9 @@ namespace Oxide.Plugins
             public bool Working; // an action is running: no wandering or looking around
             public bool LookAround; // glance around while standing, without wandering off (the brain decides when to move)
             public float RunShare = 0.4f; // share of wander trips run rather than walked
+            public bool Dodge; // being watched while running away: weave
+            public static float DodgeAngle = 35f;
+            private float dodgeSwitch, dodgeSide, dodgeNow;
 
             // One wander trip, chosen by the brain rather than by roaming.
             public void WanderOnce() => PickTrip();
@@ -2974,6 +2984,19 @@ namespace Oxide.Plugins
                         ResetStuck();
                         return;
                     }
+                }
+                // Dodging while being watched: zigzag off the line by up to DodgeAngle, switching
+                // sides every 0.5 to 1.2 s, the way players weave when they're being shot at. Not
+                // close to a corner (it would miss it) or on a planned jump.
+                if (Dodge && DodgeAngle > 0f && flat.magnitude > 1.5f && !cornerJumps.ContainsKey(corner) && landedSinceHop)
+                {
+                    if (Time.time >= dodgeSwitch)
+                    {
+                        dodgeSide = dodgeSide >= 0f ? -1f : 1f;
+                        dodgeNow = dodgeSide * UnityEngine.Random.Range(0.5f, 1f) * DodgeAngle;
+                        dodgeSwitch = Time.time + UnityEngine.Random.Range(0.5f, 1.2f);
+                    }
+                    dir = Quaternion.Euler(0f, dodgeNow, 0f) * dir;
                 }
                 // In the air after a planned jump (a gap, or where a player jumped): carry the
                 // speed of a sprint jump, as a player would take it.
