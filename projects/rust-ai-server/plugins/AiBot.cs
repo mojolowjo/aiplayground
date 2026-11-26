@@ -71,6 +71,8 @@ namespace Oxide.Plugins
             try { saved = Interface.Oxide.DataFileSystem.ReadObject<Saved>(FileName); } catch { saved = null; }
             KeepIdsReserved();
             LoadOdds();
+            Walker.DoorUse = (d, open) => UseDoor(d, open);
+            Walker.DoorOpenable = d => CanOpen(d, bot);
             jobTimer = timer.Every(0.2f, TickJob);
             brainTimer = timer.Every(0.5f, BrainTick);
             Trails.Load();
@@ -1037,6 +1039,7 @@ namespace Oxide.Plugins
             if (!gone) d.Closest = Mathf.Min(d.Closest, dist);
             var seen = !gone && dist < 300f && CanSee(a.eyes.position, bot.transform.position);
             walker.Dodge = seen; // weave while it can be seen, run straight once hidden
+            walker.CloseDoorsBehind = true;
             if (seen) d.SeenTime += now - d.LastTick;
             d.LastTick = now;
             if (d.Seen && !seen) d.LosBreaks++;
@@ -1306,6 +1309,7 @@ namespace Oxide.Plugins
                 + " damage, closest " + (d.Closest < float.MaxValue ? d.Closest.ToString("0") + " m" : "?") + ", broke line of sight " + d.LosBreaks + " times, " + d.Picks + " runs, health " + bot.health.ToString("0") + ".");
             EndChase(d, why, false);
             walker.Dodge = false;
+            walker.CloseDoorsBehind = false;
             walker.Halt();
             if (saved.Brain) mind.Until = Time.time + StopLength();
             else if (d.WasRoaming) walker.SetRoaming(true);
@@ -1921,6 +1925,27 @@ namespace Oxide.Plugins
 
         private BaseEntity.RPCMessage FromBot() => new BaseEntity.RPCMessage { player = bot, connection = null, read = null };
 
+        // Doors: opened and closed through the game's own handlers (RPC_OpenDoor/RPC_CloseDoor,
+        // the same ones a player's "use" key calls, 3 m reach, lock checks included).
+        private string UseDoor(Door door, bool open)
+        {
+            if (!Alive || door == null || door.IsDestroyed) return "no door";
+            if (door.IsOpen() == open) return null;
+            if (Vector3.Distance(bot.eyes.position, door.ClosestPoint(bot.eyes.position)) > 3f) return "out of reach";
+            var handler = FindMethod(door.GetType(), open ? "RPC_OpenDoor" : "RPC_CloseDoor");
+            if (handler == null) return "no handler";
+            handler.Invoke(door, new object[] { FromBot() });
+            return door.IsOpen() == open ? null : "the game refused";
+        }
+
+        // Whether the bot could open this door: no lock, or a lock that lets it through.
+        private static bool CanOpen(Door door, BasePlayer who)
+        {
+            if (door == null || door.IsDestroyed) return false;
+            var lk = door.GetSlot(BaseEntity.Slot.Lock) as BaseLock;
+            return lk == null || !lk.IsLocked() || (who != null && lk.OnTryToOpen(who));
+        }
+
         // The crate's "open" handler (StorageContainer.RPC_OpenLoot, rule IsVisibleTwoWay(3)).
         // Returns null when the loot is open, otherwise why not.
         private string OpenLoot(BaseEntity box)
@@ -2460,8 +2485,9 @@ namespace Oxide.Plugins
             {
                 if (SetPathDirect(to, allowStraight)) return true;
                 // The bot's own map of the area: boxes, crates and wall tops the game's map leaves out.
-                string localWhy;
-                var local = LocalRoute(body.transform.position, to, out localWhy);
+                string localWhy = "";
+                var from0 = body.transform.position;
+                var local = WithDoorsOpen(from0, to, () => { string w; var lr = LocalRoute(from0, to, out w); localWhy = w; return lr; });
                 if (local != null && !Wet(local))
                 {
                     // Walk legs get the usual test walk; jumps across a gap were checked by the map
@@ -2747,8 +2773,8 @@ namespace Oxide.Plugins
             // From where the body got stuck, find a player trail that starts within 2.5 m and comes
             // back to the route's waypoints at least 2 m further on (within 40 m). Returns the trail
             // points to walk and the waypoint it rejoins at, or null.
-            // A recorded trail can pass through a door that was open then. Doors are entities, so
-            // check for a closed one between two trail points at chest height.
+            // A recorded trail can pass through a door. Fine if the door is open or the bot can
+            // open it; not if it's locked against it.
             private static bool ThroughClosedDoor(Vector3 a, Vector3 b)
             {
                 if ((a - b).sqrMagnitude < 0.0001f) return false;
@@ -2756,10 +2782,86 @@ namespace Oxide.Plugins
                 foreach (var h in hits)
                 {
                     var door = h.collider.GetComponentInParent<Door>();
-                    if (door != null && !door.IsOpen()) return true;
+                    if (door == null) continue;
+                    // Open: what the ray hit is the swung-open door leaf, standing in the way.
+                    // Closed: fine if the bot can open it.
+                    if (door.IsOpen() || DoorOpenable == null || !DoorOpenable(door)) return true;
                 }
                 return false;
             }
+
+            #region Doors
+
+            public static Func<Door, bool, string> DoorUse;
+            public static Func<Door, bool> DoorOpenable;
+            public bool CloseDoorsBehind; // running away: shut doors after going through
+            private readonly List<KeyValuePair<Door, float>> openedDoors = new List<KeyValuePair<Door, float>>(); // door, which side it was on
+            private float nextDoorTry, replanAt;
+            public int DoorsOpened, DoorsClosed;
+
+            private static float Side(Door d, Vector3 p) => Mathf.Sign(Vector3.Dot(p - d.transform.position, d.transform.forward));
+
+            // Planning treats doors the bot can open as open: their colliders are switched off for
+            // the length of the check (server physics only, same frame, nothing is sent to players).
+            private T WithDoorsOpen<T>(Vector3 a, Vector3 b, Func<T> plan)
+            {
+                var centre = (a + b) / 2f;
+                var radius = Mathf.Min(45f, Vector3.Distance(a, b) / 2f + 8f);
+                var doors = new List<Door>();
+                Vis.Entities(centre, radius, doors);
+                var off = new List<Collider>();
+                foreach (var d in doors)
+                {
+                    if (d == null || d.IsOpen() || DoorOpenable == null || !DoorOpenable(d)) continue;
+                    foreach (var c in d.GetComponentsInChildren<Collider>())
+                        if (c.enabled && !c.isTrigger) { c.enabled = false; off.Add(c); }
+                }
+                try { return plan(); }
+                finally { foreach (var c in off) if (c != null) c.enabled = true; }
+            }
+
+            // Walking: a closed door right ahead gets opened, like a player pressing use on it.
+            // Running away: once through, it's closed again behind (harder to chase).
+            private bool HandleDoors(Vector3 pos, Vector3 dir)
+            {
+                for (var i = openedDoors.Count - 1; i >= 0; i--)
+                {
+                    var d = openedDoors[i].Key;
+                    if (d == null || d.IsDestroyed) { openedDoors.RemoveAt(i); continue; }
+                    var dist = Vector3.Distance(pos, d.transform.position);
+                    if (dist > 8f) { openedDoors.RemoveAt(i); continue; }
+                    if (CloseDoorsBehind && dist > 1.4f && dist < 3f && Side(d, pos) != openedDoors[i].Value && d.IsOpen())
+                    {
+                        if (DoorUse?.Invoke(d, false) == null) DoorsClosed++;
+                        openedDoors.RemoveAt(i);
+                    }
+                }
+                if (Time.time < nextDoorTry || dir == Vector3.zero) return false;
+                // All hits, since the first one is its own body (the cast starts inside it).
+                Door door = null;
+                foreach (var h in Physics.SphereCastAll(pos + Vector3.up * 1f, 0.3f, dir, 1.6f, ~0, QueryTriggerInteraction.Ignore))
+                {
+                    var dd = h.collider.GetComponentInParent<Door>();
+                    if (dd != null) { door = dd; break; }
+                }
+                if (door == null || door.IsOpen()) return false;
+                nextDoorTry = Time.time + 0.6f;
+                lookYaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+                var why = DoorUse?.Invoke(door, true);
+                if (why == null)
+                {
+                    DoorsOpened++;
+                    openedDoors.Add(new KeyValuePair<Door, float>(door, Side(door, pos)));
+                    // The open door leaf now stands somewhere: once it has swung, plan again
+                    // around it (it may swing towards the bot, into the old line).
+                    replanAt = Time.time + 0.5f;
+                    return true;
+                }
+                Interface.Oxide.LogInfo("[AiBot] couldn't open " + door.ShortPrefabName + ": " + why);
+                return false;
+            }
+
+            #endregion
 
             private List<TrailPoint> TrailBridge(Vector3 from, List<Vector3> way, int w, out int rejoin)
             {
@@ -2829,7 +2931,7 @@ namespace Oxide.Plugins
             {
                 try
                 {
-                    var r = DryRun(pts, to);
+                    var r = WithDoorsOpen(pts[0], to, () => DryRun(pts, to));
                     // A route has to end at the goal's height, not under it: the map snaps a goal
                     // that's off the map (the top of a box) to the ground beside it.
                     if (r != null && to.y - r[r.Count - 1].y > 0.6f)
@@ -3028,6 +3130,15 @@ namespace Oxide.Plugins
                         return;
                     }
                 }
+                // A door in the way: open it (and wait a moment while it swings), then re-plan.
+                if (replanAt > 0f && Time.time >= replanAt)
+                {
+                    replanAt = 0f;
+                    var keepSpeed = speed;
+                    if (SetPath(goal, false)) { speed = keepSpeed; return; }
+                }
+                if (replanAt > 0f) { ResetStuck(); return; }
+                if (HandleDoors(pos, dir)) { ResetStuck(); return; }
                 // Dodging while being watched: zigzag off the line by up to DodgeAngle, switching
                 // sides every 0.5 to 1.2 s, the way players weave when they're being shot at. Not
                 // close to a corner (it would miss it) or on a planned jump.
