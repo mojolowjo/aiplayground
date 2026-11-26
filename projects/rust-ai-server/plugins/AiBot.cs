@@ -72,6 +72,7 @@ namespace Oxide.Plugins
             KeepIdsReserved();
             LoadOdds();
             Walker.DoorUse = (d, open) => UseDoor(d, open);
+            if (Train().SelfPlay) timer.Once(10f, () => { if (Alive) ProbeLine("resuming after a reload: " + SelfPlayCommand("on")); });
             Walker.DoorOpenable = d => CanOpen(d, bot);
             jobTimer = timer.Every(0.2f, TickJob);
             brainTimer = timer.Every(0.5f, BrainTick);
@@ -101,6 +102,9 @@ namespace Oxide.Plugins
             jobTimer?.Destroy();
             brainTimer?.Destroy();
             dangerTimer?.Destroy();
+            // Self-play picks up again after a reload (the flag lives in the training file).
+            selfPlayTimer?.Destroy(); chaserTimer?.Destroy(); probeTimer?.Destroy();
+            RemoveChaser();
             RemoveBody();
         }
 
@@ -426,8 +430,16 @@ namespace Oxide.Plugins
             var verb = args.Length > 0 ? args[0].ToLowerInvariant() : "";
             if (verb == "odds") { SendReply(player, ShowOdds()); return; }
             if (verb == "train") { SendReply(player, TrainCommand(args.Length > 1 ? args[1].ToLowerInvariant() : "")); return; }
+            if (verb == "selfplay") { SendReply(player, SelfPlayCommand(args.Length > 1 ? args[1].ToLowerInvariant() : "")); return; }
             if (verb == "set") { SendReply(player, SetOdd(args.Skip(1).ToArray())); return; }
             SendReply(player, Run(verb, player));
+        }
+
+        [ConsoleCommand("aibot.selfplay")]
+        private void ConSelfPlay(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !arg.IsAdmin) return;
+            arg.ReplyWith(SelfPlayCommand((arg.GetString(0) ?? "").ToLowerInvariant()));
         }
 
         [ConsoleCommand("aibot.train")]
@@ -822,6 +834,9 @@ namespace Oxide.Plugins
             public float Closest = float.MaxValue, Damage;
             public bool WasRoaming;
             public float SeenTime, LastTick; // seconds the attacker could see it since it reacted
+            public bool SelfPlay; // a self-play round (chased by the chaser bot)
+            public int StartStucks, StartFlags; // to tell whether it got stuck or flagged during this chase
+            public string Spoiled; // set by the self-play watchdog when something went wrong
             public Dictionary<string, float> Trial; // the settings tried in this chase (training mode)
             public bool Skip; // /bot train skip: don't count this chase
         }
@@ -838,6 +853,7 @@ namespace Oxide.Plugins
         private class Training
         {
             public bool On;
+            public bool SelfPlay; // self-play running (resumed after a reload)
             public Dictionary<string, float> Best;
             public float BestScore = float.MaxValue;
             public int BestChases;
@@ -848,7 +864,7 @@ namespace Oxide.Plugins
 
         private class Chase
         {
-            public string When, Attacker, Ended;
+            public string When, Attacker, Ended, Source, Reason;
             public float Seconds, SeenSeconds, Score, Closest;
             public int Hits;
             public bool Excluded; // left out of the averages (a bug spoiled it, say)
@@ -864,7 +880,19 @@ namespace Oxide.Plugins
             try { training = Interface.Oxide.DataFileSystem.ReadObject<Training>(TrainingFile); } catch { training = null; }
             if (training == null) training = new Training();
             if (training.Chases == null) training.Chases = new List<Chase>();
+            // Scores are always worked out from the raw numbers saved with each chase, so the
+            // formula can change and every past chase is re-scored the same way.
+            foreach (var c in training.Chases) c.Score = (float)Math.Round(ScoreOf(c.SeenSeconds, c.Seconds, c.Hits, c.Ended == "killed"), 3);
             return training;
+        }
+
+        // The score (lower is better), after m0j: mostly how much of the chase it was in view;
+        // hits count a little and are capped (being in view is what gets you shot anyway);
+        // dying is a clear penalty.
+        private static float ScoreOf(float seenSeconds, float seconds, int hits, bool died)
+        {
+            var share = Mathf.Clamp01(seenSeconds / Mathf.Max(seconds, 1f));
+            return share + Mathf.Min(0.02f * Mathf.Max(0, hits - 1), 0.5f) + (died ? 1f : 0f);
         }
 
         private Dictionary<string, float> CurrentFlee()
@@ -905,19 +933,30 @@ namespace Oxide.Plugins
         {
             if (d == null || !d.Reacted) return;
             var secs = Time.time - d.ReactAt;
-            if (secs < 3f && !died) return; // too short to say anything
-            if (d.Closest > 30f && !died) { Puts("[train] not counted: " + (d.Attacker != null ? d.Attacker.displayName : "?") + " never came within 30 m, so it wasn't a chase"); if (Train().On && training.Best != null) ApplyFlee(training.Best); return; }
+            if (d.SelfPlay) selfPlayChaseEnded = true;
+            // Every chase is saved; only clean ones count for training. Why one doesn't count:
+            string invalid = null;
+            if (d.Skip) invalid = "skipped by hand";
+            else if (secs < (d.SelfPlay ? 8f : 3f) && !died) invalid = "too short (" + secs.ToString("0") + " s)";
+            else if (d.Closest > 30f && !died) invalid = "the attacker never came within 30 m";
+            else if (walker != null && walker.Stucks - d.StartStucks > 3) invalid = "Kestrel got stuck " + (walker.Stucks - d.StartStucks) + " times";
+            else if (walker != null && walker.Guard.Flags - d.StartFlags > 10) invalid = "anti-cheat flagged " + (walker.Guard.Flags - d.StartFlags) + " moves";
+            else if (d.Spoiled != null) invalid = d.Spoiled;
             var window = Mathf.Min(secs, 30f);
-            var score = Mathf.Min(d.SeenTime, window) / Mathf.Max(window, 1f) + 0.1f * Mathf.Max(0, d.Hits - 1) + (died ? 1f : 0f);
+            var score = ScoreOf(d.SeenTime, secs, d.Hits, died);
             var t = Train();
             var chase = new Chase
             {
                 When = DateTime.UtcNow.ToString("u"), Attacker = d.Attacker != null ? d.Attacker.displayName : "?", Ended = ended,
                 Seconds = (float)Math.Round(secs, 1), SeenSeconds = (float)Math.Round(d.SeenTime, 1), Score = (float)Math.Round(score, 3),
-                Closest = d.Closest < float.MaxValue ? (float)Math.Round(d.Closest, 1) : -1f, Hits = d.Hits, Settings = d.Trial ?? CurrentFlee(), Excluded = d.Skip,
+                Closest = d.Closest < float.MaxValue ? (float)Math.Round(d.Closest, 1) : -1f, Hits = d.Hits, Settings = d.Trial ?? CurrentFlee(), Excluded = invalid != null,
+                Source = d.SelfPlay ? "selfplay" : "player", Reason = invalid,
             };
             t.Chases.Add(chase);
-            var msg = "[train] chase " + t.Chases.Count + ": in view " + chase.SeenSeconds + " of " + chase.Seconds + " s, " + d.Hits + " hits" + (died ? ", died" : "") + " -> score " + chase.Score.ToString("0.00");
+            var msg = "[train] chase " + t.Chases.Count + (d.SelfPlay ? " (self-play)" : "") + ": in view " + chase.SeenSeconds + " of " + chase.Seconds + " s, " + d.Hits + " hits" + (died ? ", died" : "") + " -> score " + chase.Score.ToString("0.00")
+                + (invalid != null ? "; NOT COUNTED: " + invalid : "");
+            if (d.SelfPlay) { selfPlayRounds++; if (invalid == null) selfPlayValid++; else { int n; invalidReasons.TryGetValue(invalid.Split('(')[0].Trim(), out n); invalidReasons[invalid.Split('(')[0].Trim()] = n + 1; } }
+            if (invalid != null && t.On && t.Best != null) { ApplyFlee(t.Best); Interface.Oxide.DataFileSystem.WriteObject(TrainingFile, t); Puts(msg); return; }
             if (t.On && d.Trial != null)
             {
                 msg += Judge(t, d.Trial, score);
@@ -939,14 +978,25 @@ namespace Oxide.Plugins
 
         private string Judge(Training t, Dictionary<string, float> trial, float score)
         {
-            var groups = t.Chases.Where(c => !c.Excluded && c.Settings != null).GroupBy(c => Key(c.Settings))
-                .Select(g => new { Key = g.Key, Settings = g.First().Settings, Avg = g.Average(c => c.Score), N = g.Count() }).ToList();
+            // Self-play and real chases are judged separately (a bot chaser isn't a person).
+            var source = selfPlayOn ? "selfplay" : "player";
+            var groups = t.Chases.Where(c => !c.Excluded && c.Settings != null && (c.Source ?? "player") == source).GroupBy(c => Key(c.Settings))
+                .Select(g =>
+                {
+                    var avg = g.Average(c => c.Score);
+                    var n = g.Count();
+                    // Rounds vary a lot (0.2 to 6.4), so two lucky rounds shouldn't crown a
+                    // setting: judge by a cautious estimate, the average plus its uncertainty.
+                    var sd = n > 1 ? Mathf.Sqrt(g.Sum(c => (c.Score - avg) * (c.Score - avg)) / (n - 1)) : 0.8f;
+                    return new { Key = g.Key, Settings = g.First().Settings, Avg = avg, N = n, Cautious = avg + Mathf.Max(sd, 0.2f) / Mathf.Sqrt(n) };
+                }).ToList();
             var bestKey = Key(t.Best);
             var bestGroup = groups.FirstOrDefault(g => g.Key == bestKey);
             var bestAvg = bestGroup != null ? bestGroup.Avg : float.MaxValue;
-            var winner = groups.Where(g => g.N >= 2).OrderBy(g => g.Avg).FirstOrDefault();
+            var bestCautious = bestGroup != null ? bestGroup.Cautious : float.MaxValue;
+            var winner = groups.Where(g => g.N >= 3).OrderBy(g => g.Cautious).FirstOrDefault();
             var note = "";
-            if (winner != null && winner.Key != bestKey && winner.Avg < bestAvg)
+            if (winner != null && winner.Key != bestKey && winner.Cautious < bestCautious)
             {
                 t.Best = new Dictionary<string, float>(winner.Settings);
                 note = "; NEW BEST (avg " + winner.Avg.ToString("0.00") + " over " + winner.N + " chases, was " + (bestAvg < float.MaxValue ? bestAvg.ToString("0.00") : "unscored") + ")";
@@ -957,10 +1007,10 @@ namespace Oxide.Plugins
             t.BestChases = groups.Where(g => g.Key == bestKey).Select(g => g.N).FirstOrDefault();
             var mine = groups.FirstOrDefault(g => g.Key == Key(trial));
             t.Pending = null;
-            if (mine != null && mine.Key != bestKey && mine.N == 1 && mine.Avg < bestAvg)
+            if (mine != null && mine.Key != bestKey && mine.N < 3 && mine.Avg < bestAvg)
             {
                 t.Pending = new Dictionary<string, float>(trial);
-                note += "; looks better than the best (" + bestAvg.ToString("0.00") + "), trying it once more to be sure";
+                note += "; looks better than the best (" + bestAvg.ToString("0.00") + "), trying it again to be sure (" + mine.N + " of 3)";
             }
             else if (mine != null && mine.Key == bestKey) note += "; that was the best settings, now avg " + mine.Avg.ToString("0.00") + " over " + mine.N;
             else if (note == "") note = "; not better than the best (" + (bestAvg < float.MaxValue ? bestAvg.ToString("0.00") : "unscored") + ")";
@@ -989,7 +1039,7 @@ namespace Oxide.Plugins
             var sb = new StringBuilder("Training " + (t.On ? "ON" : "off") + ", " + t.Chases.Count + " chases recorded.\n");
             if (t.Best != null) sb.AppendLine("Best so far (score " + (t.BestScore < 1e30f ? t.BestScore.ToString("0.00") : "not scored yet") + " over " + t.BestChases + " chases): " + string.Join(", ", t.Best.Select(kv => kv.Key.Replace("Flee", "").ToLowerInvariant() + " " + kv.Value.ToString("0.###")).ToArray()));
             foreach (var c in t.Chases.Skip(Math.Max(0, t.Chases.Count - 5))) sb.AppendLine("  " + c.When.Substring(11, 5) + " in view " + c.SeenSeconds + "/" + c.Seconds + " s, hits " + c.Hits + ", score " + c.Score.ToString("0.00"));
-            sb.Append("Score = share of the first 30 s in your view, +0.1 per extra hit, +1 if it died; lower is better. /bot train on|off");
+            sb.Append("Score = share of the whole chase in view, +0.02 per extra hit (at most +0.5), +1 if it died; lower is better. /bot train on|off|skip");
             return sb.ToString();
         }
 
@@ -1002,12 +1052,13 @@ namespace Oxide.Plugins
         {
             if (!Alive || entity != bot || info == null) return;
             var attacker = info.InitiatorPlayer;
-            if (attacker == null || attacker == bot || attacker.IsNpc) return;
+            if (attacker == null || attacker == bot || (attacker.IsNpc && attacker != chaser)) return;
             if (danger != null && danger.Attacker == attacker) { danger.Hits++; return; }
             var wasRoaming = danger != null ? danger.WasRoaming : walker.Roaming;
             danger = new Danger
             {
                 Attacker = attacker, Started = Time.time, Hits = 1, LastHealth = bot.health, WasRoaming = wasRoaming,
+                SelfPlay = attacker == chaser, StartStucks = walker.Stucks, StartFlags = walker.Guard.Flags,
                 ReactAt = Time.time + UnityEngine.Random.Range(MinReaction, MaxReaction), // never faster than 150 ms
             };
             if (dangerTimer == null) dangerTimer = timer.Every(0.1f, DangerTick); // tracks the attacker 10 times a second
@@ -1034,7 +1085,7 @@ namespace Oxide.Plugins
             d.LastHealth = bot.health;
 
             var a = d.Attacker;
-            var gone = a == null || a.IsDestroyed || a.IsDead() || !a.IsConnected;
+            var gone = a == null || a.IsDestroyed || a.IsDead() || (!a.IsConnected && a != chaser);
             var dist = gone ? float.MaxValue : Vector3.Distance(a.transform.position, bot.transform.position);
             if (!gone) d.Closest = Mathf.Min(d.Closest, dist);
             var seen = !gone && dist < 300f && CanSee(a.eyes.position, bot.transform.position);
@@ -1154,7 +1205,8 @@ namespace Oxide.Plugins
                     if (Walker.WaterDepth(spot) > Walker.MaxWater) { no("water"); continue; }
                     if (spot.y - me.y > o.FleeMaxRise) { no("too high"); continue; }
                     var awayFrom = Vector3.Distance(spot, them);
-                    if (awayFrom < myDist + (retreat ? 4f : 0f)) { no(retreat ? "not further away" : "towards them"); continue; }
+                    // Hiding from someone: never towards them; once hidden, each hop must gain 3 m.
+                    if (awayFrom < myDist + (retreat ? 3f : 0f)) { no(retreat ? "not further away" : "towards them"); continue; }
                     if (CanSee(eyes, spot)) { no("seen"); continue; }
                     var why2 = CoverProblem(spot, them);
                     if (why2 == 1) { tops++; no("top"); continue; }
@@ -1242,11 +1294,15 @@ namespace Oxide.Plugins
             var away = me - them; away.y = 0f;
             if (away.sqrMagnitude < 0.01f) away = Vector3.forward;
             away.Normalize();
-            for (var r = 30f; r >= 10f; r -= 10f)
-            {
-                Vector3 spot;
-                if (Walker.Nearest(me + away * r, 4f, out spot) && walker.GoTo(spot, true)) { d.Picks++; return; }
-            }
+            // Straight away first, then fanning out to the sides, so it doesn't just stand there
+            // when the line straight away is blocked (water, a cliff).
+            foreach (var turn in new[] { 0f, 35f, -35f, 70f, -70f, 100f, -100f })
+                for (var r = 30f; r >= 10f; r -= 10f)
+                {
+                    Vector3 spot;
+                    var dirAway = Quaternion.Euler(0f, turn, 0f) * away;
+                    if (Walker.Nearest(me + dirAway * r, 4f, out spot) && Walker.WaterDepth(spot) <= Walker.MaxWater && walker.GoTo(spot, true)) { d.Picks++; return; }
+                }
         }
 
         // /bot hide: the hiding spots around you, scored exactly as the bot scores them when it
@@ -1313,6 +1369,281 @@ namespace Oxide.Plugins
             walker.Halt();
             if (saved.Brain) mind.Until = Time.time + StopLength();
             else if (d.WasRoaming) walker.SetRoaming(true);
+        }
+
+        #endregion
+
+        #region Self-play
+
+        // Self-play (/bot selfplay on|off|status): a second bot, Dusty, chases Kestrel round after
+        // round so the running-away settings can train without a person. Each round: Kestrel is put
+        // somewhere random with full health, Dusty 20-30 m away with sight of it. Dusty runs at it,
+        // shoots when it can see it (4 damage, better odds close up, every 0.6 s), and when it
+        // loses sight runs to where it last saw it, then on in the direction it was going. The
+        // round ends when Kestrel calms down, dies, or after 2 minutes. Every round is saved with
+        // the rest of the training chases; rounds that went wrong are kept but not counted.
+        // A health line goes to carbon\data\AiBotSelfplay.log every minute; a watchdog resets
+        // rounds that hang.
+        private const ulong ChaserId = 9000001; // "Dusty"
+        private BasePlayer chaser;
+        private Walker chaserWalker;
+        private bool selfPlayOn, selfPlayChaseEnded;
+        private Timer selfPlayTimer, chaserTimer, probeTimer;
+        private string roundState = "off";
+        private float roundAt, nextShot, lastSeenAt, chaserMovedAt, kestrelMovedAt, nextChaserPlan;
+        private Vector3 lastSeen, prevSeen, chaserLastPos, kestrelLastPos;
+        private int selfPlayRounds, selfPlayValid, roundResets, chaserShots, chaserHits;
+        private readonly Dictionary<string, int> invalidReasons = new Dictionary<string, int>();
+        private bool roundHadChase;
+
+        private string SelfPlayCommand(string arg)
+        {
+            if (arg == "on")
+            {
+                if (!Alive) return "Kestrel isn't alive; /bot spawn first.";
+                var t = Train();
+                if (!t.On) { t.On = true; if (t.Best == null) t.Best = CurrentFlee(); }
+                t.SelfPlay = true;
+                Interface.Oxide.DataFileSystem.WriteObject(TrainingFile, t);
+                selfPlayOn = true;
+                roundState = "setup";
+                roundAt = Time.time + 1f;
+                selfPlayTimer?.Destroy();
+                selfPlayTimer = timer.Every(1f, SelfPlayTick);
+                chaserTimer?.Destroy();
+                chaserTimer = timer.Every(0.25f, ChaserTick);
+                probeTimer?.Destroy();
+                probeTimer = timer.Every(60f, Probe);
+                Probe();
+                return "Self-play on: Dusty will chase Kestrel round after round; training is on. Health log: carbon\\data\\AiBotSelfplay.log. /bot selfplay off to stop.";
+            }
+            if (arg == "off") { var tt = Train(); tt.SelfPlay = false; Interface.Oxide.DataFileSystem.WriteObject(TrainingFile, tt); SelfPlayOff("turned off"); return "Self-play off; Dusty removed. Training keeps the best settings found."; }
+            return "Self-play " + (selfPlayOn ? "ON (" + roundState + ")" : "off") + ": " + selfPlayRounds + " rounds, " + selfPlayValid + " counted, " + roundResets + " reset by the watchdog; Dusty shot " + chaserShots + " times, hit " + chaserHits
+                + (invalidReasons.Count > 0 ? "; not counted: " + string.Join(", ", invalidReasons.Select(kv => kv.Key + " x" + kv.Value).ToArray()) : "");
+        }
+
+        private void SelfPlayOff(string why)
+        {
+            selfPlayOn = false;
+            roundState = "off";
+            selfPlayTimer?.Destroy(); chaserTimer?.Destroy(); probeTimer?.Destroy();
+            selfPlayTimer = chaserTimer = probeTimer = null;
+            RemoveChaser();
+            ProbeLine("self-play stopped: " + why);
+        }
+
+        private void RemoveChaser()
+        {
+            if (chaserWalker != null) UnityEngine.Object.Destroy(chaserWalker);
+            chaserWalker = null;
+            if (chaser != null && !chaser.IsDestroyed) chaser.Kill();
+            chaser = null;
+        }
+
+        private bool ChaserAlive => chaser != null && !chaser.IsDestroyed && chaser.IsAlive();
+
+        private bool SpawnChaser(Vector3 pos)
+        {
+            RemoveChaser();
+            KeepIdsReserved();
+            var p = GameManager.server.CreateEntity(PlayerPrefab, pos, Quaternion.identity) as BasePlayer;
+            if (p == null) return false;
+            p.enableSaving = false;
+            p.userID = ChaserId;
+            p.UserIDString = ChaserId.ToString();
+            p.Spawn();
+            if (!BasePlayer.bots.Contains(p)) BasePlayer.bots.Add(p);
+            BasePlayer.botColliderWorkQueue.Add(p);
+            p.displayName = "Dusty";
+            p.InitializeHealth(100f, 100f);
+            foreach (var item in Clothes) Give(p, item, p.inventory.containerWear);
+            chaser = p;
+            chaserWalker = p.gameObject.AddComponent<Walker>();
+            chaserWalker.Init(p, 0f, false);
+            chaserWalker.RunShare = 1f;
+            p.SendNetworkUpdateImmediate();
+            return true;
+        }
+
+        private void SelfPlayTick()
+        {
+            if (!selfPlayOn) return;
+            var now = Time.time;
+            if (!Alive) { roundState = "waiting for Kestrel to respawn"; return; }
+            switch (roundState)
+            {
+                case "setup":
+                case "waiting for Kestrel to respawn":
+                    if (now < roundAt) return;
+                    if (!SetupRound()) { roundAt = now + 5f; roundState = "setup"; return; }
+                    roundState = "running";
+                    roundAt = now;
+                    roundHadChase = false;
+                    selfPlayChaseEnded = false;
+                    chaserMovedAt = kestrelMovedAt = now;
+                    chaserLastPos = chaser.transform.position;
+                    kestrelLastPos = bot.transform.position;
+                    return;
+                case "running":
+                    if (danger != null && danger.SelfPlay) roundHadChase = true;
+                    if (selfPlayChaseEnded || (roundHadChase && danger == null)) { EndRound(null); return; }
+                    if (!roundHadChase && now - roundAt > 20f) { EndRound("Dusty never got a hit in to start the chase"); return; }
+                    if (now - roundAt > 120f && danger != null)
+                    {
+                        CalmDown("round time limit (2 min)");
+                        EndRound(null);
+                        return;
+                    }
+                    // Watchdog: someone hasn't moved for 25 s.
+                    if (ChaserAlive && Vector3.Distance(chaser.transform.position, chaserLastPos) > 1f) { chaserLastPos = chaser.transform.position; chaserMovedAt = now; }
+                    if (Vector3.Distance(bot.transform.position, kestrelLastPos) > 1f) { kestrelLastPos = bot.transform.position; kestrelMovedAt = now; }
+                    if (!ChaserAlive) { Spoil("Dusty died or vanished"); return; }
+                    if (now - chaserMovedAt > 25f) { Spoil("Dusty stood still for 25 s"); return; }
+                    if (danger != null && danger.Seen && now - kestrelMovedAt > 25f) { Spoil("Kestrel stood still in view for 25 s"); return; }
+                    return;
+                case "cooldown":
+                    if (now >= roundAt) roundState = "setup";
+                    return;
+            }
+        }
+
+        private void Spoil(string why)
+        {
+            roundResets++;
+            ProbeLine("watchdog reset: " + why);
+            if (danger != null && danger.SelfPlay) { danger.Spoiled = why; CalmDown("watchdog: " + why); }
+            EndRound(null);
+        }
+
+        private void EndRound(string noChase)
+        {
+            if (noChase != null)
+            {
+                selfPlayRounds++;
+                int n; invalidReasons.TryGetValue(noChase, out n); invalidReasons[noChase] = n + 1;
+                ProbeLine("round without a chase: " + noChase);
+            }
+            if (chaserWalker != null) chaserWalker.Halt();
+            roundState = "cooldown";
+            roundAt = Time.time + 3f;
+        }
+
+        // Kestrel somewhere random with full health; Dusty 20-30 m away, with sight of it if possible.
+        private bool SetupRound()
+        {
+            if (danger != null) CalmDown("new round");
+            BrainOff();
+            EndJob(null);
+            walker.SetRoaming(false);
+            Vector3 spot = Vector3.zero;
+            var found = false;
+            // Random places inland (spawn points are all on beaches, with nothing to hide behind).
+            var half = World.Size / 2f - 150f;
+            for (var i = 0; i < 30 && !found; i++)
+            {
+                var p = new Vector3(UnityEngine.Random.Range(-half, half), 0f, UnityEngine.Random.Range(-half, half));
+                p.y = TerrainMeta.HeightMap.GetHeight(p);
+                if (p.y < 4f) continue; // beach or sea
+                Vector3 s;
+                if (Walker.Nearest(p, 6f, out s) && Walker.WaterDepth(s) <= Walker.MaxWater) { spot = s; found = true; }
+            }
+            if (!found) return false;
+            walker.TeleportTo(spot);
+            bot.health = bot.MaxHealth();
+            bot.metabolism.calories.value = bot.metabolism.calories.max;
+            bot.metabolism.hydration.value = bot.metabolism.hydration.max;
+            Vector3 best = Vector3.zero;
+            var haveBest = false;
+            for (var i = 0; i < 16; i++)
+            {
+                var dir = Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f) * Vector3.forward;
+                Vector3 c;
+                if (!Walker.Nearest(spot + dir * UnityEngine.Random.Range(20f, 30f), 4f, out c) || Walker.WaterDepth(c) > Walker.MaxWater) continue;
+                if (!haveBest) { best = c; haveBest = true; }
+                if (CanSee(c + Vector3.up * 1.5f, spot)) { best = c; break; }
+            }
+            if (!haveBest) return false;
+            if (!ChaserAlive) { if (!SpawnChaser(best)) return false; }
+            else { chaserWalker.TeleportTo(best); chaser.health = chaser.MaxHealth(); }
+            lastSeen = prevSeen = spot;
+            lastSeenAt = Time.time;
+            nextShot = Time.time + 1f;
+            nextChaserPlan = 0f;
+            firstShot = true;
+            return true;
+        }
+
+        private bool firstShot;
+
+        // Dusty: chase what it sees, shoot when close enough, hunt the last seen spot when it doesn't.
+        private void ChaserTick()
+        {
+            if (!selfPlayOn || roundState != "running" || !ChaserAlive || !Alive) return;
+            var now = Time.time;
+            var me = chaser.transform.position;
+            var them = bot.transform.position;
+            var dist = Vector3.Distance(me, them);
+            var visible = dist < 80f && CanSee(chaser.eyes.position, them);
+            if (visible)
+            {
+                if (Vector3.Distance(them, lastSeen) > 2f) prevSeen = lastSeen;
+                lastSeen = them;
+                lastSeenAt = now;
+                chaserWalker.Face(them + Vector3.up * 1.2f);
+                if (dist < 35f && now >= nextShot)
+                {
+                    // Tuned so a chase lasts: about 50 damage over 40 s in plain view.
+                    nextShot = now + 0.8f;
+                    chaserShots++;
+                    var chance = firstShot ? 1f : Mathf.Lerp(0.45f, 0.2f, Mathf.InverseLerp(5f, 35f, dist));
+                    firstShot = false;
+                    if (UnityEngine.Random.value < chance) { chaserHits++; bot.Hurt(new HitInfo(chaser, bot, Rust.DamageType.Bullet, 2.5f)); }
+                }
+            }
+            if (now < nextChaserPlan) return;
+            nextChaserPlan = now + 1f;
+            Vector3 goal;
+            if (visible) { if (dist < 5f) { chaserWalker.Halt(); return; } goal = them; }
+            else if (Vector3.Distance(me, lastSeen) > 3f) goal = lastSeen;
+            else
+            {
+                // At the last seen spot and nothing: carry on the way it was going.
+                var way = lastSeen - prevSeen; way.y = 0f;
+                if (way.sqrMagnitude < 0.01f) way = (lastSeen - me);
+                way.y = 0f;
+                goal = lastSeen + (way.sqrMagnitude > 0.01f ? way.normalized : Vector3.forward) * 15f;
+                prevSeen = lastSeen;
+                lastSeen = goal;
+            }
+            Vector3 g;
+            if (!Walker.Nearest(goal, 4f, out g)) return;
+            if (chaserWalker.Busy && Vector3.Distance(chaserWalker.Route().LastOrDefault(), g) < 2f) return;
+            chaserWalker.GoTo(g, true);
+        }
+
+        // The health log: one line a minute while self-play runs.
+        private void Probe()
+        {
+            if (!selfPlayOn) return;
+            var t = Train();
+            var counted = t.Chases.Where(c => c.Source == "selfplay" && !c.Excluded).ToList();
+            var last10 = counted.Skip(Math.Max(0, counted.Count - 10)).ToList();
+            long ramMb = 0;
+            try { ramMb = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024); } catch { }
+            ProbeLine("state " + roundState + " | rounds " + selfPlayRounds + ", counted " + selfPlayValid + ", resets " + roundResets
+                + " | last 10 counted avg score " + (last10.Count > 0 ? last10.Average(c => c.Score).ToString("0.00") : "-")
+                + " | best avg " + (t.BestScore < 1e30f ? t.BestScore.ToString("0.00") : "-") + " over " + t.BestChases
+                + " | fps " + Performance.current.frameRate + ", Kestrel hitches " + (walker != null ? walker.Hitches : 0) + " (worst " + (walker != null ? walker.WorstFrameMs.ToString("0") : "0") + " ms)"
+                + " | stucks K " + (walker != null ? walker.Stucks : 0) + " D " + (chaserWalker != null ? chaserWalker.Stucks : 0)
+                + " | anti-cheat flags K " + (walker != null ? walker.Guard.Flags : 0) + " D " + (chaserWalker != null ? chaserWalker.Guard.Flags : 0)
+                + " | server RAM " + ramMb + " MB | shots " + chaserShots + " hits " + chaserHits
+                + (invalidReasons.Count > 0 ? " | not counted: " + string.Join(", ", invalidReasons.Select(kv => kv.Key + " x" + kv.Value).ToArray()) : ""));
+        }
+
+        private void ProbeLine(string line)
+        {
+            try { System.IO.File.AppendAllText(System.IO.Path.Combine(Interface.Oxide.DataDirectory, "AiBotSelfplay.log"), DateTime.UtcNow.ToString("u") + " " + line + Environment.NewLine); } catch { }
+            Puts("[selfplay] " + line);
         }
 
         #endregion
@@ -2070,6 +2401,7 @@ namespace Oxide.Plugins
             // Counters shown by /bot info.
             private float travelled, startedAt, deepest;
             private int trips, stucks, repaths, teleports, blocked, noGoal;
+            public int Stucks => stucks;
 
             public void Init(BasePlayer player, float startYaw, bool roam)
             {
@@ -3705,6 +4037,7 @@ namespace Oxide.Plugins
             public bool Kicked;
             public string LastType => lastViolationType;
             private int ticks, tickRejects, noclips, speeds, flies, terrains, kicks;
+            public int Flags => tickRejects + noclips + speeds + flies + terrains;
 
             public TickGuard(BasePlayer player)
             {
