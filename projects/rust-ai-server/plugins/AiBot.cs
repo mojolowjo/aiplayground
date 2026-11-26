@@ -122,7 +122,14 @@ namespace Oxide.Plugins
         private string SpawnBody(Vector3 near, float yaw)
         {
             Vector3 pos;
-            if (!Walker.Nearest(near, 5f, out pos) && !Walker.Nearest(near, 30f, out pos))
+            RaycastHit under;
+            var blockers = LayerMask.GetMask("World", "Default", "Construction", "Deployed", "Tree");
+            // Back exactly where it was if a player could stand there (on a box, a wall top): the
+            // navigation map leaves those out, and its nearest point can be inside the box.
+            if (Physics.Raycast(near + Vector3.up * 0.5f, Vector3.down, out under, 1f, LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed"), QueryTriggerInteraction.Ignore)
+                && !Physics.CheckCapsule(under.point + Vector3.up * 0.55f, under.point + Vector3.up * 1.45f, 0.4f, blockers, QueryTriggerInteraction.Ignore))
+                pos = under.point;
+            else if (!Walker.Nearest(near, 5f, out pos) && !Walker.Nearest(near, 30f, out pos))
                 return "No walkable ground near " + near;
             if (Walker.WaterDepth(pos) > Walker.MaxWater) return "That spot is under water.";
             KeepIdsReserved();
@@ -504,6 +511,18 @@ namespace Oxide.Plugins
             if (!Walker.Nearest(want, 6f, out spot)) { arg.ReplyWith("Not walkable there."); return; }
             BrainOff(); EndJob(null); walker.SetRoaming(false);
             arg.ReplyWith(walker.GoTo(spot, arg.GetBool(2)) ? saved.Name + " is going to " + spot.ToString("F1") + ", " + Vector3.Distance(spot, bot.transform.position).ToString("0") + " m." : "No route: " + walker.lastPlanProblem);
+        }
+
+        // Test: aibot.tpxyz <x> <y> <z> - admin teleport to that exact point (onto a box, say).
+        [ConsoleCommand("aibot.tpxyz")]
+        private void ConTpXyz(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !arg.IsAdmin) return;
+            if (!Alive) { arg.ReplyWith("No bot."); return; }
+            var spot = new Vector3(arg.GetFloat(0), arg.GetFloat(1), arg.GetFloat(2));
+            EndJob(null);
+            walker.TeleportTo(spot);
+            arg.ReplyWith(saved.Name + " moved to " + spot.ToString("F2") + ".");
         }
 
         // Test: aibot.gotoxyz <x> <y> <z> - walk to that exact point (like /bot path on a standable spot).
@@ -1964,6 +1983,7 @@ namespace Oxide.Plugins
             public float LocalMsWorst;
 
             private class Node { public int X, Z; public float Y; public int Id; }
+            private HashSet<int> gapJumps = new HashSet<int>(); // segments of the last local route that are jumps across a gap
 
             private List<Vector3> LocalRoute(Vector3 start, Vector3 goal, out string why)
             {
@@ -2022,21 +2042,19 @@ namespace Oxide.Plugins
                 // A* over the surfaces.
                 var g = new Dictionary<int, float> { { a.Id, 0f } };
                 var from = new Dictionary<int, int>();
-                var open = new List<Node> { a };
-                var closed = new HashSet<int>();
+                var jumpEdge = new HashSet<int>();
                 var goalPos = pos(b);
+                // Open list as a sorted set of (estimate, id); the estimate leans on the distance
+                // left (x1.5) so it heads for the goal instead of fanning out.
+                var open = new SortedSet<KeyValuePair<float, int>>(Comparer<KeyValuePair<float, int>>.Create((p, q) => p.Key != q.Key ? p.Key.CompareTo(q.Key) : p.Value.CompareTo(q.Value)));
+                open.Add(new KeyValuePair<float, int>(0f, a.Id));
+                var closed = new HashSet<int>();
                 while (open.Count > 0)
                 {
                     if (sw.ElapsedMilliseconds > 60) { why = "the local map search took too long"; return null; }
-                    var bi = 0;
-                    var bf = float.MaxValue;
-                    for (var i = 0; i < open.Count; i++)
-                    {
-                        var f = g[open[i].Id] + Vector3.Distance(pos(open[i]), goalPos);
-                        if (f < bf) { bf = f; bi = i; }
-                    }
-                    var cur = open[bi];
-                    open.RemoveAt(bi);
+                    var first = open.Min;
+                    open.Remove(first);
+                    var cur = nodes[first.Value];
                     if (cur == b) break;
                     if (!closed.Add(cur.Id)) continue;
                     var cp = pos(cur);
@@ -2062,25 +2080,79 @@ namespace Oxide.Plugins
                                 if (g.TryGetValue(nb.Id, out old) && old <= ng) continue;
                                 g[nb.Id] = ng;
                                 from[nb.Id] = cur.Id;
-                                open.Add(nb);
+                                jumpEdge.Remove(nb.Id);
+                                open.Add(new KeyValuePair<float, int>(ng + 1.5f * Vector3.Distance(np, goalPos), nb.Id));
                             }
                         }
+                    // Jumping across a gap (box to wall): from an edge of what it stands on to
+                    // something 1 to 3 m away and at most 1 m higher (less the further it is),
+                    // with room for the arc.
+                    var sameLevel = 0;
+                    for (var dx = -1; dx <= 1; dx++)
+                        for (var dz = -1; dz <= 1; dz++)
+                        {
+                            int cx = cur.X + dx, cz = cur.Z + dz;
+                            if ((dx != 0 || dz != 0) && cx >= 0 && cz >= 0 && cx < nx && cz < nz && cols[cx, cz] != null && cols[cx, cz].Any(o => Mathf.Abs(o.Y - cur.Y) < 0.5f)) sameLevel++;
+                        }
+                    if (sameLevel < 8)
+                        for (var dx = -8; dx <= 8; dx++)
+                            for (var dz = -8; dz <= 8; dz++)
+                            {
+                                var flat = Mathf.Sqrt(dx * dx + dz * dz) * Cell;
+                                if (flat < 1f || flat > 4f) continue;
+                                int cx = cur.X + dx, cz = cur.Z + dz;
+                                if (cx < 0 || cz < 0 || cx >= nx || cz >= nz || cols[cx, cz] == null) continue;
+                                foreach (var nb in cols[cx, cz])
+                                {
+                                    if (closed.Contains(nb.Id)) continue;
+                                    var dy = nb.Y - cur.Y;
+                                    // How far a sprint jump carries before coming down to that height
+                                    // (take-off speed for 1.4 m, sprint speed), with a safety margin.
+                                    if (dy > JumpReach || dy < -0.5f) continue; // lower things it can walk off to instead
+                                    var air = (HopSpeed + Mathf.Sqrt(Mathf.Max(0f, HopSpeed * HopSpeed + 2f * Physics.gravity.y * dy))) / -Physics.gravity.y;
+                                    if (flat > 0.9f * RunSpeed * air) continue;
+                                    var np = pos(nb);
+                                    var arc = Mathf.Max(cur.Y, nb.Y);
+                                    if (Physics.Linecast(new Vector3(cp.x, arc + 1f, cp.z), new Vector3(np.x, arc + 1f, np.z), BlockMask, QueryTriggerInteraction.Ignore)) continue;
+                                    if (Physics.Linecast(new Vector3(cp.x, arc + 1.7f, cp.z), new Vector3(np.x, arc + 1.7f, np.z), BlockMask, QueryTriggerInteraction.Ignore)) continue;
+                                    var ng = g[cur.Id] + flat + 2.5f;
+                                    float old;
+                                    if (g.TryGetValue(nb.Id, out old) && old <= ng) continue;
+                                    g[nb.Id] = ng;
+                                    from[nb.Id] = cur.Id;
+                                    jumpEdge.Add(nb.Id);
+                                    open.Add(new KeyValuePair<float, int>(ng + 1.5f * Vector3.Distance(np, goalPos), nb.Id));
+                                }
+                            }
                 }
-                if (!from.ContainsKey(b.Id) && a != b) { why = "the local map has no way there"; return null; }
+                if (!from.ContainsKey(b.Id) && a != b) { why = "the local map has no way there (" + nodes.Count + " spots, from " + pos(a).ToString("F1") + " to " + pos(b).ToString("F1") + ", searched " + closed.Count + ")"; return null; }
                 var chain = new List<Vector3> { pos(b) };
+                var chainJump = new List<bool> { jumpEdge.Contains(b.Id) }; // chainJump[i]: reached chain[i] by a gap jump
                 var id = b.Id;
-                while (from.ContainsKey(id)) { id = from[id]; chain.Add(pos(nodes[id])); }
+                while (from.ContainsKey(id)) { id = from[id]; chain.Add(pos(nodes[id])); chainJump.Add(jumpEdge.Contains(id)); }
                 chain.Reverse();
+                chainJump.Reverse();
                 chain[0] = start;
-                // Keep only the corners: points where the direction or the height changes.
+                // Keep only the corners: points where the direction or the height changes, and
+                // both ends of every gap jump.
                 var pts = new List<Vector3> { chain[0] };
-                for (var i = 1; i < chain.Count - 1; i++)
+                gapJumps = new HashSet<int>();
+                for (var i = 1; i < chain.Count; i++)
                 {
-                    var d1 = chain[i] - chain[i - 1];
-                    var d2 = chain[i + 1] - chain[i];
-                    if (Mathf.Abs(d1.y) > 0.3f || Mathf.Abs(d2.y) > 0.3f || Vector3.Angle(new Vector3(d1.x, 0f, d1.z), new Vector3(d2.x, 0f, d2.z)) > 10f) pts.Add(chain[i]);
+                    var last = i == chain.Count - 1;
+                    var jumpTo = chainJump[i];
+                    var jumpFrom = !last && chainJump[i + 1];
+                    var keep = last || jumpTo || jumpFrom;
+                    if (!keep)
+                    {
+                        var d1 = chain[i] - chain[i - 1];
+                        var d2 = chain[i + 1] - chain[i];
+                        keep = Mathf.Abs(d1.y) > 0.3f || Mathf.Abs(d2.y) > 0.3f || Vector3.Angle(new Vector3(d1.x, 0f, d1.z), new Vector3(d2.x, 0f, d2.z)) > 10f;
+                    }
+                    if (!keep) continue;
+                    if (jumpTo) gapJumps.Add(pts.Count - 1); // the segment from the previous kept point to this one is a jump
+                    pts.Add(last && !jumpTo ? goal : chain[i]);
                 }
-                pts.Add(goal);
                 LocalMsWorst = Mathf.Max(LocalMsWorst, (float)sw.Elapsed.TotalMilliseconds);
                 return pts;
             }
@@ -2095,13 +2167,34 @@ namespace Oxide.Plugins
                 var local = LocalRoute(body.transform.position, to, out localWhy);
                 if (local != null && !Wet(local))
                 {
-                    var walk = Walkable(local, to);
+                    // Walk legs get the usual test walk; jumps across a gap were checked by the map
+                    // (room for the arc, somewhere to land) and are jumped like a player trail jump.
+                    var walk = new List<Vector3> { body.transform.position };
+                    var lj = new Dictionary<int, Vector3>();
+                    var lt = new HashSet<int>();
+                    var jumpsHere = new HashSet<int>(gapJumps);
+                    for (var i = 0; i < local.Count - 1 && walk != null; i++)
+                    {
+                        var b = local[i + 1];
+                        if (jumpsHere.Contains(i))
+                        {
+                            lj[walk.Count - 1] = b;
+                            walk.Add(b);
+                            continue;
+                        }
+                        var leg = Walkable(new List<Vector3> { walk[walk.Count - 1], b }, b);
+                        if (leg == null) { walk = null; break; }
+                        var offset = walk.Count - 1;
+                        foreach (var kv in routeJumps) lj[kv.Key + offset] = kv.Value;
+                        foreach (var t in routeTrusted) lt.Add(t + offset);
+                        walk.AddRange(leg.Skip(1));
+                    }
                     if (walk != null)
                     {
                         corners.Clear(); cornerJumps.Clear(); cornerTrusted.Clear();
                         corners.AddRange(walk); SnapToGround(corners);
-                        foreach (var kv in routeJumps) cornerJumps[kv.Key] = kv.Value;
-                        foreach (var t in routeTrusted) cornerTrusted.Add(t);
+                        foreach (var kv in lj) cornerJumps[kv.Key] = kv.Value;
+                        foreach (var t in lt) cornerTrusted.Add(t);
                         corner = 1;
                         goal = to;
                         state = "travelling (own map)";
@@ -2605,7 +2698,9 @@ namespace Oxide.Plugins
                     TrailJumps++;
                     corner++;
                 }
-                var next = MoveBody(pos, dir, speed, dt);
+                // In the air after a planned jump (a gap, or where a player jumped): carry the
+                // speed of a sprint jump, as a player would take it.
+                var next = MoveBody(pos, dir, !landedSinceHop && cornerJumps.Count > 0 ? Mathf.Max(speed, RunSpeed) : speed, dt);
                 var progress = new Vector2(next.x - pos.x, next.z - pos.z).magnitude;
                 if (progress < 0.25f * speed * dt)
                 {
