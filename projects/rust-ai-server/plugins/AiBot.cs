@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using Oxide.Core;
 using Rust.Ai.Gen2;
@@ -15,7 +16,7 @@ namespace Oxide.Plugins
     // work the way they do for a player. There is no decision making: each runs only on command.
     // Chat (admins): /bot spawn|info|roam|stop|here|kill|chop|mine|barrel|loot|inv
     // Console/RCON: aibot.<same>
-    [Info("AiBot", "mojolowjo", "0.4.0")]
+    [Info("AiBot", "mojolowjo", "0.5.0")]
     public class AiBot : RustPlugin
     {
         private const string PlayerPrefab = "assets/prefabs/player/player.prefab";
@@ -36,6 +37,7 @@ namespace Oxide.Plugins
             public ulong Id;
             public float X, Y, Z, Yaw, Health;
             public bool Roaming = true;
+            public bool Brain; // the brain decides what to do (replaces roaming)
             public List<SavedItem> Items; // null means a fresh kit
         }
 
@@ -69,6 +71,7 @@ namespace Oxide.Plugins
             try { saved = Interface.Oxide.DataFileSystem.ReadObject<Saved>(FileName); } catch { saved = null; }
             KeepIdsReserved();
             jobTimer = timer.Every(0.2f, TickJob);
+            brainTimer = timer.Every(0.5f, BrainTick);
             Trails.Load();
             timer.Every(600f, Trails.Load); // pick up new recordings every 10 minutes
             if (saved == null || string.IsNullOrEmpty(saved.Name)) { saved = null; return; }
@@ -93,6 +96,7 @@ namespace Oxide.Plugins
             Save();
             respawnTimer?.Destroy();
             jobTimer?.Destroy();
+            brainTimer?.Destroy();
             RemoveBody();
         }
 
@@ -146,7 +150,9 @@ namespace Oxide.Plugins
 
             bot = player;
             walker = player.gameObject.AddComponent<Walker>();
-            walker.Init(player, yaw, saved.Roaming);
+            walker.Init(player, yaw, saved.Roaming && !saved.Brain);
+            walker.LookAround = saved.Brain;
+            mind = new Mind();
             player.SendNetworkUpdateImmediate();
             return null;
         }
@@ -270,8 +276,9 @@ namespace Oxide.Plugins
             if (!Alive) return "No bot. Use /bot spawn.";
             switch (verb)
             {
-                case "roam": EndJob(null); walker.SetRoaming(true); Save(); return saved.Name + " is roaming.";
-                case "stop": EndJob(null); walker.SetRoaming(false); Save(); return saved.Name + " stopped.";
+                case "roam": BrainOff(); EndJob(null); walker.SetRoaming(true); Save(); return saved.Name + " is roaming.";
+                case "stop": BrainOff(); EndJob(null); walker.SetRoaming(false); Save(); return saved.Name + " stopped.";
+                case "brain": return BrainOn();
                 case "inv": return Inventory();
                 case "unstuck":
                 {
@@ -308,7 +315,7 @@ namespace Oxide.Plugins
                     Save();
                     return saved.Name + " is here, standing still.";
             }
-            return "Use spawn, info, roam, stop, here, unstuck, kill, chop, mine, barrel, loot or inv.";
+            return "Use spawn, info, brain, roam, stop, here, unstuck, kill, chop, mine, barrel, loot or inv.";
         }
 
         // /bot path (here): walk from wherever it is to the spot under your crosshair, with the
@@ -377,6 +384,7 @@ namespace Oxide.Plugins
             sb.AppendLine("pos " + bot.transform.position + " (" + MapHelper.PositionToString(bot.transform.position) + ")  water " + Walker.WaterDepth(bot.transform.position).ToString("0.0") + " m");
             sb.AppendLine("wearing " + ItemNames(bot.inventory.containerWear) + "; belt " + ItemNames(bot.inventory.containerBelt));
             sb.AppendLine(job != null ? "job: " + job.Describe(bot) : "job: none");
+            sb.AppendLine(saved.Brain ? "brain: " + mind.Describe() : "brain: off");
             sb.Append(walker.Describe());
             sb.Append("\nserver fps " + Performance.current.frameRate);
             return sb.ToString();
@@ -405,6 +413,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("aibot.spawn")] private void ConSpawn(ConsoleSystem.Arg arg) => FromConsole(arg, "spawn");
         [ConsoleCommand("aibot.info")] private void ConInfo(ConsoleSystem.Arg arg) => FromConsole(arg, "info");
         [ConsoleCommand("aibot.roam")] private void ConRoam(ConsoleSystem.Arg arg) => FromConsole(arg, "roam");
+        [ConsoleCommand("aibot.brain")] private void ConBrain(ConsoleSystem.Arg arg) => FromConsole(arg, "brain");
         [ConsoleCommand("aibot.stop")] private void ConStop(ConsoleSystem.Arg arg) => FromConsole(arg, "stop");
         [ConsoleCommand("aibot.here")] private void ConHere(ConsoleSystem.Arg arg) => FromConsole(arg, "here");
         [ConsoleCommand("aibot.kill")] private void ConKill(ConsoleSystem.Arg arg) => FromConsole(arg, "kill");
@@ -652,6 +661,190 @@ namespace Oxide.Plugins
         #endregion
 
         #region Actions
+
+        #region Brain
+
+        // The brain only decides; the body (walker + jobs) does. Every choice is a weighted
+        // random pick between options, with the weights read from carbon\data\AiBotBrain.json.
+        // The file starts with hand guesses; tools/odds.py replaces them with how often real
+        // players made each choice in similar situations (from MoveLab recordings). The file is
+        // re-read whenever it changes, so new odds apply without a reload.
+        private class Odds
+        {
+            public string Source = "hand guesses";
+            // How long it stands between things it does, as a log-normal: median and spread
+            // (Relyx baseline: median 2.1 s, 1 in 10 over 15 s), capped.
+            public float StopMedian = 2.1f, StopSpread = 1.56f, StopMax = 50f;
+            public float RestMin = 8f, RestMax = 30f; // a deliberate "rest" stop
+            public float RunShare = 0.72f; // share of moving spent sprinting (baseline 72%)
+            public float StickMin = 10f, StickMax = 60f; // how long it sticks with a choice
+            public Dictionary<string, BrainOption> Options = new Dictionary<string, BrainOption>
+            {
+                { "chop", new BrainOption { Base = 1f, NearBoost = 3f, Want = "wood", WantAmount = 1000, NeedBoost = 2f } },
+                { "mine", new BrainOption { Base = 0.8f, NearBoost = 3f, Want = "stones", WantAmount = 1000, NeedBoost = 2f } },
+                { "barrel", new BrainOption { Base = 0.6f, NearBoost = 5f } },
+                { "loot", new BrainOption { Base = 0.4f, NearBoost = 5f } },
+                { "wander", new BrainOption { Base = 1.5f } },
+                { "rest", new BrainOption { Base = 0.3f } },
+            };
+        }
+
+        private class BrainOption
+        {
+            public float Base = 1f;     // how much it likes this on its own
+            public float NearBoost = 1f; // times this when one is within NearRadius
+            public float NearRadius = 30f;
+            public string Want;         // item it's after, and how many feels like enough
+            public int WantAmount;
+            public float NeedBoost;     // up to (1 + this) times when it has none of Want
+        }
+
+        // What the brain is doing, for /bot info.
+        private class Mind
+        {
+            public string Choice = "", Last = "", Weights = "";
+            public float Until, StickUntil;
+            public bool Acting;
+            public int Decisions;
+            public readonly Dictionary<string, float> Unavailable = new Dictionary<string, float>();
+
+            public string Describe() =>
+                (Acting ? "doing " + Choice : Time.time < Until ? "standing (" + (Until - Time.time).ToString("0") + " s more)" : "deciding")
+                + (Choice != "" && Time.time < StickUntil ? ", in the mood for " + Choice + " " + (StickUntil - Time.time).ToString("0") + " s more" : "")
+                + "; " + Decisions + " decisions; last weights " + Weights;
+        }
+
+        private Mind mind = new Mind();
+        private Odds odds = new Odds();
+        private DateTime oddsTime;
+        private Timer brainTimer;
+        private const string OddsFile = "AiBotBrain";
+
+        private void LoadOdds()
+        {
+            var path = System.IO.Path.Combine(Interface.Oxide.DataDirectory, OddsFile + ".json");
+            if (!System.IO.File.Exists(path)) { Interface.Oxide.DataFileSystem.WriteObject(OddsFile, new Odds()); }
+            var t = System.IO.File.GetLastWriteTimeUtc(path);
+            if (t == oddsTime) return;
+            oddsTime = t;
+            try { odds = Interface.Oxide.DataFileSystem.ReadObject<Odds>(OddsFile) ?? new Odds(); Puts("Brain odds loaded (" + odds.Source + ")."); }
+            catch (Exception e) { Puts("Brain odds file is broken, keeping the old odds: " + e.Message); }
+        }
+
+        private string BrainOn()
+        {
+            LoadOdds();
+            EndJob(null);
+            saved.Brain = true;
+            walker.SetRoaming(false);
+            walker.LookAround = true;
+            mind = new Mind { Until = Time.time + 1f };
+            Save();
+            return saved.Name + " is thinking for itself now (odds: " + odds.Source + "). /bot stop or /bot roam turns it off.";
+        }
+
+        private void BrainOff()
+        {
+            if (saved == null) return;
+            saved.Brain = false;
+            if (walker != null) walker.LookAround = false;
+        }
+
+        private void BrainTick()
+        {
+            if (saved == null || !saved.Brain || !Alive) return;
+            var now = Time.time;
+            if (mind.Acting)
+            {
+                if (job != null || walker.Busy) return;
+                // Just finished something: stand a moment, like a player deciding what's next.
+                mind.Acting = false;
+                mind.Until = now + (mind.Choice == "rest" ? UnityEngine.Random.Range(odds.RestMin, odds.RestMax) : StopLength());
+                return;
+            }
+            if (now < mind.Until) return;
+            LoadOdds();
+            walker.RunShare = odds.RunShare;
+            Decide();
+        }
+
+        // Log-normal stop length around the baseline's median.
+        private float StopLength()
+        {
+            var g = Mathf.Sqrt(-2f * Mathf.Log(Mathf.Max(1e-6f, UnityEngine.Random.value))) * Mathf.Cos(2f * Mathf.PI * UnityEngine.Random.value);
+            return Mathf.Clamp(odds.StopMedian * Mathf.Exp(odds.StopSpread * g), 0.3f, odds.StopMax);
+        }
+
+        private void Decide()
+        {
+            var now = Time.time;
+            mind.Decisions++;
+            var weights = new Dictionary<string, float>();
+            var full = bot.inventory.containerMain.IsFull() && bot.inventory.containerBelt.IsFull();
+            var near = new List<BaseEntity>();
+            Vis.Entities(bot.transform.position, 30f, near);
+            foreach (var kv in odds.Options)
+            {
+                var o = kv.Value;
+                float blockedUntil;
+                if (mind.Unavailable.TryGetValue(kv.Key, out blockedUntil) && now < blockedUntil) continue;
+                if (full && kv.Key != "wander" && kv.Key != "rest") continue;
+                var w = o.Base;
+                if (o.NearBoost != 1f)
+                {
+                    var r2 = o.NearRadius * o.NearRadius;
+                    if (near.Any(e => e != null && !e.IsDestroyed && (e.transform.position - bot.transform.position).sqrMagnitude <= r2 && Matches(kv.Key, e))) w *= o.NearBoost;
+                }
+                if (!string.IsNullOrEmpty(o.Want) && o.WantAmount > 0)
+                {
+                    var def = ItemManager.FindItemDefinition(o.Want);
+                    var have = def != null ? bot.inventory.GetAmount(def.itemid) : 0;
+                    w *= 1f + o.NeedBoost * Mathf.Max(0f, 1f - (float)have / o.WantAmount);
+                }
+                if (w > 0f) weights[kv.Key] = w;
+            }
+            // In the mood for something: keep at it while it's still possible.
+            if (mind.Choice != "" && now < mind.StickUntil && weights.ContainsKey(mind.Choice) && mind.Choice != "rest" && mind.Choice != "wander")
+            {
+                Act(mind.Choice, weights, true);
+                return;
+            }
+            if (weights.Count == 0) { mind.Until = now + 5f; return; }
+            var pick = UnityEngine.Random.value * weights.Values.Sum();
+            var choice = weights.Keys.Last();
+            foreach (var kv in weights) { pick -= kv.Value; if (pick <= 0f) { choice = kv.Key; break; } }
+            mind.StickUntil = now + UnityEngine.Random.Range(odds.StickMin, odds.StickMax);
+            Act(choice, weights, false);
+        }
+
+        private void Act(string choice, Dictionary<string, float> weights, bool sticking)
+        {
+            mind.Weights = string.Join(", ", weights.Select(kv => kv.Key + " " + kv.Value.ToString("0.0")));
+            mind.Last = mind.Choice;
+            mind.Choice = choice;
+            string result;
+            switch (choice)
+            {
+                case "wander":
+                    walker.WanderOnce();
+                    result = walker.Busy ? "wandering" : "nowhere to wander";
+                    mind.Acting = walker.Busy;
+                    break;
+                case "rest":
+                    result = "resting and looking around";
+                    mind.Acting = true;
+                    break;
+                default:
+                    result = StartJob(choice, null);
+                    mind.Acting = job != null;
+                    if (job == null) mind.Unavailable[choice] = Time.time + 60f; // nothing reachable: forget it for a minute
+                    break;
+            }
+            if (!mind.Acting) mind.Until = Time.time + 2f;
+            Puts("[brain] " + (sticking ? "still in the mood for " : "chose ") + choice + " (" + mind.Weights + "): " + result);
+        }
+
+        #endregion
 
         private const float SearchRadius = 120f, Reach = 2.4f;
 
@@ -1148,6 +1341,11 @@ namespace Oxide.Plugins
 
             public bool Roaming { get; private set; }
             public bool Working; // an action is running: no wandering or looking around
+            public bool LookAround; // glance around while standing, without wandering off (the brain decides when to move)
+            public float RunShare = 0.4f; // share of wander trips run rather than walked
+
+            // One wander trip, chosen by the brain rather than by roaming.
+            public void WanderOnce() => PickTrip();
             public bool Busy => corners.Count > 0;
 
             private BasePlayer body;
@@ -1310,7 +1508,7 @@ namespace Oxide.Plugins
                 if (Time.time >= nextLook)
                 {
                     nextLook = Time.time + UnityEngine.Random.Range(1.5f, 4f);
-                    if (Roaming) lookYaw += UnityEngine.Random.Range(-70f, 70f);
+                    if (Roaming || LookAround) lookYaw += UnityEngine.Random.Range(-70f, 70f);
                 }
                 if (Roaming && Time.time >= waitUntil) PickTrip();
             }
@@ -1330,7 +1528,7 @@ namespace Oxide.Plugins
                     Vector3 spot;
                     if (Nearest(want, 8f, out spot) && SetPath(spot))
                     {
-                        speed = UnityEngine.Random.value < 0.4f ? RunSpeed : WalkSpeed;
+                        speed = UnityEngine.Random.value < RunShare ? RunSpeed : WalkSpeed;
                         stuckLevel = 0;
                         trips++;
                         LogPlan(sw, i + 1, true);

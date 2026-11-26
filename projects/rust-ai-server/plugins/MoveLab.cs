@@ -15,8 +15,10 @@ namespace Oxide.Plugins
     //   /lab rec           start recording your movement; /lab stop ends it and reports
     //   /lab problems      draw the map test's problem spots within 150 m (from NavProbe)
     //   /lab clear         forget the route
-    // Recordings: carbon\data\MoveLab\<time>.json. Drawing uses the game's admin debug lines.
-    [Info("MoveLab", "mojolowjo", "0.1.0")]
+    // Recordings: carbon\data\MoveLab\<time>.json. Besides movement they log what the player did
+    // (chop, mine, loot, pick up, craft, eat, build, kills) and every 5 s what they carried and
+    // what was within 30 m. Drawing uses the game's admin debug lines.
+    [Info("MoveLab", "mojolowjo", "0.2.0")]
     public class MoveLab : RustPlugin
     {
         private const float DrawSeconds = 120f, SampleEvery = 0.05f;
@@ -34,6 +36,27 @@ namespace Oxide.Plugins
             public List<float[]> Route; // the route shown when recording started, if any
             public List<Sample> Samples = new List<Sample>();
             public List<string> Events = new List<string>();
+            // What the player did (chop, mine, loot, pick up, craft, eat...) and, every few
+            // seconds, what they had and what was around them: the raw material for learning
+            // which choice real players make in which situation.
+            public List<Act> Actions = new List<Act>();
+            public List<State> States = new List<State>();
+        }
+
+        private class Act
+        {
+            public float T, X, Y, Z;
+            public string Kind, What;
+            public int Amount;
+        }
+
+        private class State
+        {
+            public float T, Health, Calories, Water;
+            public string Held;
+            public Dictionary<string, int> Inv = new Dictionary<string, int>();
+            public Dictionary<string, int> Near = new Dictionary<string, int>(); // within NearRadius
+            public Dictionary<string, float> Closest = new Dictionary<string, float>(); // metres to the nearest of each
         }
 
         private class Session
@@ -42,6 +65,7 @@ namespace Oxide.Plugins
             public Recording Rec;
             public float StartTime, LastSample;
             public Vector3 LastPos;
+            public float LastState = -999f;
             public bool WasGround = true, JumpHeld;
             public Timer Overlay, RouteDraw;
             public float OverlayRadius;
@@ -73,7 +97,13 @@ namespace Oxide.Plugins
 
         private void Unload()
         {
-            foreach (var s in sessions.Values) { StopOverlay(s); s.RouteDraw?.Destroy(); }
+            foreach (var kv in sessions)
+            {
+                StopOverlay(kv.Value);
+                kv.Value.RouteDraw?.Destroy();
+                // A reload (plugin update or server shutdown) used to lose a recording in progress.
+                if (kv.Value.Rec != null) Save(kv.Value.Rec, kv.Value.Rec.Player + "-unfinished");
+            }
         }
 
         private readonly Dictionary<ulong, Session> sessions = new Dictionary<ulong, Session>();
@@ -225,8 +255,155 @@ namespace Oxide.Plugins
                 T = now, X = pos.x, Y = pos.y, Z = pos.z, Pitch = player.viewAngles.x, Yaw = player.viewAngles.y, Speed = speed,
                 Ground = ground, Duck = player.modelState.ducked, Sprint = player.modelState.sprinting, Jump = jump,
             });
+            if (now - s.LastState >= StateEvery) { s.LastState = now; s.Rec.States.Add(Snapshot(player, now)); }
             if (s.Rec.Samples.Count > 20 * 60 * 30) StopRec(player, s); // 30 minutes is plenty
         }
+
+        #region What the player does
+
+        private const float StateEvery = 5f, NearRadius = 30f;
+
+        private static readonly string[] Tracked =
+        {
+            "wood", "stones", "metal.ore", "sulfur.ore", "hq.metal.ore", "metal.fragments", "sulfur", "charcoal",
+            "cloth", "leather", "fat.animal", "bone.fragments", "lowgradefuel", "scrap", "rope", "tarp", "sewingkit",
+            "metalpipe", "gears", "metalspring", "roadsigns", "sheetmetal", "techparts", "semibody", "riflebody",
+        };
+
+        private Recording Rec(BasePlayer p)
+        {
+            Session s;
+            return p != null && sessions.TryGetValue(p.userID, out s) && s.Rec != null ? s.Rec : null;
+        }
+
+        private float Now(BasePlayer p) => Time.time - sessions[p.userID].StartTime;
+
+        private void Log(BasePlayer p, string kind, string what, int amount, Vector3 at)
+        {
+            var rec = Rec(p);
+            if (rec == null) return;
+            rec.Actions.Add(new Act { T = Now(p), Kind = kind, What = what, Amount = amount, X = at.x, Y = at.y, Z = at.z });
+        }
+
+        private static string Short(BaseEntity e) => e == null ? "?" : e.ShortPrefabName;
+
+        private State Snapshot(BasePlayer p, float now)
+        {
+            var st = new State
+            {
+                T = now, Health = p.health, Calories = p.metabolism.calories.value, Water = p.metabolism.hydration.value,
+                Held = p.GetActiveItem()?.info.shortname ?? "",
+            };
+            foreach (var name in Tracked)
+            {
+                var n = p.inventory.GetAmount(ItemManager.FindItemDefinition(name)?.itemid ?? 0);
+                if (n > 0) st.Inv[name] = n;
+            }
+            var tools = p.inventory.containerBelt.itemList.Concat(p.inventory.containerMain.itemList)
+                .Where(i => i.info.category == ItemCategory.Tool || i.info.category == ItemCategory.Weapon).Select(i => i.info.shortname).Distinct();
+            foreach (var t in tools) st.Inv["tool:" + t] = 1;
+
+            var list = new List<BaseEntity>();
+            Vis.Entities(p.transform.position, NearRadius, list);
+            var seen = new HashSet<BaseEntity>();
+            foreach (var e in list)
+            {
+                if (e == null || e == p || !seen.Add(e)) continue;
+                var kind = Category(e);
+                if (kind == null) continue;
+                int c; st.Near.TryGetValue(kind, out c); st.Near[kind] = c + 1;
+                var d = Vector3.Distance(p.transform.position, e.transform.position);
+                float best;
+                if (!st.Closest.TryGetValue(kind, out best) || d < best) st.Closest[kind] = (float)Math.Round(d, 1);
+            }
+            return st;
+        }
+
+        private static string Category(BaseEntity e)
+        {
+            if (e is TreeEntity) return "tree";
+            if (e is OreResourceEntity) return "ore";
+            if (e is CollectibleEntity) return "pickup";
+            if (e is LootContainer) return e.ShortPrefabName.Contains("barrel") ? "barrel" : "crate";
+            if (e is BasePlayer) return ((BasePlayer)e).IsSleeping() ? "sleeper" : ((BasePlayer)e).IsNpc ? "npc" : "player";
+            if (e is BaseAnimalNPC || e is BaseNpc) return "animal";
+            if (e is BuildingBlock) return "building";
+            if (e is DroppedItem || e is DroppedItemContainer) return "dropped";
+            return null;
+        }
+
+        // Each hit with a tool on a tree, ore or corpse.
+        private void OnDispenserGather(ResourceDispenser dispenser, BasePlayer player, Item item)
+        {
+            if (Rec(player) == null) return;
+            var e = dispenser.GetComponent<BaseEntity>();
+            var kind = dispenser.gatherType == ResourceDispenser.GatherType.Tree ? "chop" : dispenser.gatherType == ResourceDispenser.GatherType.Ore ? "mine" : "harvest";
+            Log(player, kind, item.info.shortname, item.amount, e != null ? e.transform.position : player.transform.position);
+        }
+
+        private void OnDispenserBonus(ResourceDispenser dispenser, BasePlayer player, Item item)
+        {
+            if (Rec(player) == null) return;
+            Log(player, "finish", item.info.shortname, item.amount, player.transform.position);
+        }
+
+        private void OnCollectiblePickup(CollectibleEntity entity, BasePlayer player)
+        {
+            if (Rec(player) == null || entity == null) return;
+            Log(player, "pickup", Short(entity), 1, entity.transform.position);
+        }
+
+        private void OnLootEntity(BasePlayer player, BaseEntity entity)
+        {
+            if (Rec(player) == null || entity == null) return;
+            Log(player, "open", Short(entity), 0, entity.transform.position);
+        }
+
+        private void OnItemPickup(Item item, BasePlayer player)
+        {
+            if (Rec(player) == null || item == null) return;
+            Log(player, "pickup", item.info.shortname, item.amount, player.transform.position);
+        }
+
+        private void OnItemCraft(ItemCraftTask task, BasePlayer player, Item fromTempBlueprint)
+        {
+            if (Rec(player) == null || task?.blueprint == null) return;
+            Log(player, "craft", task.blueprint.targetItem.shortname, task.amount, player.transform.position);
+        }
+
+        private void OnItemAction(Item item, string action, BasePlayer player)
+        {
+            if (Rec(player) == null || item == null) return;
+            if (action == "consume" || action == "eat" || action == "drink") Log(player, "eat", item.info.shortname, 1, player.transform.position);
+        }
+
+        private void OnEntityBuilt(Planner plan, GameObject go)
+        {
+            var p = plan?.GetOwnerPlayer();
+            if (Rec(p) == null) return;
+            var e = go.ToBaseEntity();
+            Log(p, "build", Short(e), 1, go.transform.position);
+        }
+
+        private void OnEntityDeath(BaseCombatEntity entity, HitInfo info)
+        {
+            var p = info?.InitiatorPlayer;
+            if (entity == null || Rec(p) == null) return;
+            var kind = entity is LootContainer ? "break" : entity is BasePlayer ? "kill player" : entity is BaseAnimalNPC || entity is BaseNpc ? "kill animal" : null;
+            if (kind != null && entity != p) Log(p, kind, Short(entity), 1, entity.transform.position);
+        }
+
+        private void OnPlayerDeath(BasePlayer player, HitInfo info)
+        {
+            if (Rec(player) != null) Log(player, "died", info?.Initiator != null ? Short(info.Initiator) : "", 0, player.transform.position);
+        }
+
+        private void OnPlayerRespawned(BasePlayer player)
+        {
+            if (Rec(player) != null) Log(player, "respawn", "", 0, player.transform.position);
+        }
+
+        #endregion
 
         private void Event(Session s, float t, string what, Vector3 pos, BasePlayer player)
         {
@@ -253,11 +430,17 @@ namespace Oxide.Plugins
             var rec = s.Rec;
             if (rec == null) return "Not recording.";
             s.Rec = null;
-            var name = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + player.displayName;
-            Interface.Oxide.DataFileSystem.WriteObject("MoveLab/" + name, rec);
+            var name = Save(rec, player.displayName);
             var report = Report(rec);
             Puts("Recording " + name + "\n" + report);
             return report + "\nSaved as carbon\\data\\MoveLab\\" + name + ".json";
+        }
+
+        private static string Save(Recording rec, string who)
+        {
+            var name = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + who;
+            Interface.Oxide.DataFileSystem.WriteObject("MoveLab/" + name, rec);
+            return name;
         }
 
         // How the walk compares with the route: distance, jumps, and where it left the route.

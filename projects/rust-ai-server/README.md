@@ -65,6 +65,7 @@ Windows Firewall needs an inbound allow rule for RustDedicated.exe on Private ne
 |---|---|---|
 | `/bot spawn` | `aibot.spawn` | New bot, 4 m in front of you, standing still. From RCON it appears at a random spawn point and roams. |
 | `/bot info` | `aibot.info` | Name, position, health, gear, what it is doing, and counters since spawn. |
+| `/bot brain` | `aibot.brain` | The bot decides for itself what to do (see Brain). `/bot stop` or `/bot roam` turns it off. |
 | `/bot roam` / `/bot stop` | `aibot.roam` / `aibot.stop` | Start or stop wandering. |
 | `/bot here` | | Moves it in front of you and stops it. |
 | `/bot kill` | `aibot.kill` | Removes it. |
@@ -85,9 +86,24 @@ back at the same spot with the same inventory after a restart or hot reload. If 
 a normal corpse with its items and respawns 30 s later at a random spawn point with fresh gear.
 `/bot kill` removes it for good.
 
+### Brain
+
+With `/bot brain` the bot picks its own actions: chop, mine, break a barrel, loot a crate, wander
+or rest. Each pick is a weighted random choice; the weights come from `carbon\data\AiBotBrain.json`
+and depend on what is within 30 m (a tree nearby makes chopping likelier) and what it carries
+(little wood makes chopping likelier). It sticks with a choice for 10 to 60 s, stands a moment
+between things (stop lengths from the Relyx baseline), and skips an option for a minute when
+nothing for it is reachable. Every decision is logged as `[brain] chose ...` with the weights.
+
+The file starts with hand guesses. `tools/odds.py` measures them from MoveLab recordings (what
+real players did next, given what was around them and what they carried) and writes a file of the
+same shape; copy it over `AiBotBrain.json` and the bot picks it up within a second. Numbers the
+recordings say too little about keep the hand guess. `tools/baseline.py` measures a recording's
+movement rhythm (legs, stops, turns, jumps, sprinting); `baselines/` holds the results.
+
 ### Actions
 
-Actions run only when you give the command; the bot makes no decisions of its own yet. It looks
+Actions run when you give the command, or when the brain picks them. It looks
 within 120 m, tries the 8 nearest targets until one has a walkable path, walks there (the last
 few metres straight, since the navmesh stops short of trees and rocks), then works it. When it
 finishes, the admin who asked gets a chat line with what it gained, and it goes back to roaming
@@ -216,7 +232,7 @@ would clear (typically 0.74 m), low bumps, and monument parts too tall to jump.
 | Chat | Does |
 |---|---|
 | `/lab route` | Draws the route the bot would take from you to the spot you look at, for 2 minutes |
-| `/lab rec` / `/lab stop` | Records your position, view, jumps, crouching and sprinting, then reports where you left the route and what you jumped over. Saved in `carbon\data\MoveLab\` |
+| `/lab rec` / `/lab stop` | Records your position, view, jumps, crouching and sprinting, what you do (chop, mine, harvest, pick up, open, break, craft, eat, build, kill, die), and every 5 s your health, food, water, resources, tools and what's within 30 m; then reports where you left the route and what you jumped over. Saved in `carbon\data\MoveLab\`; a recording in progress is saved as `...-unfinished` if the plugin reloads |
 | `/lab problems [metres] [around\|jump\|step]` / `/lab problems off` | Shows the map test's problem spots around you (default 150 m, nearest 80), following you as you move, coloured by the likely move: red go around (too tall, or cliffs and rocks with the game's no-climb walls), yellow jump, green step over. A word filters to one kind; `off` hides them |
 | `/lab clear` | Forgets the route |
 
