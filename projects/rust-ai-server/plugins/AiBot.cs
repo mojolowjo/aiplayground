@@ -291,6 +291,12 @@ namespace Oxide.Plugins
                 }
                 case "chop": case "mine": case "barrel": case "loot": return StartJob(verb, user);
                 case "path": return PathToCrosshair(user);
+                case "route":
+                {
+                    var dump = walker.DumpRoute();
+                    Puts("Route dump:\n" + dump); // full copy in the server console
+                    return dump;
+                }
                 case "here":
                     if (user == null) return "Only works in game.";
                     Vector3 to;
@@ -323,7 +329,7 @@ namespace Oxide.Plugins
             var blocked = walker.RejectedBlocked;
             if (!walker.GoTo(spot, Vector3.Distance(bot.transform.position, spot) > 25f))
             {
-                var why = walker.RejectedSteep > steep ? "the only route climbs steeper than 45 degrees"
+                var why = walker.lastPlanProblem != "" ? walker.lastPlanProblem : walker.RejectedSteep > steep ? "the only route climbs steeper than 45 degrees"
                     : walker.RejectedBlocked > blocked ? "the only route goes through a cliff, rock or wall it can't get past"
                     : "the map has no route there";
                 return "No route for " + saved.Name + ": " + why + ".";
@@ -407,6 +413,7 @@ namespace Oxide.Plugins
         [ConsoleCommand("aibot.barrel")] private void ConBarrel(ConsoleSystem.Arg arg) => FromConsole(arg, "barrel");
         [ConsoleCommand("aibot.loot")] private void ConLoot(ConsoleSystem.Arg arg) => FromConsole(arg, "loot");
         [ConsoleCommand("aibot.inv")] private void ConInv(ConsoleSystem.Arg arg) => FromConsole(arg, "inv");
+        [ConsoleCommand("aibot.route")] private void ConRoute(ConsoleSystem.Arg arg) => FromConsole(arg, "route");
         [ConsoleCommand("aibot.unstuck")] private void ConUnstuck(ConsoleSystem.Arg arg) => FromConsole(arg, "unstuck");
 
         // Admin teleport to map coordinates: aibot.tp <x> <z>
@@ -1194,6 +1201,30 @@ namespace Oxide.Plugins
             public List<Vector3> Route() => new List<Vector3>(corners);
             public string StateWord => state;
 
+            // The route it's on, point by point: height compared with where it stands, which
+            // points are jumps or from a player trail, and which one it's heading for.
+            public string DumpRoute()
+            {
+                var pos = body.transform.position;
+                var sb = new StringBuilder();
+                sb.AppendLine("state: " + state + " | last stop: " + lastStop + (lastPlanProblem != "" ? " | last route turned down: " + lastPlanProblem : ""));
+                if (corners.Count == 0) { sb.Append("no route right now"); return sb.ToString(); }
+                sb.AppendLine("standing at " + pos.ToString("F1") + ", heading for point " + corner + " of " + (corners.Count - 1) + ", goal " + goal.ToString("F1") + " (" + (goal.y - pos.y).ToString("+0.0;-0.0") + " m)");
+                var from = Mathf.Max(0, corner - 3);
+                var to = Mathf.Min(corners.Count, corner + 25);
+                for (var i = from; i < to; i++)
+                {
+                    var c = corners[i];
+                    var prev = i > 0 ? corners[i - 1] : c;
+                    var run = new Vector2(c.x - prev.x, c.z - prev.z).magnitude;
+                    var slope = run > 0.05f ? Mathf.Atan2(c.y - prev.y, run) * Mathf.Rad2Deg : 0f;
+                    sb.AppendLine((i == corner ? "-> " : "   ") + i + ": " + c.ToString("F1") + "  height " + (c.y - pos.y).ToString("+0.0;-0.0") + " m, step " + run.ToString("0.0") + " m at " + slope.ToString("0") + " deg"
+                        + (cornerJumps.ContainsKey(i) ? "  [player jumped here]" : "") + (cornerTrusted.Contains(i) ? "  [player trail]" : "") + (c.y - prev.y > JumpReach && run < 1.5f ? "  !! higher than a jump" : ""));
+                }
+                if (to < corners.Count) sb.Append("   ... " + (corners.Count - to) + " more");
+                return sb.ToString();
+            }
+
             public bool GoTo(Vector3 to, bool run)
             {
                 if (!SetPath(to)) return false;
@@ -1228,8 +1259,21 @@ namespace Oxide.Plugins
                 ResetStuck();
             }
 
+            // Lag hunt: server frames slower than 100 ms, and the bot's own share of each frame.
+            public int Hitches;
+            public float WorstFrameMs, WorstBotMs, BotMsTotal;
+            public int BotUpdates;
+            private readonly System.Diagnostics.Stopwatch updateWatch = new System.Diagnostics.Stopwatch();
+
             private void Update()
             {
+                var frameMs = Time.unscaledDeltaTime * 1000f;
+                if (frameMs > 100f && Time.realtimeSinceStartup > 30f)
+                {
+                    Hitches++;
+                    if (frameMs > WorstFrameMs) WorstFrameMs = frameMs;
+                    Interface.Oxide.LogInfo("[AiBot] SERVER HITCH: a frame took " + frameMs.ToString("0") + " ms; the bot was " + state + "; its last update took " + lastUpdateMs.ToString("0.0") + " ms");
+                }
                 acc += Time.deltaTime;
                 if (acc < Step) return;
                 var dt = Mathf.Min(acc, 0.25f);
@@ -1237,6 +1281,8 @@ namespace Oxide.Plugins
                 if (body == null || body.IsDestroyed || body.IsDead()) return;
                 if (body.IsWounded() || body.isMounted) { ResetStuck(); return; }
 
+                updateWatch.Reset();
+                updateWatch.Start();
                 if (jumping) Fly(dt);
                 else if (corners.Count > 0) Walk(dt);
                 else
@@ -1249,7 +1295,14 @@ namespace Oxide.Plugins
                 yaw = Mathf.MoveTowardsAngle(yaw, lookYaw, 300f * dt);
                 pitch = Mathf.MoveTowards(pitch, lookPitch, 200f * dt);
                 SetLook();
+                updateWatch.Stop();
+                lastUpdateMs = (float)updateWatch.Elapsed.TotalMilliseconds;
+                BotUpdates++;
+                BotMsTotal += lastUpdateMs;
+                WorstBotMs = Mathf.Max(WorstBotMs, lastUpdateMs);
             }
+
+            private float lastUpdateMs;
 
             private void Idle()
             {
@@ -1265,6 +1318,7 @@ namespace Oxide.Plugins
             private void PickTrip()
             {
                 var from = body.transform.position;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
                 for (var i = 0; i < 8; i++)
                 {
                     // Prefer to carry on roughly the same way; widen the search as tries fail.
@@ -1279,14 +1333,29 @@ namespace Oxide.Plugins
                         speed = UnityEngine.Random.value < 0.4f ? RunSpeed : WalkSpeed;
                         stuckLevel = 0;
                         trips++;
+                        LogPlan(sw, i + 1, true);
                         return;
                     }
                 }
+                LogPlan(sw, 8, false);
                 noGoal++;
                 lastDir = -lastDir;
                 waitUntil = Time.time + 2f;
                 // Off the navmesh, or boxed in: nothing can be reached from here.
                 if (noGoal % 4 == 0) Hop();
+            }
+
+            // Lag hunt: how long picking a roam trip took (it all happens in one server frame).
+            public float PlanMsTotal, PlanMsWorst;
+            public int Plans;
+
+            private void LogPlan(System.Diagnostics.Stopwatch sw, int tries, bool found)
+            {
+                var ms = (float)sw.Elapsed.TotalMilliseconds;
+                Plans++;
+                PlanMsTotal += ms;
+                PlanMsWorst = Mathf.Max(PlanMsWorst, ms);
+                if (ms > 20f) Interface.Oxide.LogInfo("[AiBot] SLOW route planning: " + ms.ToString("0") + " ms for " + tries + " tries (" + (found ? "found one" : "found none") + ")");
             }
 
             private bool SetPath(Vector3 to)
@@ -1508,6 +1577,7 @@ namespace Oxide.Plugins
             {
                 routeJumps.Clear();
                 routeTrusted.Clear();
+                lastPlanProblem = "";
                 if (dryLegs == null) dryLegs = new CharacterBody(body);
                 var dense = Densify(pts);
                 var way = new List<Vector3> { dense[0] };
@@ -1517,11 +1587,19 @@ namespace Oxide.Plugins
                 dryLegs.Place(dense[0]);
                 var vy = -2f;
                 const float dt = 0.1f;
+                // A straight line's points are just a line through the air, so their height means
+                // nothing; the map's route points sit on the ground, so there the body must also
+                // be at their height, not just under them.
+                var straightLine = pts.Count == 2;
                 for (var w = 1; w < way.Count; w++)
                 {
                     if (Vector3.Distance(way[w], to) < GoalSlack)
                     {
-                        for (var j = w; j < way.Count; j++) route.Add(way[j]);
+                        // Near the goal: it must actually be at the goal's height (not at the
+                        // bottom of a cliff under it).
+                        if (Mathf.Abs(dryLegs.Position.y - to.y) > 2f) { RejectedBlocked++; lastPlanProblem = "ended " + (to.y - dryLegs.Position.y).ToString("0.0") + " m below/above the goal"; return null; }
+                        if (straightLine) route.Add(to); // the line's own points float in the air
+                        else for (var j = w; j < way.Count; j++) route.Add(way[j]);
                         return route;
                     }
                     var reached = false;
@@ -1530,7 +1608,7 @@ namespace Oxide.Plugins
                     {
                         var p = dryLegs.Position;
                         var f = new Vector3(way[w].x - p.x, 0f, way[w].z - p.z);
-                        if (f.magnitude < 0.35f) { reached = true; break; }
+                        if (f.magnitude < 0.35f && (straightLine || Mathf.Abs(p.y - way[w].y) < 1.5f)) { reached = true; break; }
                         if (dryLegs.Grounded && DropAhead(p, f.normalized) > SafeDrop) break; // a fall that would hurt
                         var hop = false;
                         if (dryLegs.OnFooting && t > 0 && dryHops < 3 && new Vector2(p.x - lastDry.x, p.z - lastDry.z).magnitude < 0.05f)
@@ -1602,8 +1680,10 @@ namespace Oxide.Plugins
                 while (corner < corners.Count)
                 {
                     var f = corners[corner] - pos;
+                    var up = f.y;
                     f.y = 0f;
-                    if (f.magnitude > 0.35f) break;
+                    // Reached only when it's there, not under it on a lower level.
+                    if (f.magnitude > 0.35f || Mathf.Abs(up) > 1.5f) break;
                     corner++;
                 }
                 if (corner >= corners.Count)
@@ -1628,8 +1708,11 @@ namespace Oxide.Plugins
                 {
                     blocked++;
                     lastStop = legs.Bumped ? "its body bumped into " + legs.BumpedInto : "it couldn't get any further this step";
-                    // Stalled going up, or against something: jump, like a player would.
-                    if (corners[corner].y > pos.y - 0.2f || legs.Bumped) Jump();
+                    // Stalled going up, or against something: jump, like a player would. But not
+                    // at something higher than a jump can reach: that's a wall, not a hop.
+                    var rise = corners[corner].y - pos.y;
+                    if (rise < JumpReach && (rise > -0.2f || legs.Bumped)) Jump();
+                    else if (rise >= JumpReach) lastStop = "the next point is " + rise.ToString("0.0") + " m up, higher than a jump";
                     if (Vector3.Distance(pos, goal) < 2f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
                 }
                 lastDir = dir;
@@ -1688,6 +1771,8 @@ namespace Oxide.Plugins
             // (BasePlayer.GetJumpHeight), so the fly check allows it as it does a player's jump.
             private static readonly float HopSpeed = Mathf.Sqrt(2f * -Physics.gravity.y * 1.4f);
             private const float HopCooldown = 0.7f;
+            private const float JumpReach = 1.3f; // the highest a hop can land on
+            public string lastPlanProblem = "";
             private bool hopNow, landedSinceHop = true;
 
             // The one jump: a real jump with the body (up off the ground with the take-off speed
@@ -1945,7 +2030,7 @@ namespace Oxide.Plugins
                 return "roaming " + Roaming + ", looking " + body.viewAngles.x.ToString("0") + "° down, " + state + (corners.Count > 0 ? " to " + goal + " at " + speed + " m/s, " + Vector3.Distance(goal, body.transform.position).ToString("0") + " m left" : "")
                     + "\nsince spawn (" + mins.ToString("0.0") + " min): " + travelled.ToString("0") + " m, " + trips + " trips, stuck " + stucks
                     + " (repath " + repaths + ", hop tries " + teleports + "), blocked steps " + blocked + ", no destination " + noGoal + ", deepest water " + deepest.ToString("0.0") + " m"
-                    + "\nroutes turned down before walking: too steep " + RejectedSteep + ", through rock/cliff/wall " + RejectedBlocked + "; steps nudged off walls " + Nudged + "; straight-line routes " + Straight + "; player trails used " + TrailsUsed + " (" + Trails.All.Count + " trails loaded), jumps " + hops + " (" + TrailJumps + " of them where a recorded player jumped)"
+                    + "\nroutes turned down before walking: too steep " + RejectedSteep + ", through rock/cliff/wall " + RejectedBlocked + "; steps nudged off walls " + Nudged + "; straight-line routes " + Straight + "; player trails used " + TrailsUsed + " (" + Trails.All.Count + " trails loaded), jumps " + hops + " (" + TrailJumps + " of them where a recorded player jumped)" + "\nroute planning: " + Plans + " trips planned, average " + (Plans > 0 ? PlanMsTotal / Plans : 0f).ToString("0") + " ms, worst " + PlanMsWorst.ToString("0") + " ms (one server frame is 33 ms)" + "\nbot cost: " + BotUpdates + " updates, average " + (BotUpdates > 0 ? BotMsTotal / BotUpdates : 0f).ToString("0.00") + " ms, worst " + WorstBotMs.ToString("0.0") + " ms; server frames over 100 ms: " + Hitches + " (worst " + WorstFrameMs.ToString("0") + " ms)"
                     + "\n" + Guard.Describe();
             }
 
