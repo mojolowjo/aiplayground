@@ -1597,9 +1597,8 @@ namespace Oxide.Plugins
                     {
                         // Near the goal: it must actually be at the goal's height (not at the
                         // bottom of a cliff under it).
-                        if (Mathf.Abs(dryLegs.Position.y - to.y) > 2f) { RejectedBlocked++; lastPlanProblem = "ended " + (to.y - dryLegs.Position.y).ToString("0.0") + " m below/above the goal"; return null; }
-                        if (straightLine) route.Add(to); // the line's own points float in the air
-                        else for (var j = w; j < way.Count; j++) route.Add(way[j]);
+                        // (the goal's height is not checked: m0j preferred it without)
+                        for (var j = w; j < way.Count; j++) route.Add(way[j]);
                         return route;
                     }
                     var reached = false;
@@ -1608,7 +1607,7 @@ namespace Oxide.Plugins
                     {
                         var p = dryLegs.Position;
                         var f = new Vector3(way[w].x - p.x, 0f, way[w].z - p.z);
-                        if (f.magnitude < 0.35f && (straightLine || Mathf.Abs(p.y - way[w].y) < 1.5f)) { reached = true; break; }
+                        if (f.magnitude < 0.35f) { reached = true; break; }
                         if (dryLegs.Grounded && DropAhead(p, f.normalized) > SafeDrop) break; // a fall that would hurt
                         var hop = false;
                         if (dryLegs.OnFooting && t > 0 && dryHops < 3 && new Vector2(p.x - lastDry.x, p.z - lastDry.z).magnitude < 0.05f)
@@ -1683,7 +1682,7 @@ namespace Oxide.Plugins
                     var up = f.y;
                     f.y = 0f;
                     // Reached only when it's there, not under it on a lower level.
-                    if (f.magnitude > 0.35f || Mathf.Abs(up) > 1.5f) break;
+                    if (f.magnitude > 0.35f) break;
                     corner++;
                 }
                 if (corner >= corners.Count)
@@ -1711,8 +1710,8 @@ namespace Oxide.Plugins
                     // Stalled going up, or against something: jump, like a player would. But not
                     // at something higher than a jump can reach: that's a wall, not a hop.
                     var rise = corners[corner].y - pos.y;
-                    if (rise < JumpReach && (rise > -0.2f || legs.Bumped)) Jump();
-                    else if (rise >= JumpReach) lastStop = "the next point is " + rise.ToString("0.0") + " m up, higher than a jump";
+                    if (rise > -0.2f || legs.Bumped) Jump();
+                    
                     if (Vector3.Distance(pos, goal) < 2f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
                 }
                 lastDir = dir;
