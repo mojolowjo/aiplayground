@@ -97,6 +97,7 @@ namespace Oxide.Plugins
             respawnTimer?.Destroy();
             jobTimer?.Destroy();
             brainTimer?.Destroy();
+            dangerTimer?.Destroy();
             RemoveBody();
         }
 
@@ -207,6 +208,8 @@ namespace Oxide.Plugins
         {
             if (player == null || player != bot) return;
             Puts(saved?.Name + " died at " + player.transform.position);
+            if (danger != null) Puts("[danger] " + saved?.Name + " was killed by " + (danger.Attacker != null ? danger.Attacker.displayName : "?") + " after " + (Time.time - danger.Started).ToString("0") + " s on the run (" + danger.Picks + " runs, broke line of sight " + danger.LosBreaks + " times).");
+            danger = null;
             EndJob(saved?.Name + " died.");
             if (walker != null) UnityEngine.Object.Destroy(walker);
             bot = null;
@@ -385,6 +388,7 @@ namespace Oxide.Plugins
             sb.AppendLine("wearing " + ItemNames(bot.inventory.containerWear) + "; belt " + ItemNames(bot.inventory.containerBelt));
             sb.AppendLine(job != null ? "job: " + job.Describe(bot) : "job: none");
             sb.AppendLine(saved.Brain ? "brain: " + mind.Describe() : "brain: off");
+            if (danger != null) sb.AppendLine("DANGER from " + (danger.Attacker != null ? danger.Attacker.displayName : "?") + ": " + (danger.Seen ? "in sight" : "hidden " + (Time.time - danger.HiddenSince).ToString("0") + " s") + ", " + danger.Picks + " runs, " + danger.LosBreaks + " line-of-sight breaks");
             sb.Append(walker.Describe());
             sb.Append("\nserver fps " + Performance.current.frameRate);
             return sb.ToString();
@@ -726,6 +730,155 @@ namespace Oxide.Plugins
 
         #region Actions
 
+        #region Danger
+
+        // Danger v1 (m0j's spec): when a player hurts it, after a human reaction time it sprints
+        // for the nearest cover that blocks the attacker's line of sight, re-picking as the
+        // attacker moves. Once the attacker hasn't been able to see it for 10 s, it calms down
+        // and goes back to what it was doing.
+        private const float MinReaction = 0.15f, MaxReaction = 0.4f, CalmAfter = 10f, CoverSearch = 35f;
+        private static readonly int SightMask = LayerMask.GetMask("World", "Terrain", "Construction", "Tree", "Default", "Deployed");
+
+        private class Danger
+        {
+            public BasePlayer Attacker;
+            public float Started, ReactAt, HiddenSince = -1f, NextPick, LastHealth;
+            public bool Reacted, Seen = true;
+            public Vector3 Cover;
+            public bool HasCover;
+            public int Picks, LosBreaks, Hits;
+            public float Closest = float.MaxValue, Damage;
+            public bool WasRoaming;
+        }
+
+        private Danger danger;
+        private Timer dangerTimer;
+
+        private void OnEntityTakeDamage(BaseCombatEntity entity, HitInfo info)
+        {
+            if (!Alive || entity != bot || info == null) return;
+            var attacker = info.InitiatorPlayer;
+            if (attacker == null || attacker == bot || attacker.IsNpc) return;
+            if (danger != null && danger.Attacker == attacker) { danger.Hits++; return; }
+            var wasRoaming = danger != null ? danger.WasRoaming : walker.Roaming;
+            danger = new Danger
+            {
+                Attacker = attacker, Started = Time.time, Hits = 1, LastHealth = bot.health, WasRoaming = wasRoaming,
+                ReactAt = Time.time + UnityEngine.Random.Range(MinReaction, MaxReaction), // never faster than 150 ms
+            };
+            if (dangerTimer == null) dangerTimer = timer.Every(0.1f, DangerTick); // tracks the attacker 10 times a second
+        }
+
+        private void DangerTick()
+        {
+            var d = danger;
+            if (d == null) return;
+            if (!Alive) { danger = null; return; }
+            var now = Time.time;
+            if (now < d.ReactAt) return;
+            if (!d.Reacted)
+            {
+                d.Reacted = true;
+                EndJob(null);
+                walker.SetRoaming(false);
+                walker.Working = false;
+                Puts("[danger] " + saved.Name + " was hit by " + d.Attacker.displayName + ", reacted after " + ((d.ReactAt - d.Started) * 1000f).ToString("0") + " ms; running for cover.");
+            }
+            if (bot.health < d.LastHealth) d.Damage += d.LastHealth - bot.health;
+            d.LastHealth = bot.health;
+
+            var a = d.Attacker;
+            var gone = a == null || a.IsDestroyed || a.IsDead() || !a.IsConnected;
+            var dist = gone ? float.MaxValue : Vector3.Distance(a.transform.position, bot.transform.position);
+            if (!gone) d.Closest = Mathf.Min(d.Closest, dist);
+            var seen = !gone && dist < 300f && CanSee(a.eyes.position, bot.transform.position);
+            if (d.Seen && !seen) d.LosBreaks++;
+            d.Seen = seen;
+            if (seen) d.HiddenSince = -1f;
+            else if (d.HiddenSince < 0f) d.HiddenSince = now;
+
+            if (!seen && now - d.HiddenSince >= CalmAfter) { CalmDown(gone ? "the attacker is gone" : "out of sight for " + CalmAfter + " s"); return; }
+
+            // Re-pick cover twice a second while it can be seen, or when it got where it was going.
+            if (now < d.NextPick) return;
+            d.NextPick = now + 0.5f;
+            if (gone) return;
+            var coverStillGood = d.HasCover && !CanSee(a.eyes.position, d.Cover);
+            if (coverStillGood && walker.Busy) return;
+            if (!seen && !walker.Busy) return; // hidden and standing still: stay put
+            PickCover(d, a);
+        }
+
+        // Test: aibot.hurt <player name> - 5 damage "from" that player, as if they shot it.
+        [ConsoleCommand("aibot.hurt")]
+        private void ConHurt(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !arg.IsAdmin) return;
+            if (!Alive) { arg.ReplyWith("No bot."); return; }
+            var name = arg.GetString(0);
+            var who = BasePlayer.activePlayerList.FirstOrDefault(p => p.displayName.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0);
+            if (who == null) { arg.ReplyWith("No online player matching '" + name + "'."); return; }
+            bot.Hurt(new HitInfo(who, bot, Rust.DamageType.Bullet, 5f));
+            arg.ReplyWith(saved.Name + " took 5 damage from " + who.displayName + " (" + Vector3.Distance(who.transform.position, bot.transform.position).ToString("0") + " m away).");
+        }
+
+        private bool CanSee(Vector3 eyes, Vector3 feet)
+        {
+            // The attacker can see it if a line reaches its head or its chest.
+            return !Physics.Linecast(eyes, feet + Vector3.up * 1.5f, SightMask, QueryTriggerInteraction.Ignore)
+                || !Physics.Linecast(eyes, feet + Vector3.up * 0.9f, SightMask, QueryTriggerInteraction.Ignore);
+        }
+
+        private void PickCover(Danger d, BasePlayer a)
+        {
+            var me = bot.transform.position;
+            var them = a.transform.position;
+            var away = me - them; away.y = 0f;
+            if (away.sqrMagnitude < 0.01f) away = Vector3.forward;
+            away.Normalize();
+            var spots = new List<KeyValuePair<float, Vector3>>();
+            for (var r = 4f; r <= CoverSearch; r += 4f)
+                for (var ang = 0; ang < 360; ang += 30)
+                {
+                    var dir = Quaternion.Euler(0f, ang, 0f) * away;
+                    Vector3 spot;
+                    if (!Walker.Nearest(me + dir * r, 2f, out spot)) continue;
+                    if (Walker.WaterDepth(spot) > Walker.MaxWater) continue;
+                    // Not towards the attacker, and not closer to them than it is now.
+                    if (Vector3.Distance(spot, them) < Vector3.Distance(me, them) * 0.8f) continue;
+                    if (CanSee(a.eyes.position, spot)) continue;
+                    spots.Add(new KeyValuePair<float, Vector3>(Vector3.Distance(me, spot), spot));
+                }
+            spots.Sort((x, y) => x.Key.CompareTo(y.Key));
+            foreach (var s in spots.Take(4))
+            {
+                if (!walker.GoTo(s.Value, true)) continue;
+                d.Cover = s.Value; d.HasCover = true; d.Picks++;
+                return;
+            }
+            // No cover within reach: just sprint straight away from them.
+            d.HasCover = false;
+            for (var r = 30f; r >= 10f; r -= 10f)
+            {
+                Vector3 spot;
+                if (Walker.Nearest(me + away * r, 4f, out spot) && walker.GoTo(spot, true)) { d.Picks++; return; }
+            }
+        }
+
+        private void CalmDown(string why)
+        {
+            var d = danger;
+            danger = null;
+            if (d == null || !Alive) return;
+            Puts("[danger] " + saved.Name + " calmed down (" + why + ") after " + (Time.time - d.Started).ToString("0") + " s: hit " + d.Hits + " times for " + d.Damage.ToString("0")
+                + " damage, closest " + (d.Closest < float.MaxValue ? d.Closest.ToString("0") + " m" : "?") + ", broke line of sight " + d.LosBreaks + " times, " + d.Picks + " runs, health " + bot.health.ToString("0") + ".");
+            walker.Halt();
+            if (saved.Brain) mind.Until = Time.time + StopLength();
+            else if (d.WasRoaming) walker.SetRoaming(true);
+        }
+
+        #endregion
+
         #region Brain
 
         // The brain only decides; the body (walker + jobs) does. Every choice is a weighted
@@ -816,7 +969,7 @@ namespace Oxide.Plugins
 
         private void BrainTick()
         {
-            if (saved == null || !saved.Brain || !Alive) return;
+            if (saved == null || !saved.Brain || !Alive || danger != null) return;
             var now = Time.time;
             if (mind.Acting)
             {

@@ -103,6 +103,10 @@ same shape; copy it over `AiBotBrain.json` and the bot picks it up within a seco
 recordings say too little about keep the hand guess. `tools/baseline.py` measures a recording's
 movement rhythm (legs, stops, turns, jumps, sprinting); `baselines/` holds the results.
 
+### Danger
+
+When a player hurts the bot it reacts after 150 to 400 ms (never faster than 150 ms), drops what it was doing and sprints for the nearest spot within 35 m that the attacker can't see (rock, tree, building in the way), re-picking twice a second as the attacker moves; with no cover in reach it runs straight away. It tracks the attacker 10 times a second. After 10 s out of the attacker's sight it calms down and goes back to the brain or roaming. Each chase is logged as `[danger] ...` with hits, damage, closest distance and line-of-sight breaks. `aibot.hurt <player>` fakes a 5-damage hit from that player for testing.
+
 ### Actions
 
 Actions run when you give the command, or when the brain picks them. It looks
