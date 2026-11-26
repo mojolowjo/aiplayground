@@ -1980,7 +1980,9 @@ namespace Oxide.Plugins
             private const float MaxStepUp = 1f, MaxDrop = 2f;
 
             private static readonly int GroundMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed", "Vehicle Large"); // Vehicle Large: the harbor bridge and other big things players stand on
-            private static readonly int BlockMask = LayerMask.GetMask("World", "Default", "Construction", "Deployed", "Tree");
+            // Transparent: chain-link fences and the like. Players can't walk through them (though
+            // they can see through, so they're not in the sight checks).
+            private static readonly int BlockMask = LayerMask.GetMask("World", "Default", "Construction", "Deployed", "Tree", "Transparent");
 
             public bool Roaming { get; private set; }
             public bool Working; // an action is running: no wandering or looking around
