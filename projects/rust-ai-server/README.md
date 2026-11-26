@@ -66,6 +66,8 @@ Windows Firewall needs an inbound allow rule for RustDedicated.exe on Private ne
 | `/bot spawn` | `aibot.spawn` | New bot, 4 m in front of you, standing still. From RCON it appears at a random spawn point and roams. |
 | `/bot info` | `aibot.info` | Name, position, health, gear, what it is doing, and counters since spawn. |
 | `/bot brain` | `aibot.brain` | The bot decides for itself what to do (see Brain). `/bot stop` or `/bot roam` turns it off. |
+| `/bot odds` | `aibot.odds` | Shows the brain's numbers in plain words. |
+| `/bot set <choice> <field> <value>` | `aibot.set ...` | Changes one, e.g. `/bot set chop base 2`, `/bot set barrel nearboost 8`, `/bot set runshare 0.5`. Saved to `AiBotBrain.json`; used from the next decision. |
 | `/bot roam` / `/bot stop` | `aibot.roam` / `aibot.stop` | Start or stop wandering. |
 | `/bot here` | | Moves it in front of you and stops it. |
 | `/bot kill` | `aibot.kill` | Removes it. |

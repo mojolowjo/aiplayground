@@ -401,7 +401,71 @@ namespace Oxide.Plugins
         private void ChatBot(BasePlayer player, string command, string[] args)
         {
             if (!player.IsAdmin) return;
-            SendReply(player, Run(args.Length > 0 ? args[0].ToLowerInvariant() : "", player));
+            var verb = args.Length > 0 ? args[0].ToLowerInvariant() : "";
+            if (verb == "odds") { SendReply(player, ShowOdds()); return; }
+            if (verb == "set") { SendReply(player, SetOdd(args.Skip(1).ToArray())); return; }
+            SendReply(player, Run(verb, player));
+        }
+
+        [ConsoleCommand("aibot.odds")]
+        private void ConOdds(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !arg.IsAdmin) return;
+            arg.ReplyWith(ShowOdds());
+        }
+
+        [ConsoleCommand("aibot.set")]
+        private void ConSet(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !arg.IsAdmin) return;
+            var a = new string[arg.Args?.Length ?? 0];
+            for (var i = 0; i < a.Length; i++) a[i] = arg.GetString(i);
+            arg.ReplyWith(SetOdd(a));
+        }
+
+        // /bot odds: the brain's numbers. /bot set <choice> <field> <value>, or /bot set <field> <value>
+        // for the general ones. Saved to AiBotBrain.json, which the bot re-reads at once.
+        private string ShowOdds()
+        {
+            LoadOdds();
+            var sb = new StringBuilder("Brain odds (" + odds.Source + "):\n");
+            foreach (var kv in odds.Options)
+            {
+                var o = kv.Value;
+                sb.Append(kv.Key + ": base " + o.Base + (o.NearBoost != 1f ? ", x" + o.NearBoost + " if one within " + o.NearRadius + " m" : "")
+                    + (!string.IsNullOrEmpty(o.Want) ? ", up to x" + (1f + o.NeedBoost) + " when short of " + o.WantAmount + " " + o.Want : "") + "\n");
+            }
+            sb.Append("stops: median " + odds.StopMedian + " s, spread " + odds.StopSpread + ", max " + odds.StopMax + " s; rest " + odds.RestMin + "-" + odds.RestMax + " s\n");
+            sb.Append("sprint share " + odds.RunShare + "; sticks with a choice " + odds.StickMin + "-" + odds.StickMax + " s\n");
+            sb.Append("Change one: /bot set chop base 2  |  /bot set barrel nearboost 8  |  /bot set runshare 0.5");
+            return sb.ToString();
+        }
+
+        private string SetOdd(string[] a)
+        {
+            LoadOdds();
+            object target = odds;
+            var i = 0;
+            if (a.Length == 3)
+            {
+                BrainOption o;
+                if (!odds.Options.TryGetValue(a[0].ToLowerInvariant(), out o)) return "No choice called " + a[0] + ". Choices: " + string.Join(", ", odds.Options.Keys);
+                target = o;
+                i = 1;
+            }
+            else if (a.Length != 2) return "Use /bot set <choice> <field> <value> (e.g. /bot set chop base 2) or /bot set <field> <value> (e.g. /bot set runshare 0.5). /bot odds lists them.";
+            var field = target.GetType().GetFields().FirstOrDefault(f => string.Equals(f.Name, a[i], StringComparison.OrdinalIgnoreCase));
+            if (field == null || field.Name == "Options") return "No field " + a[i] + ". Fields: " + string.Join(", ", target.GetType().GetFields().Where(f => f.Name != "Options").Select(f => f.Name.ToLowerInvariant()));
+            try
+            {
+                var value = field.FieldType == typeof(string) ? (object)a[i + 1] : Convert.ChangeType(a[i + 1], field.FieldType, System.Globalization.CultureInfo.InvariantCulture);
+                field.SetValue(target, value);
+            }
+            catch { return a[i + 1] + " isn't a valid value for " + field.Name + "."; }
+            if (odds.Source.IndexOf("edited", StringComparison.Ordinal) < 0) odds.Source += ", edited in game";
+            Interface.Oxide.DataFileSystem.WriteObject(OddsFile, odds);
+            Puts("Brain odds changed: " + string.Join(" ", a));
+            return "Set " + (i == 1 ? a[0] + " " : "") + field.Name + " = " + a[i + 1] + ". The bot uses it from its next decision.";
         }
 
         private void FromConsole(ConsoleSystem.Arg arg, string verb)
