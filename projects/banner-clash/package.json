@@ -1,0 +1,8 @@
+{
+  "name": "banner-clash",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node server.js", "matchups": "node tools/matchups.js", "test": "node test/sim.test.js && node test/bot.test.js && node test/progress.test.js && node test/server.test.js && node test/upnp.test.js && node test/accounts.test.js" },
+  "dependencies": { "ws": "^8.18.0" }
+}
