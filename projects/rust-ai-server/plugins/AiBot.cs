@@ -441,6 +441,8 @@ namespace Oxide.Plugins
             }
             sb.Append("stops: median " + odds.StopMedian + " s, spread " + odds.StopSpread + ", max " + odds.StopMax + " s; rest " + odds.RestMin + "-" + odds.RestMax + " s\n");
             sb.Append("sprint share " + odds.RunShare + "; sticks with a choice " + odds.StickMin + "-" + odds.StickMax + " s\n");
+            sb.Append("running for cover (within " + odds.FleeRadius + " m): score = cover depth x " + odds.FleeDepth + " - run seconds x " + odds.FleeTime + " - seconds in view x " + odds.FleeExposed
+                + " + metres from attacker x " + odds.FleeDistance + " - metres of climb x " + odds.FleeClimb + " (fields fleeradius, fleedepth, fleetime, fleeexposed, fleedistance, fleeclimb)\n");
             sb.Append("Change one: /bot set chop base 2  |  /bot set barrel nearboost 8  |  /bot set runshare 0.5");
             return sb.ToString();
         }
@@ -822,6 +824,11 @@ namespace Oxide.Plugins
             arg.ReplyWith(saved.Name + " took 5 damage from " + who.displayName + " (" + Vector3.Distance(who.transform.position, bot.transform.position).ToString("0") + " m away).");
         }
 
+        private class Cand { public Vector3 Spot; public float Depth, Time, Exposed, Away, Climb, Score; public bool Routed; }
+
+        private static bool SeesHead(Vector3 eyes, Vector3 feet) => !Physics.Linecast(eyes, feet + Vector3.up * 1.5f, SightMask, QueryTriggerInteraction.Ignore);
+        private static bool SeesChest(Vector3 eyes, Vector3 feet) => !Physics.Linecast(eyes, feet + Vector3.up * 0.9f, SightMask, QueryTriggerInteraction.Ignore);
+
         private bool CanSee(Vector3 eyes, Vector3 feet)
         {
             // The attacker can see it if a line reaches its head or its chest.
@@ -836,24 +843,66 @@ namespace Oxide.Plugins
             var away = me - them; away.y = 0f;
             if (away.sqrMagnitude < 0.01f) away = Vector3.forward;
             away.Normalize();
-            var spots = new List<KeyValuePair<float, Vector3>>();
-            for (var r = 4f; r <= CoverSearch; r += 4f)
-                for (var ang = 0; ang < 360; ang += 30)
+            var eyes = a.eyes.position;
+            // Where the attacker could see from in a moment: here, a step left or right, a step closer.
+            var side = Vector3.Cross(Vector3.up, away);
+            var views = new[] { eyes, eyes + side * 4f, eyes - side * 4f, eyes + away * 4f };
+            var myDist = Vector3.Distance(me, them);
+            var o = odds;
+
+            // 1. Candidates in rings, every 3 m out to FleeRadius, in 24 directions.
+            var cands = new List<Cand>();
+            for (var r = 3f; r <= o.FleeRadius; r += 3f)
+                for (var ang = 0; ang < 360; ang += 15)
                 {
                     var dir = Quaternion.Euler(0f, ang, 0f) * away;
                     Vector3 spot;
-                    if (!Walker.Nearest(me + dir * r, 2f, out spot)) continue;
+                    if (!Walker.Nearest(me + dir * r, 1.5f, out spot)) continue;
                     if (Walker.WaterDepth(spot) > Walker.MaxWater) continue;
-                    // Not towards the attacker, and not closer to them than it is now.
-                    if (Vector3.Distance(spot, them) < Vector3.Distance(me, them) * 0.8f) continue;
-                    if (CanSee(a.eyes.position, spot)) continue;
-                    spots.Add(new KeyValuePair<float, Vector3>(Vector3.Distance(me, spot), spot));
+                    if (spot.y - me.y > 1f) continue; // up on a boulder or ledge: it can't get there without jumping
+                    if (Vector3.Distance(spot, them) < myDist) continue; // no running towards them
+                    // 2. Deep cover: hidden from where they are now (required), and how many of the other views.
+                    if (CanSee(eyes, spot)) continue;
+                    var hidden = 0;
+                    foreach (var v in views) { if (!SeesHead(v, spot)) hidden++; if (!SeesChest(v, spot)) hidden++; }
+                    var c = new Cand { Spot = spot, Depth = hidden / (views.Length * 2f), Away = Vector3.Distance(spot, them), Climb = Mathf.Max(0f, spot.y - me.y) };
+                    c.Time = Vector3.Distance(me, spot) / Walker.SprintSpeed;
+                    c.Score = c.Depth * o.FleeDepth - c.Time * o.FleeTime + c.Away * o.FleeDistance - c.Climb * o.FleeClimb;
+                    cands.Add(c);
                 }
-            spots.Sort((x, y) => x.Key.CompareTo(y.Key));
-            foreach (var s in spots.Take(4))
+            // 3. Real routes for the best few: travel time along the route and time spent in view on the way.
+            cands.Sort((x, y) => y.Score.CompareTo(x.Score));
+            Cand best = null;
+            foreach (var c in cands.Take(3))
             {
-                if (!walker.GoTo(s.Value, true)) continue;
-                d.Cover = s.Value; d.HasCover = true; d.Picks++;
+                if (!walker.GoTo(c.Spot, true)) continue;
+                var route = walker.Route();
+                float length = 0f, seen = 0f, climb = 0f;
+                for (var i = 1; i < route.Count; i++)
+                {
+                    var seg = Vector3.Distance(route[i - 1], route[i]);
+                    climb += Mathf.Max(0f, route[i].y - route[i - 1].y);
+                    for (var t = 0f; t < seg; t += 2f)
+                        if (CanSee(eyes, Vector3.Lerp(route[i - 1], route[i], t / seg))) seen += Mathf.Min(2f, seg - t);
+                    length += seg;
+                }
+                c.Time = length / Walker.SprintSpeed;
+                c.Exposed = seen / Walker.SprintSpeed;
+                c.Climb = climb;
+                c.Score = c.Depth * o.FleeDepth - c.Time * o.FleeTime - c.Exposed * o.FleeExposed + c.Away * o.FleeDistance - c.Climb * o.FleeClimb;
+                c.Routed = true;
+                if (best == null || c.Score > best.Score) best = c;
+            }
+            if (best != null)
+            {
+                if (!walker.GoTo(best.Spot, true)) best = null; // the last route planned may not be the best one
+            }
+            if (best != null)
+            {
+                var moved = !d.HasCover || Vector3.Distance(d.Cover, best.Spot) > 3f;
+                d.Cover = best.Spot; d.HasCover = true; d.Picks++;
+                if (moved) Puts("[danger] cover " + Vector3.Distance(me, best.Spot).ToString("0") + " m away, score " + best.Score.ToString("0.0") + " (depth " + best.Depth.ToString("0.00")
+                    + ", " + best.Time.ToString("0.0") + " s run, " + best.Exposed.ToString("0.0") + " s in view, ends " + best.Away.ToString("0") + " m from them, climb " + best.Climb.ToString("0.0") + " m; " + cands.Count + " hidden spots found)");
                 return;
             }
             // No cover within reach: just sprint straight away from them.
@@ -895,6 +944,9 @@ namespace Oxide.Plugins
             public float RestMin = 8f, RestMax = 30f; // a deliberate "rest" stop
             public float RunShare = 0.72f; // share of moving spent sprinting (baseline 72%)
             public float StickMin = 10f, StickMax = 60f; // how long it sticks with a choice
+            // Running for cover: score = depth x FleeDepth - run seconds x FleeTime - seconds in
+            // the attacker's view x FleeExposed + metres from them x FleeDistance - climb x FleeClimb.
+            public float FleeRadius = 35f, FleeDepth = 10f, FleeTime = 0.3f, FleeExposed = 1f, FleeDistance = 0.05f, FleeClimb = 1f;
             public Dictionary<string, BrainOption> Options = new Dictionary<string, BrainOption>
             {
                 { "chop", new BrainOption { Base = 1f, NearBoost = 3f, Want = "wood", WantAmount = 1000, NeedBoost = 2f } },
@@ -1559,6 +1611,7 @@ namespace Oxide.Plugins
         {
             public const float MaxWater = 0.4f;
             private const float WalkSpeed = 2.6f, RunSpeed = 5.2f;
+            public const float SprintSpeed = RunSpeed;
             private const float Step = 0.05f;
             private const float StuckSeconds = 3f, StuckDistance = 0.6f;
             private const float MaxStepUp = 1f, MaxDrop = 2f;
