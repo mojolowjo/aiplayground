@@ -70,6 +70,7 @@ namespace Oxide.Plugins
         {
             try { saved = Interface.Oxide.DataFileSystem.ReadObject<Saved>(FileName); } catch { saved = null; }
             KeepIdsReserved();
+            LoadOdds();
             jobTimer = timer.Every(0.2f, TickJob);
             brainTimer = timer.Every(0.5f, BrainTick);
             Trails.Load();
@@ -445,6 +446,8 @@ namespace Oxide.Plugins
                 + " + metres from attacker x " + odds.FleeDistance + " - metres of climb x " + odds.FleeClimb + " (fields fleeradius, fleedepth, fleetime, fleeexposed, fleedistance, fleeclimb)\n");
             sb.Append("running-away routes: uphill at most " + odds.FleeMaxSlope + " deg (fleemaxslope), steps up at most " + odds.FleeMaxStep + " m (fleemaxstep), cover at most " + odds.FleeMaxRise
                 + " m above it (fleemaxrise), jumps " + (odds.FleeJumps >= 0.5f ? "allowed" : "not allowed") + " (fleejumps 0/1); normal walking: 50 deg, 0.5 m, jumps allowed\n");
+            sb.Append("edges: stands on an edge only with ground within " + odds.PerchRadius + " m of its middle, otherwise slides off (perchradius; 0.5 = never)"
+                + (walker != null ? ", " + walker.PerchSlides + " slides off and " + walker.PerchBacks + " steps back so far" : "") + "\n");
             sb.Append("Change one: /bot set chop base 2  |  /bot set barrel nearboost 8  |  /bot set runshare 0.5");
             return sb.ToString();
         }
@@ -472,6 +475,7 @@ namespace Oxide.Plugins
             catch { return a[i + 1] + " isn't a valid value for " + field.Name + "."; }
             if (odds.Source.IndexOf("edited", StringComparison.Ordinal) < 0) odds.Source += ", edited in game";
             Interface.Oxide.DataFileSystem.WriteObject(OddsFile, odds);
+            Walker.PerchRadius = odds.PerchRadius;
             Puts("Brain odds changed: " + string.Join(" ", a));
             return "Set " + (i == 1 ? a[0] + " " : "") + field.Name + " = " + a[i + 1] + ". The bot uses it from its next decision.";
         }
@@ -1020,6 +1024,9 @@ namespace Oxide.Plugins
             // and jumps): steepest uphill slope, biggest single step up, highest cover spot above
             // where it stands, and whether a route may need a jump (0 = no, 1 = yes).
             public float FleeMaxSlope = 45f, FleeMaxStep = 0.5f, FleeMaxRise = 1f, FleeJumps = 0f;
+            // Standing on an edge: ground must be within this many metres of its middle, or it
+            // slides off (0.5 = never slide, like the plain character controller).
+            public float PerchRadius = 0.25f;
             public Dictionary<string, BrainOption> Options = new Dictionary<string, BrainOption>
             {
                 { "chop", new BrainOption { Base = 1f, NearBoost = 3f, Want = "wood", WantAmount = 1000, NeedBoost = 2f } },
@@ -1069,7 +1076,7 @@ namespace Oxide.Plugins
             var t = System.IO.File.GetLastWriteTimeUtc(path);
             if (t == oddsTime) return;
             oddsTime = t;
-            try { odds = Interface.Oxide.DataFileSystem.ReadObject<Odds>(OddsFile) ?? new Odds(); Puts("Brain odds loaded (" + odds.Source + ")."); }
+            try { odds = Interface.Oxide.DataFileSystem.ReadObject<Odds>(OddsFile) ?? new Odds(); Walker.PerchRadius = odds.PerchRadius; Puts("Brain odds loaded (" + odds.Source + ")."); }
             catch (Exception e) { Puts("Brain odds file is broken, keeping the old odds: " + e.Message); }
         }
 
@@ -2316,6 +2323,7 @@ namespace Oxide.Plugins
                 else if (hopNow && !wasGrounded) { hopNow = false; Interface.Oxide.LogInfo("[AiBot] JUMP skipped at " + pos.ToString("F2") + ": not on the ground when it tried"); }
                 else fallSpeed = wasGrounded ? -2f : fallSpeed + Physics.gravity.y * dt;
                 var next = legs.Move(new Vector3(dir.x * spd, fallSpeed, dir.z * spd) * dt);
+                next = OffTheEdge(next, dt);
                 if (legs.Grounded && !wasGrounded && fallSpeed < -15f) body.ApplyFallDamageFromVelocity(fallSpeed); // what a player's landing report does
                 if (!landedSinceHop) hopPeak = Mathf.Max(hopPeak, next.y);
                 if (!landedSinceHop && fallSpeed <= 0f && legs.OnFooting)
@@ -2344,6 +2352,36 @@ namespace Oxide.Plugins
                 deepest = Mathf.Max(deepest, WaterDepth(next));
                 body.MovePosition(next);
                 return next;
+            }
+
+            // The character controller counts as standing while any part of its round bottom
+            // touches something, so it could rest on a ledge's corner with its middle up to half a
+            // metre out over the air. Players slide off once their middle passes the edge (Rust
+            // fixed the same thing for players, devblog 71; Unreal calls it the perch radius).
+            // So: standing needs ground within PerchRadius of its middle. If it's only on the
+            // corner, it slides off that edge, or steps back onto it if the drop would hurt.
+            public static float PerchRadius = 0.25f;
+            public int PerchSlides, PerchBacks;
+
+            private Vector3 OffTheEdge(Vector3 feet, float dt)
+            {
+                if (!legs.Grounded || PerchRadius >= 0.49f) return feet;
+                RaycastHit hit;
+                // Ground under the middle: a thin sphere down to 0.3 m below the feet.
+                if (Physics.SphereCast(feet + Vector3.up * 0.6f, PerchRadius, Vector3.down, out hit, 0.35f + 0.3f, GroundMask, QueryTriggerInteraction.Ignore)) return feet;
+                // Only on the corner: find what it's resting on.
+                if (!Physics.SphereCast(feet + Vector3.up * 0.6f, 0.49f, Vector3.down, out hit, 0.11f + 0.3f, GroundMask, QueryTriggerInteraction.Ignore)) return feet;
+                var off = feet - hit.point;
+                off.y = 0f;
+                if (off.sqrMagnitude < 0.0001f) return feet;
+                off.Normalize();
+                if (DropAhead(feet, off) > SafeDrop || WaterDepth(feet + off * 0.8f) > MaxWater)
+                {
+                    off = -off; // a fall that would hurt, or into deep water: back onto the ledge instead
+                    PerchBacks++;
+                }
+                else PerchSlides++;
+                return legs.Move(off * 2.5f * dt + Vector3.down * 1f * dt);
             }
 
             private void OnDestroy() { legs?.Dispose(); dryLegs?.Dispose(); }
