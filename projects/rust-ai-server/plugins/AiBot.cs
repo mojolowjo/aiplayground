@@ -1896,7 +1896,9 @@ namespace Oxide.Plugins
                 if (ms > 20f) Interface.Oxide.LogInfo("[AiBot] SLOW route planning: " + ms.ToString("0") + " ms for " + tries + " tries (" + (found ? "found one" : "found none") + ")");
             }
 
-            private bool SetPath(Vector3 to)
+            // allowStraight false: after its body bumped into something on a straight line,
+            // don't try that same straight line again; use the map's route.
+            private bool SetPath(Vector3 to, bool allowStraight = true)
             {
                 Vector3 from;
                 corners.Clear(); cornerJumps.Clear(); cornerTrusted.Clear();
@@ -1904,7 +1906,7 @@ namespace Oxide.Plugins
                 // The map's routes never go off a ledge, but a player often just drops down. So
                 // for anything within 60 m, first try a straight line with the body, drops
                 // included (never more than SafeDrop); use the map's route only if that fails.
-                if (Vector3.Distance(from, to) < 60f)
+                if (allowStraight && Vector3.Distance(from, to) < 60f)
                 {
                     var straight = new List<Vector3> { body.transform.position, to };
                     if (!Wet(straight))
@@ -2131,7 +2133,12 @@ namespace Oxide.Plugins
                 var straightLine = pts.Count == 2;
                 for (var w = 1; w < way.Count; w++)
                 {
-                    if (Vector3.Distance(way[w], to) < GoalSlack)
+                    // The last few metres used to count as reached without being checked, so a short
+                    // route straight through a wall passed. Now only when nothing solid stands
+                    // between where the dry-run body got to and the goal.
+                    if (Vector3.Distance(way[w], to) < GoalSlack
+                        && !Physics.Linecast(dryLegs.Position + Vector3.up * 1f, to + Vector3.up * 1f, BlockMask, QueryTriggerInteraction.Ignore)
+                        && !Physics.Linecast(dryLegs.Position + Vector3.up * 0.4f, to + Vector3.up * 0.4f, BlockMask, QueryTriggerInteraction.Ignore))
                     {
                         // Only for the straight-line shortcut: if the goal is well above where the
                         // body got to (on top of a rock, say), the straight line isn't a way up.
@@ -2502,7 +2509,7 @@ namespace Oxide.Plugins
                 if (stuckLevel == 1)
                 {
                     repaths++;
-                    if (SetPath(goal)) return;
+                    if (SetPath(goal, false)) return; // the straight line just failed, so take the map's route
                     stuckLevel = 2;
                 }
                 if (stuckLevel == 2)
