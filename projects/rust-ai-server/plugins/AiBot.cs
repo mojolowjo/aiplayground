@@ -514,7 +514,8 @@ namespace Oxide.Plugins
             if (!Alive) { arg.ReplyWith("No bot."); return; }
             var spot = new Vector3(arg.GetFloat(0), arg.GetFloat(1), arg.GetFloat(2));
             BrainOff(); EndJob(null); walker.SetRoaming(false);
-            arg.ReplyWith(walker.GoTo(spot, false) ? saved.Name + " is going to " + spot.ToString("F1") + "." : "No route: " + walker.lastPlanProblem);
+            var ok = walker.GoTo(spot, false);
+            arg.ReplyWith(ok ? saved.Name + " is going to " + spot.ToString("F1") + " (" + walker.StateWord + "): " + string.Join(" ", walker.Route().Select(p => p.ToString("F1")).ToArray()) : "No route: " + walker.lastPlanProblem);
         }
 
         [ConsoleCommand("aibot.spawn")] private void ConSpawn(ConsoleSystem.Arg arg) => FromConsole(arg, "spawn");
@@ -1952,6 +1953,107 @@ namespace Oxide.Plugins
             // don't try that same straight line again; use the map's route.
             private bool SetPath(Vector3 to, bool allowStraight = true)
             {
+                if (SetPathDirect(to, allowStraight)) return true;
+                // Too high to get to directly (on a box, say): look for stepping stones.
+                if (to.y - body.transform.position.y <= 1f) return false;
+                var jumps = new Dictionary<int, Vector3>();
+                var trusted = new HashSet<int>();
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var route = ViaStep(body.transform.position, to, 2, jumps, trusted, sw);
+                if (route == null) return false;
+                corners.Clear(); cornerJumps.Clear(); cornerTrusted.Clear();
+                corners.AddRange(route); SnapToGround(corners);
+                foreach (var kv in jumps) cornerJumps[kv.Key] = kv.Value;
+                foreach (var t in trusted) cornerTrusted.Add(t);
+                corner = 1;
+                goal = to;
+                state = "travelling (via a stepping stone)";
+                SteppingRoutes++;
+                ResetStuck();
+                return true;
+            }
+
+            public int SteppingRoutes;
+
+            // The ground right under a point (the point itself if nothing within 4 m below).
+            private static float GroundY(Vector3 p)
+            {
+                RaycastHit hit;
+                return Physics.Raycast(p + Vector3.up * 0.5f, Vector3.down, out hit, 4.5f, GroundMask, QueryTriggerInteraction.Ignore) ? hit.point.y : p.y;
+            }
+
+            // One leg with the normal checks (straight line first, then the map's route), without
+            // touching the walker's current route. Jump/trail marks go into the given sets, offset
+            // by where this leg will start in the full route.
+            private List<Vector3> PlanLeg(Vector3 start, Vector3 to, int offset, Dictionary<int, Vector3> jumps, HashSet<int> trusted)
+            {
+                List<Vector3> r = null;
+                if (Vector3.Distance(start, to) < 60f)
+                {
+                    var straight = new List<Vector3> { start, to };
+                    if (!Wet(straight)) r = Walkable(straight, to);
+                }
+                if (r == null)
+                {
+                    Vector3 from;
+                    if (!Nearest(start, 3f, out from)) return null;
+                    path.Reset();
+                    if (!RustNavMeshHelpers.CalculatePath(from, to, RustNavMeshHelpers.AllAreas, path, false)) return null;
+                    if (path.status != NavMeshPathStatus.PathComplete || path.corners.Count < 2) return null;
+                    var pts = new List<Vector3>();
+                    foreach (var c in path.corners) pts.Add(c.Value);
+                    if (Wet(pts)) return null;
+                    r = Walkable(pts, to);
+                    if (r == null) return null;
+                }
+                foreach (var kv in routeJumps) jumps[kv.Key + offset] = kv.Value;
+                foreach (var t in routeTrusted) trusted.Add(t + offset);
+                return r;
+            }
+
+            // A spot near the goal it can stand on, from which the goal is a jump up (at most
+            // JumpReach higher), and which it can get to itself, perhaps by another stepping stone.
+            private List<Vector3> ViaStep(Vector3 start, Vector3 to, int depth, Dictionary<int, Vector3> jumps, HashSet<int> trusted, System.Diagnostics.Stopwatch sw)
+            {
+                var stones = new List<Vector3>();
+                for (var dx = -2.5f; dx <= 2.5f; dx += 0.5f)
+                    for (var dz = -2.5f; dz <= 2.5f; dz += 0.5f)
+                    {
+                        var p = to + new Vector3(dx, 0f, dz);
+                        RaycastHit hit;
+                        if (!Physics.Raycast(p + Vector3.up * 1.5f, Vector3.down, out hit, 6f, GroundMask, QueryTriggerInteraction.Ignore)) continue;
+                        var s = hit.point;
+                        var up = to.y - s.y;
+                        if (up < 0.3f || up > JumpReach) continue;
+                        if (Vector3.Angle(hit.normal, Vector3.up) > 50f) continue;
+                        if (Physics.CheckCapsule(s + Vector3.up * 0.55f, s + Vector3.up * 1.4f, 0.4f, BlockMask, QueryTriggerInteraction.Ignore)) continue;
+                        if (WaterDepth(s) > MaxWater) continue;
+                        if (stones.Any(o => (o - s).sqrMagnitude < 1f)) continue; // one per square metre
+                        stones.Add(s);
+                    }
+                stones.Sort((a, b) => Vector3.Distance(start, a).CompareTo(Vector3.Distance(start, b)));
+                foreach (var s in stones.Take(5))
+                {
+                    if (sw.ElapsedMilliseconds > 60) break; // planning happens inside one server frame: keep it short
+                    var j = new Dictionary<int, Vector3>();
+                    var tr = new HashSet<int>();
+                    var leg1 = PlanLeg(start, s, 0, j, tr);
+                    if (leg1 == null && depth > 1 && s.y - start.y > 1f) leg1 = ViaStep(start, s, depth - 1, j, tr, sw);
+                    if (leg1 == null) continue;
+                    var leg2 = PlanLeg(leg1[leg1.Count - 1], to, leg1.Count - 1, j, tr);
+                    if (leg2 == null) continue;
+                    if (leg2.Any(q => GroundY(q) < s.y - 0.5f)) continue; // it has to go up from the stone, not step down off it first
+                    var all = new List<Vector3>(leg1);
+                    all.AddRange(leg2.Skip(1));
+                    foreach (var kv in j) jumps[kv.Key] = kv.Value;
+                    foreach (var t in tr) trusted.Add(t);
+                    return all;
+                }
+                return null;
+            }
+
+            private bool SetPathDirect(Vector3 to, bool allowStraight)
+            {
                 Vector3 from;
                 corners.Clear(); cornerJumps.Clear(); cornerTrusted.Clear();
                 if (!Nearest(body.transform.position, 3f, out from)) return false;
@@ -2164,12 +2266,19 @@ namespace Oxide.Plugins
                 try
                 {
                     var r = DryRun(pts, to);
+                    // A route has to end at the goal's height, not under it: the map snaps a goal
+                    // that's off the map (the top of a box) to the ground beside it.
+                    if (r != null && to.y - r[r.Count - 1].y > 0.6f)
+                    {
+                        lastPlanProblem = "the route ends " + (to.y - r[r.Count - 1].y).ToString("0.0") + " m below the goal";
+                        return null;
+                    }
                     // Last word on the finished route: no point more than a jump's height above
                     // the one before it over a short distance (the top of a tall box, say).
                     if (r != null)
                         for (var i = 1; i < r.Count; i++)
                         {
-                            var rise = r[i].y - r[i - 1].y;
+                            var rise = GroundY(r[i]) - GroundY(r[i - 1]); // where it would stand, not where it was mid-jump
                             var run = new Vector2(r[i].x - r[i - 1].x, r[i].z - r[i - 1].z).magnitude;
                             if (rise > MaxJumpUp && run < 2f)
                             {
@@ -2232,7 +2341,10 @@ namespace Oxide.Plugins
                     {
                         var p = dryLegs.Position;
                         var f = new Vector3(way[w].x - p.x, 0f, way[w].z - p.z);
-                        if (f.magnitude < 0.35f) { reached = true; break; }
+                        // The goal counts as reached only at its height too, not standing under it
+                        // (the ground beside a box is not the top of the box).
+                        // And standing there, not passing through it mid-jump.
+                        if (f.magnitude < 0.35f && (w < way.Count - 1 || (to.y - p.y < 0.6f && dryLegs.Grounded))) { reached = true; break; }
                         if (dryLegs.Grounded && DropAhead(p, f.normalized) > SafeDrop) break; // a fall that would hurt
                         var hop = false;
                         if (dryLegs.OnFooting && t > 0 && dryHops < 3 && new Vector2(p.x - lastDry.x, p.z - lastDry.z).magnitude < 0.05f)
