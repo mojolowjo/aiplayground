@@ -847,6 +847,7 @@ namespace Oxide.Plugins
         #endregion
 
         private const float SearchRadius = 120f, Reach = 2.4f;
+        private readonly Dictionary<BaseEntity, float> badTargets = new Dictionary<BaseEntity, float>();
 
         // One action at a time. Phases: walk to the target, then work it (swing at it, or take
         // what is inside), then for a barrel pick up what it dropped.
@@ -907,6 +908,8 @@ namespace Oxide.Plugins
                 if (e == null || e.IsDestroyed || !Matches(kind, e)) continue;
                 if ((e.transform.position - from).sqrMagnitude > SearchRadius * SearchRadius) continue;
                 if (Walker.WaterDepth(e.transform.position) > Walker.MaxWater) continue;
+                float badUntil;
+                if (badTargets.TryGetValue(e, out badUntil) && Time.time < badUntil) continue;
                 found.Add(e);
             }
             if (found.Count == 0) return "No " + Noun(kind) + " within " + SearchRadius + " m.";
@@ -954,6 +957,13 @@ namespace Oxide.Plugins
                     j.Before.TryGetValue(kv.Key, out had);
                     if (kv.Value > had) gained.Add("+" + (kv.Value - had) + " " + kv.Key);
                 }
+            }
+            // Got nothing and the target is still there: it couldn't reach or work it. Leave that
+            // one alone for a few minutes rather than walking at it again and again.
+            if (gained.Count == 0 && j.Target != null && !j.Target.IsDestroyed)
+            {
+                badTargets[j.Target] = Time.time + 300f;
+                if (badTargets.Count > 200) foreach (var k in badTargets.Where(kv => kv.Key == null || Time.time > kv.Value).Select(kv => kv.Key).ToList()) badTargets.Remove(k);
             }
             var msg = why + (gained.Count > 0 ? " Got " + string.Join(", ", gained) + "." : " Got nothing.") + " (" + (Time.time - j.Started).ToString("0") + " s, " + j.Swings + " swings)";
             Puts(msg);
