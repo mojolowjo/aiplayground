@@ -2176,7 +2176,9 @@ namespace Oxide.Plugins
                     // The last few metres used to count as reached without being checked, so a short
                     // route straight through a wall passed. Now only when nothing solid stands
                     // between where the dry-run body got to and the goal.
+                    // And never when the goal is higher than a jump can get it (on top of a box).
                     if (Vector3.Distance(way[w], to) < GoalSlack
+                        && to.y - dryLegs.Position.y <= MaxJumpUp
                         && !Physics.Linecast(dryLegs.Position + Vector3.up * 1f, to + Vector3.up * 1f, BlockMask, QueryTriggerInteraction.Ignore)
                         && !Physics.Linecast(dryLegs.Position + Vector3.up * 0.4f, to + Vector3.up * 0.4f, BlockMask, QueryTriggerInteraction.Ignore))
                     {
@@ -2352,16 +2354,21 @@ namespace Oxide.Plugins
                 // at the top of a jump it could climb onto things taller than a player (a box
                 // over 1.8 m). A player's jump only gets their feet about 1.5 m up (the game's
                 // jump height), so anything it would end up standing on higher than that is refused.
+                var refusedLanding = false;
                 if (!landedSinceHop && legs.Grounded && next.y - hopFrom.y > MaxJumpUp)
                 {
-                    legs.Place(pos);
-                    next = pos;
-                    fallSpeed = Mathf.Min(fallSpeed, 0f);
+                    // Back off the edge a little and keep falling. This must not count as landing,
+                    // or it could jump again from mid-air (that was a double jump).
+                    var back = -new Vector3(dir.x, 0f, dir.z);
+                    legs.Place(pos + (back.sqrMagnitude > 0.01f ? back.normalized * 0.15f : Vector3.zero));
+                    next = legs.Position;
+                    fallSpeed = Mathf.Min(fallSpeed, -1f);
                     TooHighLandings++;
+                    refusedLanding = true;
                 }
                 if (legs.Grounded && !wasGrounded && fallSpeed < -15f) body.ApplyFallDamageFromVelocity(fallSpeed); // what a player's landing report does
                 if (!landedSinceHop) hopPeak = Mathf.Max(hopPeak, next.y);
-                if (!landedSinceHop && fallSpeed <= 0f && legs.OnFooting)
+                if (!landedSinceHop && !refusedLanding && fallSpeed <= 0f && legs.OnFooting)
                 {
                     landedSinceHop = true;
                     if (!hopLogged && next.y - hopFrom.y < 0.3f && new Vector2(next.x - hopFrom.x, next.z - hopFrom.z).magnitude < 0.5f)
