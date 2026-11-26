@@ -2115,6 +2115,18 @@ namespace Oxide.Plugins
                                     var arc = Mathf.Max(cur.Y, nb.Y);
                                     if (Physics.Linecast(new Vector3(cp.x, arc + 1f, cp.z), new Vector3(np.x, arc + 1f, np.z), BlockMask, QueryTriggerInteraction.Ignore)) continue;
                                     if (Physics.Linecast(new Vector3(cp.x, arc + 1.7f, cp.z), new Vector3(np.x, arc + 1.7f, np.z), BlockMask, QueryTriggerInteraction.Ignore)) continue;
+                                    // The body follows a real jump arc: at each point along the way
+                                    // its whole body (feet to head) must be clear. A box taller than
+                                    // the jump between take-off and landing blocks it.
+                                    var arcClear = true;
+                                    for (var t = 0.15f; t < 0.9f && arcClear; t += 0.15f)
+                                    {
+                                        var time = t * flat / (0.9f * RunSpeed);
+                                        var feetY = cur.Y + HopSpeed * time + 0.5f * Physics.gravity.y * time * time;
+                                        var at = Vector3.Lerp(cp, np, t);
+                                        if (Physics.CheckCapsule(new Vector3(at.x, feetY + 0.45f, at.z), new Vector3(at.x, feetY + 1.4f, at.z), 0.35f, BlockMask | GroundMask, QueryTriggerInteraction.Ignore)) arcClear = false;
+                                    }
+                                    if (!arcClear) continue;
                                     var ng = g[cur.Id] + flat + 2.5f;
                                     float old;
                                     if (g.TryGetValue(nb.Id, out old) && old <= ng) continue;
