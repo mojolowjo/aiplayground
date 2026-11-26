@@ -2679,7 +2679,7 @@ namespace Oxide.Plugins
                     var up = f.y;
                     f.y = 0f;
                     // Reached only when it's there, not under it on a lower level.
-                    if (f.magnitude > 0.35f || up > 0.6f) break;
+                    if (f.magnitude > 0.35f || up > 0.6f || cornerJumps.ContainsKey(corner)) break; // a take-off point is left by jumping, not by walking past it
                     corner++;
                 }
                 if (corner >= corners.Count)
@@ -2693,10 +2693,27 @@ namespace Oxide.Plugins
                 var dir = flat.normalized;
                 // A player jumped from here: jump too, heading for where they landed.
                 Vector3 land;
-                if (flat.magnitude < 0.8f && cornerJumps.TryGetValue(corner, out land) && Jump())
+                // Take off close to the edge, and only once it has found its feet after the last
+                // landing (it used to jump again straight away, before it was steady on the box).
+                if (flat.magnitude < 0.45f && cornerJumps.TryGetValue(corner, out land))
                 {
-                    TrailJumps++;
-                    corner++;
+                    if (Time.time - landedAt >= SteadyAfterLanding && Jump())
+                    {
+                        TrailJumps++;
+                        corner++;
+                        var toLand = corners[corner] - pos;
+                        toLand.y = 0f;
+                        dir = toLand.normalized;
+                    }
+                    else
+                    {
+                        // At the edge but not steady yet: stand and face the jump, like a player lining it up.
+                        var look = land - pos;
+                        lookYaw = Mathf.Atan2(look.x, look.z) * Mathf.Rad2Deg;
+                        MoveBody(pos, Vector3.zero, 0f, dt);
+                        ResetStuck();
+                        return;
+                    }
                 }
                 // In the air after a planned jump (a gap, or where a player jumped): carry the
                 // speed of a sprint jump, as a player would take it.
@@ -2782,6 +2799,7 @@ namespace Oxide.Plugins
                 if (!landedSinceHop && !refusedLanding && fallSpeed <= 0f && legs.OnFooting)
                 {
                     landedSinceHop = true;
+                    landedAt = Time.time;
                     if (!hopLogged && next.y - hopFrom.y < 0.3f && new Vector2(next.x - hopFrom.x, next.z - hopFrom.z).magnitude < 0.5f)
                     {
                         // Only jumps that went nowhere are logged.
@@ -2852,6 +2870,8 @@ namespace Oxide.Plugins
             private const float JumpReach = 1.3f; // the highest a hop can land on
             public string lastPlanProblem = "";
             private bool hopNow, landedSinceHop = true;
+            private float landedAt = -99f;
+            public static float SteadyAfterLanding = 0.5f; // seconds on its feet before a planned jump
 
             // The one jump: a real jump with the body (up off the ground with the take-off speed
             // for 1.4 m, carrying on in the direction it was going), used for steep bits, for
