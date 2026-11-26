@@ -848,6 +848,7 @@ namespace Oxide.Plugins
             public string When, Attacker, Ended;
             public float Seconds, SeenSeconds, Score, Closest;
             public int Hits;
+            public bool Excluded; // left out of the averages (a bug spoiled it, say)
             public Dictionary<string, float> Settings;
         }
 
@@ -916,30 +917,7 @@ namespace Oxide.Plugins
             var msg = "[train] chase " + t.Chases.Count + ": in view " + chase.SeenSeconds + " of " + chase.Seconds + " s, " + d.Hits + " hits" + (died ? ", died" : "") + " -> score " + chase.Score.ToString("0.00");
             if (t.On && d.Trial != null)
             {
-                if (t.Pending != null && SameSettings(t.Pending, d.Trial))
-                {
-                    var avg = (t.PendingScore + score) / 2f;
-                    if (avg < t.BestScore)
-                    {
-                        t.Best = new Dictionary<string, float>(d.Trial);
-                        t.BestScore = avg;
-                        t.BestChases = 2;
-                        msg += "; confirmed over 2 chases (avg " + avg.ToString("0.00") + "), NEW BEST";
-                    }
-                    else msg += "; second chase didn't hold up (avg " + avg.ToString("0.00") + " vs best " + t.BestScore.ToString("0.00") + ")";
-                    t.Pending = null;
-                }
-                else if (SameSettings(t.Best, d.Trial))
-                {
-                    t.BestScore = t.BestChases == 0 ? score : (t.BestScore * t.BestChases + score) / (t.BestChases + 1);
-                    t.BestChases++;
-                }
-                else if (score < t.BestScore || t.BestChases == 0)
-                {
-                    t.Pending = new Dictionary<string, float>(d.Trial);
-                    t.PendingScore = score;
-                    msg += "; looks better, trying it once more to be sure";
-                }
+                msg += Judge(t, d.Trial, score);
                 // Back to the best settings between chases, saved for good.
                 ApplyFlee(t.Best);
                 Interface.Oxide.DataFileSystem.WriteObject(OddsFile, odds);
@@ -947,6 +925,43 @@ namespace Oxide.Plugins
             Interface.Oxide.DataFileSystem.WriteObject(TrainingFile, t);
             Puts(msg);
             if (d.Attacker != null && d.Attacker.IsConnected) SendReply(d.Attacker, msg.Replace("[train] ", ""));
+        }
+
+        // Every set of settings is judged by the average of all its counted chases, worked out
+        // from the full chase history each time (so nothing drifts or gets lost on a reload).
+        // Best = lowest average among settings with 2+ chases. A new variation with one good
+        // chase gets a second go before it can win.
+        private static string Key(Dictionary<string, float> s) =>
+            s == null ? "" : string.Join(";", s.OrderBy(kv => kv.Key).Select(kv => kv.Key + "=" + kv.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)).ToArray());
+
+        private string Judge(Training t, Dictionary<string, float> trial, float score)
+        {
+            var groups = t.Chases.Where(c => !c.Excluded && c.Settings != null).GroupBy(c => Key(c.Settings))
+                .Select(g => new { Key = g.Key, Settings = g.First().Settings, Avg = g.Average(c => c.Score), N = g.Count() }).ToList();
+            var bestKey = Key(t.Best);
+            var bestGroup = groups.FirstOrDefault(g => g.Key == bestKey);
+            var bestAvg = bestGroup != null ? bestGroup.Avg : float.MaxValue;
+            var winner = groups.Where(g => g.N >= 2).OrderBy(g => g.Avg).FirstOrDefault();
+            var note = "";
+            if (winner != null && winner.Key != bestKey && winner.Avg < bestAvg)
+            {
+                t.Best = new Dictionary<string, float>(winner.Settings);
+                note = "; NEW BEST (avg " + winner.Avg.ToString("0.00") + " over " + winner.N + " chases, was " + (bestAvg < float.MaxValue ? bestAvg.ToString("0.00") : "unscored") + ")";
+                bestAvg = winner.Avg;
+                bestKey = winner.Key;
+            }
+            t.BestScore = bestAvg;
+            t.BestChases = groups.Where(g => g.Key == bestKey).Select(g => g.N).FirstOrDefault();
+            var mine = groups.FirstOrDefault(g => g.Key == Key(trial));
+            t.Pending = null;
+            if (mine != null && mine.Key != bestKey && mine.N == 1 && mine.Avg < bestAvg)
+            {
+                t.Pending = new Dictionary<string, float>(trial);
+                note += "; looks better than the best (" + bestAvg.ToString("0.00") + "), trying it once more to be sure";
+            }
+            else if (mine != null && mine.Key == bestKey) note += "; that was the best settings, now avg " + mine.Avg.ToString("0.00") + " over " + mine.N;
+            else if (note == "") note = "; not better than the best (" + (bestAvg < float.MaxValue ? bestAvg.ToString("0.00") : "unscored") + ")";
+            return note;
         }
 
         private static bool SameSettings(Dictionary<string, float> a, Dictionary<string, float> b) =>
@@ -958,7 +973,7 @@ namespace Oxide.Plugins
             if (arg == "on") { t.On = true; if (t.Best == null) { t.Best = CurrentFlee(); t.BestScore = float.MaxValue; t.BestChases = 0; } Interface.Oxide.DataFileSystem.WriteObject(TrainingFile, t); return "Training on: every chase tries slightly different running-away settings and keeps what makes it harder to see. Hit it and chase it; each chase reports its score."; }
             if (arg == "off") { t.On = false; if (t.Best != null) { ApplyFlee(t.Best); Interface.Oxide.DataFileSystem.WriteObject(OddsFile, odds); } Interface.Oxide.DataFileSystem.WriteObject(TrainingFile, t); return "Training off; keeping the best settings found."; }
             var sb = new StringBuilder("Training " + (t.On ? "ON" : "off") + ", " + t.Chases.Count + " chases recorded.\n");
-            if (t.Best != null) sb.AppendLine("Best so far (score " + (t.BestScore < float.MaxValue ? t.BestScore.ToString("0.00") : "not scored yet") + " over " + t.BestChases + " chases): " + string.Join(", ", t.Best.Select(kv => kv.Key.Replace("Flee", "").ToLowerInvariant() + " " + kv.Value.ToString("0.###")).ToArray()));
+            if (t.Best != null) sb.AppendLine("Best so far (score " + (t.BestScore < 1e30f ? t.BestScore.ToString("0.00") : "not scored yet") + " over " + t.BestChases + " chases): " + string.Join(", ", t.Best.Select(kv => kv.Key.Replace("Flee", "").ToLowerInvariant() + " " + kv.Value.ToString("0.###")).ToArray()));
             foreach (var c in t.Chases.Skip(Math.Max(0, t.Chases.Count - 5))) sb.AppendLine("  " + c.When.Substring(11, 5) + " in view " + c.SeenSeconds + "/" + c.Seconds + " s, hits " + c.Hits + ", score " + c.Score.ToString("0.00"));
             sb.Append("Score = share of the first 30 s in your view, +0.1 per extra hit, +1 if it died; lower is better. /bot train on|off");
             return sb.ToString();
