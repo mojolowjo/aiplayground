@@ -183,6 +183,32 @@ Rust 2636: after a game update, compare it with the server's `AntiHack` code aga
 Tested: a deliberate 9 m/s run had 545 moves refused for speed; normal roaming had 1 flag in
 953 moves (a hop through a tree, correctly refused).
 
+## Map test and movement lab
+
+Two separate plugins for studying movement. Neither touches the bot.
+
+`NavProbe.cs` tests the game's AI navigation map against player collision:
+
+    .\rcon.ps1 "navprobe.params"     # the map's build settings
+    .\rcon.ps1 "navprobe.run 3000"   # test 3000 random 10-30 m routes; results in carbon\data\NavProbe.json
+
+First run (2026-11-26): the map is built for radius 0.5 m, height 2 m, but counts anything up
+to 0.75 m as a step and slopes up to 50 degrees as walkable, in 33 cm cells. 66% of routes were
+clean. Most problems were rock formations and cliffs carrying "Prevent Movement" shapes (the
+invisible walls that stop players climbing rocks, which the map ignores), then obstacles a jump
+would clear (typically 0.74 m), low bumps, and monument parts too tall to jump.
+
+`MoveLab.cs` (chat, admins) lets a player walk the bot's route and records how:
+
+| Chat | Does |
+|---|---|
+| `/lab route` | Draws the route the bot would take from you to the spot you look at, for 2 minutes |
+| `/lab rec` / `/lab stop` | Records your position, view, jumps, crouching and sprinting, then reports where you left the route and what you jumped over. Saved in `carbon\data\MoveLab\` |
+| `/lab problems` | Draws the map test's problem spots within 150 m |
+| `/lab clear` | Forgets the route |
+
+If the server is opened to other players, tell them movement can be recorded.
+
 ## Roadmap
 
 - Movement option C: a client-style movement simulator (collide and slide, step up, gravity and
