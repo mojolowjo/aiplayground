@@ -1951,9 +1951,167 @@ namespace Oxide.Plugins
 
             // allowStraight false: after its body bumped into something on a straight line,
             // don't try that same straight line again; use the map's route.
+            #region Local map
+
+            // The game's navigation map is built for NPCs and leaves out small things a player
+            // stands on (crates, cardboard boxes, half-wall tops). For short trips the bot builds
+            // its own map of the area: every half metre it probes all the surfaces stacked there,
+            // keeps the ones a player could stand on, links neighbours it can walk, step, drop or
+            // jump between, and searches that (A*). The result still gets the usual test walk.
+            private const float Cell = 0.5f, MapMargin = 6f, MapMaxSize = 44f;
+            private static readonly RaycastHit[] probeHits = new RaycastHit[24];
+            public int LocalRoutes, LocalTries;
+            public float LocalMsWorst;
+
+            private class Node { public int X, Z; public float Y; public int Id; }
+
+            private List<Vector3> LocalRoute(Vector3 start, Vector3 goal, out string why)
+            {
+                why = "";
+                LocalTries++;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var min = new Vector3(Mathf.Min(start.x, goal.x) - MapMargin, 0f, Mathf.Min(start.z, goal.z) - MapMargin);
+                var max = new Vector3(Mathf.Max(start.x, goal.x) + MapMargin, 0f, Mathf.Max(start.z, goal.z) + MapMargin);
+                if (max.x - min.x > MapMaxSize || max.z - min.z > MapMaxSize) { why = "too far for the local map"; return null; }
+                int nx = Mathf.CeilToInt((max.x - min.x) / Cell) + 1, nz = Mathf.CeilToInt((max.z - min.z) / Cell) + 1;
+                var top = Mathf.Max(start.y, goal.y) + 5f;
+                var bottom = Mathf.Min(start.y, goal.y) - SafeDrop - 1f;
+                var cols = new List<Node>[nx, nz];
+                var nodes = new List<Node>();
+                for (var ix = 0; ix < nx; ix++)
+                    for (var iz = 0; iz < nz; iz++)
+                    {
+                        var x = min.x + ix * Cell;
+                        var z = min.z + iz * Cell;
+                        var n = Physics.RaycastNonAlloc(new Vector3(x, top, z), Vector3.down, probeHits, top - bottom, GroundMask, QueryTriggerInteraction.Ignore);
+                        for (var k = 0; k < n; k++)
+                        {
+                            var h = probeHits[k];
+                            if (Vector3.Angle(h.normal, Vector3.up) > 50f) continue;
+                            var p = h.point;
+                            if (WaterDepth(p) > MaxWater) continue;
+                            if (Physics.CheckCapsule(p + Vector3.up * 0.55f, p + Vector3.up * 1.45f, 0.4f, BlockMask, QueryTriggerInteraction.Ignore)) continue; // no room for a player here
+                            var list = cols[ix, iz] ?? (cols[ix, iz] = new List<Node>());
+                            if (list.Any(o => Mathf.Abs(o.Y - p.y) < 0.3f)) continue;
+                            var node = new Node { X = ix, Z = iz, Y = p.y, Id = nodes.Count };
+                            list.Add(node);
+                            nodes.Add(node);
+                        }
+                        if (sw.ElapsedMilliseconds > 40) { why = "the local map took too long to build"; return null; }
+                    }
+                Func<Vector3, Node> nearest = v =>
+                {
+                    int ix = Mathf.RoundToInt((v.x - min.x) / Cell), iz = Mathf.RoundToInt((v.z - min.z) / Cell);
+                    Node best = null;
+                    for (var dx = -1; dx <= 1; dx++)
+                        for (var dz = -1; dz <= 1; dz++)
+                        {
+                            int cx = ix + dx, cz = iz + dz;
+                            if (cx < 0 || cz < 0 || cx >= nx || cz >= nz || cols[cx, cz] == null) continue;
+                            foreach (var o in cols[cx, cz])
+                                if (Mathf.Abs(o.Y - v.y) < 1f && (best == null || Mathf.Abs(o.Y - v.y) + (dx != 0 || dz != 0 ? 0.3f : 0f) < Mathf.Abs(best.Y - v.y))) best = o;
+                        }
+                    return best;
+                };
+                var a = nearest(start);
+                var b = nearest(goal);
+                if (a == null) { why = "no surface under the bot on the local map"; return null; }
+                if (b == null) { why = "nowhere to stand at the goal"; return null; }
+                Func<Node, Vector3> pos = o => new Vector3(min.x + o.X * Cell, o.Y, min.z + o.Z * Cell);
+
+                // A* over the surfaces.
+                var g = new Dictionary<int, float> { { a.Id, 0f } };
+                var from = new Dictionary<int, int>();
+                var open = new List<Node> { a };
+                var closed = new HashSet<int>();
+                var goalPos = pos(b);
+                while (open.Count > 0)
+                {
+                    if (sw.ElapsedMilliseconds > 60) { why = "the local map search took too long"; return null; }
+                    var bi = 0;
+                    var bf = float.MaxValue;
+                    for (var i = 0; i < open.Count; i++)
+                    {
+                        var f = g[open[i].Id] + Vector3.Distance(pos(open[i]), goalPos);
+                        if (f < bf) { bf = f; bi = i; }
+                    }
+                    var cur = open[bi];
+                    open.RemoveAt(bi);
+                    if (cur == b) break;
+                    if (!closed.Add(cur.Id)) continue;
+                    var cp = pos(cur);
+                    for (var dx = -1; dx <= 1; dx++)
+                        for (var dz = -1; dz <= 1; dz++)
+                        {
+                            if (dx == 0 && dz == 0) continue;
+                            int cx = cur.X + dx, cz = cur.Z + dz;
+                            if (cx < 0 || cz < 0 || cx >= nx || cz >= nz || cols[cx, cz] == null) continue;
+                            foreach (var nb in cols[cx, cz])
+                            {
+                                if (closed.Contains(nb.Id)) continue;
+                                var dy = nb.Y - cur.Y;
+                                if (dy > JumpReach || -dy > SafeDrop) continue;
+                                var np = pos(nb);
+                                // Nothing solid between them at the height the body passes.
+                                var passY = Mathf.Max(cur.Y, nb.Y);
+                                if (Physics.Linecast(new Vector3(cp.x, passY + 0.9f, cp.z), new Vector3(np.x, passY + 0.9f, np.z), BlockMask, QueryTriggerInteraction.Ignore)) continue;
+                                var step = Vector3.Distance(cp, np);
+                                var cost = step + (dy > 0.5f ? 1.5f : 0f) + (dy < -1f ? 0.5f : 0f);
+                                var ng = g[cur.Id] + cost;
+                                float old;
+                                if (g.TryGetValue(nb.Id, out old) && old <= ng) continue;
+                                g[nb.Id] = ng;
+                                from[nb.Id] = cur.Id;
+                                open.Add(nb);
+                            }
+                        }
+                }
+                if (!from.ContainsKey(b.Id) && a != b) { why = "the local map has no way there"; return null; }
+                var chain = new List<Vector3> { pos(b) };
+                var id = b.Id;
+                while (from.ContainsKey(id)) { id = from[id]; chain.Add(pos(nodes[id])); }
+                chain.Reverse();
+                chain[0] = start;
+                // Keep only the corners: points where the direction or the height changes.
+                var pts = new List<Vector3> { chain[0] };
+                for (var i = 1; i < chain.Count - 1; i++)
+                {
+                    var d1 = chain[i] - chain[i - 1];
+                    var d2 = chain[i + 1] - chain[i];
+                    if (Mathf.Abs(d1.y) > 0.3f || Mathf.Abs(d2.y) > 0.3f || Vector3.Angle(new Vector3(d1.x, 0f, d1.z), new Vector3(d2.x, 0f, d2.z)) > 10f) pts.Add(chain[i]);
+                }
+                pts.Add(goal);
+                LocalMsWorst = Mathf.Max(LocalMsWorst, (float)sw.Elapsed.TotalMilliseconds);
+                return pts;
+            }
+
+            #endregion
+
             private bool SetPath(Vector3 to, bool allowStraight = true)
             {
                 if (SetPathDirect(to, allowStraight)) return true;
+                // The bot's own map of the area: boxes, crates and wall tops the game's map leaves out.
+                string localWhy;
+                var local = LocalRoute(body.transform.position, to, out localWhy);
+                if (local != null && !Wet(local))
+                {
+                    var walk = Walkable(local, to);
+                    if (walk != null)
+                    {
+                        corners.Clear(); cornerJumps.Clear(); cornerTrusted.Clear();
+                        corners.AddRange(walk); SnapToGround(corners);
+                        foreach (var kv in routeJumps) cornerJumps[kv.Key] = kv.Value;
+                        foreach (var t in routeTrusted) cornerTrusted.Add(t);
+                        corner = 1;
+                        goal = to;
+                        state = "travelling (own map)";
+                        LocalRoutes++;
+                        ResetStuck();
+                        return true;
+                    }
+                    localWhy = "its own map found a way but the test walk failed (" + lastPlanProblem + ")";
+                }
+                if (localWhy != "") lastPlanProblem = localWhy;
                 // Too high to get to directly (on a box, say): look for stepping stones.
                 if (to.y - body.transform.position.y <= 1f) return false;
                 var jumps = new Dictionary<int, Vector3>();
@@ -2428,7 +2586,7 @@ namespace Oxide.Plugins
                     var up = f.y;
                     f.y = 0f;
                     // Reached only when it's there, not under it on a lower level.
-                    if (f.magnitude > 0.35f) break;
+                    if (f.magnitude > 0.35f || up > 0.6f) break;
                     corner++;
                 }
                 if (corner >= corners.Count)
@@ -2459,7 +2617,7 @@ namespace Oxide.Plugins
                     var jumped = (rise > -0.2f || legs.Bumped) && Jump();
                     // Close enough - but not while jumping: ending the trip mid-jump took away its
                     // forward movement, so it went straight up and down in front of half walls.
-                    if (!jumped && landedSinceHop && Vector3.Distance(pos, goal) < 2f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
+                    if (!jumped && landedSinceHop && Vector3.Distance(pos, goal) < 2f && goal.y - pos.y < 0.6f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
                 }
                 lastDir = dir;
                 lookYaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
@@ -2497,7 +2655,7 @@ namespace Oxide.Plugins
                 else if (hopNow && !wasGrounded) { hopNow = false; Interface.Oxide.LogInfo("[AiBot] JUMP skipped at " + pos.ToString("F2") + ": not on the ground when it tried"); }
                 else fallSpeed = wasGrounded ? -2f : fallSpeed + Physics.gravity.y * dt;
                 var next = legs.Move(new Vector3(dir.x * spd, fallSpeed, dir.z * spd) * dt);
-                next = OffTheEdge(next, dt);
+                next = OffTheEdge(next, dt, dir);
                 // The body's round bottom lets it slide up onto an edge as high as its middle, so
                 // at the top of a jump it could climb onto things taller than a player (a box
                 // over 1.8 m). A player's jump only gets their feet about 1.5 m up (the game's
@@ -2566,7 +2724,7 @@ namespace Oxide.Plugins
             public int TooHighLandings;
             public int PerchSlides, PerchBacks;
 
-            private Vector3 OffTheEdge(Vector3 feet, float dt)
+            private Vector3 OffTheEdge(Vector3 feet, float dt, Vector3 dir)
             {
                 if (!legs.Grounded || PerchRadius >= 0.49f) return feet;
                 RaycastHit hit;
@@ -2577,6 +2735,9 @@ namespace Oxide.Plugins
                 var off = feet - hit.point;
                 off.y = 0f;
                 if (off.sqrMagnitude < 0.0001f) return feet;
+                // Heading onto what it's resting on (landing on a half wall): carry on, don't
+                // slide back off. Only perched with nowhere to go, or heading away, slides off.
+                if (new Vector3(dir.x, 0f, dir.z).sqrMagnitude > 0.01f && Vector3.Dot(new Vector3(dir.x, 0f, dir.z), -off) > 0f) return feet;
                 off.Normalize();
                 if (DropAhead(feet, off) > SafeDrop || WaterDepth(feet + off * 0.8f) > MaxWater)
                 {
