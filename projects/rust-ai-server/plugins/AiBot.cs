@@ -4108,6 +4108,17 @@ namespace Oxide.Plugins
                 finally { dryLegs?.Park(); } // out of the way, so the dry-run body never blocks anyone
             }
 
+            // Would a player's body (above step height) hit something going straight from a to b?
+            private static bool BodyBlocked(Vector3 a, Vector3 b)
+            {
+                var d = b - a; d.y = 0f;
+                var len = d.magnitude;
+                if (len < 0.05f) return false;
+                var r = BasePlayer.GetRadius() * 0.9f;
+                var lift = Mathf.Max(0f, b.y - a.y);
+                return Physics.CapsuleCast(a + Vector3.up * (0.55f + r + lift), a + Vector3.up * (1.8f - r + lift), r, d / len, len, BlockMask, QueryTriggerInteraction.Ignore);
+            }
+
             private List<Vector3> DryRun(List<Vector3> pts, Vector3 to)
             {
                 routeJumps.Clear();
@@ -4137,7 +4148,10 @@ namespace Oxide.Plugins
                     if (Vector3.Distance(way[w], to) < GoalSlack
                         && to.y - dryLegs.Position.y <= MaxJumpUp
                         && !Physics.Linecast(dryLegs.Position + Vector3.up * 1f, to + Vector3.up * 1f, BlockMask, QueryTriggerInteraction.Ignore)
-                        && !Physics.Linecast(dryLegs.Position + Vector3.up * 0.4f, to + Vector3.up * 0.4f, BlockMask, QueryTriggerInteraction.Ignore))
+                        && !Physics.Linecast(dryLegs.Position + Vector3.up * 0.4f, to + Vector3.up * 0.4f, BlockMask, QueryTriggerInteraction.Ignore)
+                        // Thin lines slipped past parts of the harbor (m0j saw the route go
+                        // straight through): the whole body, step height to head, must fit too.
+                        && !BodyBlocked(dryLegs.Position, to))
                     {
                         // Only for the straight-line shortcut: if the goal is well above where the
                         // body got to (on top of a rock, say), the straight line isn't a way up.
