@@ -2141,6 +2141,7 @@ namespace Oxide.Plugins
             if (arg == "") arg = PickReason();
             if (arg == "any" || arg == "nothing") arg = "none";
             if (!RoamReasonsAll.Contains(arg)) return "Use /bot trip [wood|stone|loot|food|none|off].";
+            EndRoam("started a new trip");
             BrainOff();
             return StartRoam(arg);
         }
@@ -2410,7 +2411,7 @@ namespace Oxide.Plugins
             {
                 if (n.Contains("hemp")) return "hemp";
                 if (n.Contains("wood")) return "wood pile";
-                if (n.Contains("stone") || n.Contains("metal") || n.Contains("sulfur")) return "stones";
+                if (n.Contains("stone") || n.Contains("metal") || n.Contains("sulfur")) return "stone pile";
                 if (n.Contains("mushroom") || n.Contains("corn") || n.Contains("pumpkin") || n.Contains("potato") || n.Contains("berry")) return "food plant";
                 return "pickup";
             }
@@ -2440,7 +2441,7 @@ namespace Oxide.Plugins
                 // Every tree and pile it passes gets a roll, so these are kept very low; on top of
                 // that, at most one wood or stone detour per roam that isn't for wood or stone.
                 case "wood pile": return reason == "wood" ? 0.8f : 0.03f;
-                case "stones": return reason == "stone" ? 0.8f : 0.03f;
+                case "stone pile": return reason == "stone" ? 0.8f : 0.03f;
                 case "tree": return reason == "wood" ? 0f : 0.004f;
                 case "ore node": return reason == "stone" ? 0f : 0.008f;
             }
@@ -2471,8 +2472,8 @@ namespace Oxide.Plugins
                 if (!Sees(e)) continue;
                 r.Considered.Add(e);
                 var d = Vector3.Distance(bot.transform.position, e.transform.position);
-                var gather = thing == "tree" || thing == "ore node" || thing == "wood pile" || thing == "stones";
-                var forIt = (r.Reason == "wood" && (thing == "tree" || thing == "wood pile")) || (r.Reason == "stone" && (thing == "ore node" || thing == "stones"));
+                var gather = thing == "tree" || thing == "ore node" || thing == "wood pile" || thing == "stone pile";
+                var forIt = (r.Reason == "wood" && (thing == "tree" || thing == "wood pile")) || (r.Reason == "stone" && (thing == "ore node" || thing == "stone pile"));
                 if (gather && !forIt && r.OffGathers >= 1) continue;
                 var chance = DetourChance(thing, r.Reason) * (r.GoingHome ? 0.6f : 1f) / (1f + 0.12f * r.Detours) * (0.6f + 0.4f * (1f - d / radius));
                 if (UnityEngine.Random.value < chance && d < pickDist) { pick = e; pickThing = thing; pickDist = d; }
@@ -2481,7 +2482,7 @@ namespace Oxide.Plugins
             walker.Halt();
             if (!RoamJob(JobKindOf(pickThing), pick, "detour")) return false;
             r.Detours++;
-            if ((pickThing == "tree" || pickThing == "ore node" || pickThing == "wood pile" || pickThing == "stones") && r.Reason != "wood" && r.Reason != "stone") r.OffGathers++;
+            if ((pickThing == "tree" || pickThing == "ore node" || pickThing == "wood pile" || pickThing == "stone pile") && r.Reason != "wood" && r.Reason != "stone") r.OffGathers++;
             Note("saw a " + pickThing + " " + pickDist.ToString("0") + " m away and went for it" + (r.Current != null ? " (on the way to " + r.Current.Name + ")" : ""));
             return true;
         }
