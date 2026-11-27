@@ -1102,7 +1102,9 @@ namespace Oxide.Plugins
                 t.Pending = new Dictionary<string, float>(trial);
                 note += "; looks better than the best (" + bestAvg.ToString("0.00") + "), trying it again to be sure (" + mine.N + " of " + MinReps + ")";
             }
-            else if (mine != null && mine.Key == bestKey) note += "; that was the best settings, now avg " + mine.Avg.ToString("0.00") + " over " + mine.N;
+            else if (mine != null && mine.Key == bestKey) note += mine.N < MinReps
+                ? "; starting settings, round " + mine.N + " of " + MinReps + " before it tries variations (avg " + mine.Avg.ToString("0.00") + ")"
+                : "; re-checked the current best settings, now avg " + mine.Avg.ToString("0.00") + " over " + mine.N;
             else if (note == "") note = "; not better than the best (" + (bestAvg < float.MaxValue ? bestAvg.ToString("0.00") : "unscored") + ")";
             return note;
         }
@@ -1114,22 +1116,24 @@ namespace Oxide.Plugins
         {
             var t = Train();
             // /bot train close: your own chases train the close-range settings (m0j: "let me start
-            // training it myself"). /bot train on: back to the normal settings.
-            if (arg == "close" || (arg == "on" && closeMode && !selfPlayOn))
+            // training it myself"). /bot train normal: back to the normal settings. /bot train on
+            // just turns training on in whichever mode it's in (it used to switch close mode off,
+            // which sent m0j's close chases to the normal training without saying so).
+            if (arg == "close" || arg == "normal")
             {
                 if (selfPlayOn) return "Self-play is running; /bot selfplay off first.";
                 var main = TrainMain();
-                if (arg == "on" && main.Best != null) ApplyFlee(main.Best);
+                if (arg == "normal" && closeMode && main.Best != null) ApplyFlee(main.Best);
                 closeMode = arg == "close";
                 main.TrainClose = closeMode;
                 SaveTrain(main);
                 t = Train();
             }
-            if (arg == "on" || arg == "close")
+            if (arg == "on" || arg == "close" || arg == "normal")
             {
                 t.On = true; if (t.Best == null) { t.Best = CurrentFlee(); t.BestScore = float.MaxValue; t.BestChases = 0; } SaveTrain(t);
                 return t.Close
-                    ? "Close-range training on: each of your chases tries slightly different close-range settings (cover within ~10 m, first sharp turn, crouching, when to move on). Start a few metres from it and shoot; each chase reports its score. /bot train for the tally, /bot train on for normal training, /bot train off to stop."
+                    ? "Close-range training on: each of your chases tries slightly different close-range settings (cover within ~10 m, first sharp turn, crouching, when to move on). Start a few metres from it and shoot; each chase reports its score. /bot train for the tally, /bot train normal for normal training, /bot train off to stop."
                     : "Training on: every chase tries slightly different running-away settings and keeps what makes it harder to see. Hit it and chase it; each chase reports its score.";
             }
             if (arg == "skip")
@@ -1151,8 +1155,8 @@ namespace Oxide.Plugins
             if (t.Best != null) sb.AppendLine("Best so far (score " + (t.BestScore < 1e30f ? t.BestScore.ToString("0.00") : "not scored yet") + " over " + t.BestChases + " chases): " + string.Join(", ", t.Best.Select(kv => kv.Key.Replace("Flee", "").ToLowerInvariant() + " " + kv.Value.ToString("0.###")).ToArray()));
             foreach (var c in t.Chases.Skip(Math.Max(0, t.Chases.Count - 5))) sb.AppendLine("  " + c.When.Substring(11, 5) + " in view " + c.SeenSeconds + "/" + c.Seconds + " s, hits " + c.Hits + (t.Close ? ", avg gap " + c.AvgGap.ToString("0") + " m, end gap " + c.EndGap.ToString("0") + " m" : "") + (c.Excluded ? " (not counted: " + c.Reason + ")" : "") + ", score " + c.Score.ToString("0.00"));
             sb.Append(t.Close
-                ? "Score = distance: half from the average gap, half from the gap at the end (0 at 60 m+, 1 at 0 m), +1 if it died; lower is better. /bot train close|on|off|skip"
-                : "Score = share of the whole chase in view, +0.02 per extra hit (at most +0.5), +1 if it died; lower is better. /bot train on|close|off|skip");
+                ? "Score = distance: half from the average gap, half from the gap at the end (0 at 60 m+, 1 at 0 m), +1 if it died; lower is better. /bot train close|normal|on|off|skip"
+                : "Score = share of the whole chase in view, +0.02 per extra hit (at most +0.5), +1 if it died; lower is better. /bot train on|close|normal|off|skip");
             return sb.ToString();
         }
 
