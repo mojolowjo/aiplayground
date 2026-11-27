@@ -3310,7 +3310,7 @@ namespace Oxide.Plugins
                 }
 
                 if (corners.Count > 0 || !Working) lookPitch = 0f; // eyes ahead while walking or idle
-                yaw = Mathf.MoveTowardsAngle(yaw, lookYaw, 300f * dt);
+                if (!Airborne) yaw = Mathf.MoveTowardsAngle(yaw, lookYaw, 300f * dt); // no turning in mid-air
                 pitch = Mathf.MoveTowards(pitch, lookPitch, 200f * dt);
                 SetLook();
                 updateWatch.Stop();
@@ -4285,7 +4285,8 @@ namespace Oxide.Plugins
                 // landing (it used to jump again straight away, before it was steady on the box).
                 if (flat.magnitude < 0.45f && cornerJumps.TryGetValue(corner, out land))
                 {
-                    if (Time.time - landedAt >= SteadyAfterLanding && Jump())
+                    // m0j: face where it's going before jumping, like a player lining it up.
+                    if (Time.time - landedAt >= SteadyAfterLanding && FacingWithin(land - pos, 20f) && Jump())
                     {
                         TrailJumps++;
                         corner++;
@@ -4343,6 +4344,9 @@ namespace Oxide.Plugins
                 }
                 dodgeCur = Mathf.MoveTowards(dodgeCur, dodging ? dodgeNow : 0f, DodgeTurn * dt);
                 if (Mathf.Abs(dodgeCur) > 0.5f) dir = Quaternion.Euler(0f, dodgeCur, 0f) * dir;
+                // m0j: it changed direction in mid-air and looked like it flew sideways. Once off
+                // the ground it keeps the direction it took off in (and its facing, below).
+                if (Airborne) dir = airDir; else airDir = dir;
                 // In the air after a planned jump (a gap, or where a player jumped): carry the
                 // speed of a sprint jump, as a player would take it.
                 var next = MoveBody(pos, dir, !landedSinceHop && cornerJumps.Count > 0 ? Mathf.Max(speed, RunSpeed) : speed, dt);
@@ -4357,13 +4361,13 @@ namespace Oxide.Plugins
                     // How tall is what's in front (the highest thing it would have to clear)? A
                     // door, wall or anything over a jump's reach isn't worth jumping at.
                     var tall = legs.Bumped && AheadHeight(pos, dir) > JumpReach + 0.2f;
-                    var jumped = !tall && (rise > -0.2f || legs.Bumped) && Jump();
+                    var jumped = !tall && (rise > -0.2f || legs.Bumped) && FacingWithin(dir, 30f) && Jump();
                     // Close enough - but not while jumping: ending the trip mid-jump took away its
                     // forward movement, so it went straight up and down in front of half walls.
                     if (!jumped && landedSinceHop && Vector3.Distance(pos, goal) < 2f && goal.y - pos.y < 0.6f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
                 }
                 lastDir = dir;
-                lookYaw = Mathf.Atan2(baseDir.x, baseDir.z) * Mathf.Rad2Deg + 0.3f * dodgeCur;
+                if (!Airborne) lookYaw = Mathf.Atan2(baseDir.x, baseDir.z) * Mathf.Rad2Deg + 0.3f * dodgeCur;
                 if (Guard.Kicked) { Roaming = false; EndTrip("kicked by anti-cheat"); return; }
                 CheckStuck();
             }
@@ -4508,6 +4512,18 @@ namespace Oxide.Plugins
             // for 1.4 m, carrying on in the direction it was going), used for steep bits, for
             // anything in the way, and where a recorded player jumped. Like a player: only from
             // proper footing, and only once it has landed from the last one. Returns true if it jumped.
+            private Vector3 airDir = Vector3.forward;
+
+            // Is the body already facing (within deg) the way it would jump?
+            private bool FacingWithin(Vector3 d, float deg)
+            {
+                d.y = 0f;
+                if (d.sqrMagnitude < 0.0001f) return true;
+                if (Mathf.Abs(Mathf.DeltaAngle(yaw, Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg)) <= deg) return true;
+                lookYaw = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg; // turn to it first
+                return false;
+            }
+
             private bool Jump()
             {
                 if (legs == null || !legs.OnFooting || !landedSinceHop || Time.time < nextHop) return false;
