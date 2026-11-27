@@ -1094,7 +1094,9 @@ namespace Oxide.Plugins
             if (mine != null && mine.Key == bestKey)
             {
                 if (t.Pending != null && Key(t.Pending) == bestKey) t.Pending = null;
-                return note + "; that was the best settings, now avg " + mine.Avg.ToString("0.00") + " over " + mine.N;
+                return note + (mine.N < MinReps
+                    ? "; starting settings, round " + mine.N + " of " + MinReps + " before it tries variations (avg " + mine.Avg.ToString("0.00") + ")"
+                    : "; re-checked the current best settings, now avg " + mine.Avg.ToString("0.00") + " over " + mine.N);
             }
             t.Pending = null;
             if (mine != null && mine.Key != bestKey && mine.N < MinReps && mine.Avg < bestAvg)
