@@ -436,6 +436,7 @@ namespace Oxide.Plugins
             if (verb == "selfplay") { SendReply(player, SelfPlayCommand(args.Length > 1 ? args[1].ToLowerInvariant() : "")); return; }
             if (verb == "set") { SendReply(player, SetOdd(args.Skip(1).ToArray())); return; }
             if (verb == "test") { SendReply(player, ScenarioCommand(args.Length > 1 ? args[1].ToLowerInvariant() : "")); return; }
+            if (verb == "hunt") { SendReply(player, HuntCommand(player, args.Length > 1 ? args[1].ToLowerInvariant() : "")); return; }
             SendReply(player, Run(verb, player));
         }
 
@@ -1962,25 +1963,33 @@ namespace Oxide.Plugins
 
         private void FireNail(float now)
         {
+            if (now < reloadUntil || nailsLeft <= 0) { FireNailAt(now, bot, () => crouched, false); return; }
+            var sure = firstShot; // the first nail starts the chase
+            firstShot = false;
+            FireNailAt(now, bot, () => crouched, sure);
+        }
+
+        // One nail from Dusty at a player (Kestrel, or a person in /bot hunt). The same rules
+        // for both, so a person's run can be compared with the bot's.
+        private void FireNailAt(float now, BasePlayer victim, Func<bool> low, bool sure, Action onHit = null)
+        {
             if (now < reloadUntil) return;
             if (nailsLeft <= 0) { nailsLeft = NailMag; reloadUntil = now + NailReload; return; }
             nailsLeft--;
             nextShot = now + UnityEngine.Random.Range(0.22f, 0.35f);
             chaserShots++;
             var muzzle = chaser.eyes.position;
-            var target = bot.transform.position + Vector3.up * 1f;
+            var target = victim.transform.position + Vector3.up * 1f;
             var fwd = (target - muzzle).normalized;
             var dist = Vector3.Distance(muzzle, target);
             var off = UnityEngine.Random.insideUnitCircle * Mathf.Tan(NailCone * Mathf.Deg2Rad) * dist;
             var right = Vector3.Cross(Vector3.up, fwd).normalized;
             var up = Vector3.Cross(fwd, right);
             var aim = target + right * off.x + up * off.y;
-            var sure = firstShot; // the first nail starts the chase
-            firstShot = false;
             timer.Once(dist / NailSpeed, () =>
             {
-                if (!Alive || !ChaserAlive) return;
-                var body = bot.transform.position;
+                if (victim == null || victim.IsDestroyed || victim.IsDead() || !ChaserAlive) return;
+                var body = victim.transform.position;
                 var path = aim - muzzle;
                 var flatPath = new Vector2(path.x, path.z);
                 var rel = new Vector2(body.x - muzzle.x, body.z - muzzle.z);
@@ -1988,12 +1997,187 @@ namespace Oxide.Plugins
                 var p = muzzle + path * k;
                 var side = (new Vector2(p.x, p.z) - new Vector2(body.x, body.z)).magnitude;
                 var h = p.y - body.y;
-                if (!sure && (side > 0.45f || h < 0f || h > (crouched ? 1.2f : 1.85f))) return; // missed: it moved off the line
+                if (!sure && (side > 0.45f || h < 0f || h > (low() ? 1.2f : 1.85f))) return; // missed: it moved off the line
                 if (!sure && Physics.Linecast(muzzle, p, SightMask, QueryTriggerInteraction.Ignore)) return; // into cover
                 chaserHits++;
-                bot.Hurt(new HitInfo(chaser, bot, Rust.DamageType.Arrow, NailDamage));
+                victim.Hurt(new HitInfo(chaser, victim, Rust.DamageType.Arrow, NailDamage));
+                onHit?.Invoke();
             });
         }
+
+        #region Hunt (m0j: "have a bot chase me with a nail gun ... see if I can do better than the bot")
+
+        // /bot hunt: Dusty appears 5-10 m from you where it can see you, gives you 3 s, then
+        // chases you exactly as it chases Kestrel in close training (same nail gun, same hunting
+        // of the last seen spot). You escape when it hasn't seen you for 10 s; the round also
+        // ends if you die or after 2 minutes. Each run is scored with the same distance score as
+        // Kestrel's close chases and saved to AiBotHunts.json. /bot hunt stop removes Dusty.
+        private const string HuntFile = "AiBotHunts";
+
+        private class HuntRun
+        {
+            public string When, Player, Ended;
+            public float Seconds, SeenSeconds, AvgGap, EndGap, Score, Damage, MaxGap, FirstBreak = -1f;
+            public int Hits, SightBreaks;
+            public bool Died;
+            public List<HuntSample> Path = new List<HuntSample>(); // every 0.25 s: where you and Dusty were
+        }
+
+        private class HuntSample { public float T, X, Y, Z, DX, DZ, Gap; public bool Seen, Duck, Sprint; }
+
+        private class Hunts { public List<HuntRun> Runs = new List<HuntRun>(); }
+
+        private BasePlayer huntTarget;
+        private Timer huntTimer;
+        private float huntGo, huntStart, huntLastTick, huntSeen, huntHiddenSince = -1f, huntGapSum, huntGapTime, huntLastGap = -1f;
+        private int huntHits, huntBreaks;
+        private bool huntRunning, huntWasSeen;
+        private float huntStartHealth, huntMaxGap, huntFirstBreak;
+        private List<HuntSample> huntPath = new List<HuntSample>();
+
+        private string HuntCommand(BasePlayer player, string arg)
+        {
+            if (arg == "stop") { var was = huntTarget != null; EndHunt(null); RemoveChaser(); return was ? "Hunt stopped; Dusty is gone." : "No hunt running."; }
+            if (arg == "status" || arg == "score") return HuntSummary(player);
+            if (player == null) return "Run /bot hunt in game.";
+            if (selfPlayOn) return "Self-play is running; /bot selfplay off first.";
+            if (player.IsDead()) return "Respawn first.";
+            if (huntRunning) EndHunt(null);
+            // Dusty 5-10 m away with sight of you if possible.
+            var at = player.transform.position;
+            Vector3 best = Vector3.zero; var have = false;
+            for (var i = 0; i < 16; i++)
+            {
+                var dir = Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f) * Vector3.forward;
+                Vector3 c;
+                if (!Walker.Nearest(at + dir * UnityEngine.Random.Range(5f, 10f), 4f, out c) || Walker.WaterDepth(c) > Walker.MaxWater) continue;
+                if (!have) { best = c; have = true; }
+                if (CanSee(c + Vector3.up * 1.5f, at)) { best = c; break; }
+            }
+            if (!have) return "Couldn't find a spot for Dusty near you; move somewhere more open and try again.";
+            if (!ChaserAlive) { if (!SpawnChaser(best)) return "Couldn't spawn Dusty."; }
+            else { chaserWalker.TeleportTo(best); chaser.health = chaser.MaxHealth(); }
+            chaserWalker.Face(at + Vector3.up * 1.2f);
+            huntTarget = player;
+            huntRunning = true;
+            var now = Time.time;
+            huntGo = now + 3f;
+            huntStart = huntGo;
+            huntLastTick = huntGo;
+            huntSeen = 0f; huntHiddenSince = -1f; huntGapSum = huntGapTime = 0f; huntLastGap = -1f; huntHits = 0;
+            huntBreaks = 0; huntWasSeen = true; huntStartHealth = player.health; huntMaxGap = 0f; huntFirstBreak = -1f; huntPath = new List<HuntSample>();
+            lastSeen = prevSeen = at;
+            nextShot = huntGo;
+            nextChaserPlan = 0f;
+            nailsLeft = NailMag; reloadUntil = 0f;
+            huntTimer?.Destroy();
+            huntTimer = timer.Every(0.25f, HuntTick);
+            return "Dusty is " + Vector3.Distance(best, at).ToString("0") + " m away with a nail gun. Run in 3 s! Break its line of sight for 10 s to escape. /bot hunt stop to end.";
+        }
+
+        private void HuntTick()
+        {
+            if (!huntRunning) return;
+            var p = huntTarget;
+            if (p == null || p.IsDestroyed || !p.IsConnected) { EndHunt("left"); return; }
+            if (p.IsDead() || p.IsWounded()) { EndHunt("died"); return; }
+            if (!ChaserAlive) { EndHunt("Dusty died"); return; }
+            var now = Time.time;
+            if (now < huntGo) return;
+            var me = chaser.transform.position;
+            var them = p.transform.position;
+            var dist = Vector3.Distance(me, them);
+            var low = p.modelState != null && p.modelState.ducked;
+            var visible = dist < 80f && (low ? CanSeeCrouched(chaser.eyes.position, them) : CanSee(chaser.eyes.position, them));
+            var dt = now - huntLastTick;
+            huntLastTick = now;
+            huntGapSum += dist * dt; huntGapTime += dt; huntLastGap = dist; huntMaxGap = Mathf.Max(huntMaxGap, dist);
+            if (huntWasSeen && !visible) { huntBreaks++; if (huntFirstBreak < 0f) huntFirstBreak = now - huntStart; }
+            huntWasSeen = visible;
+            huntPath.Add(new HuntSample
+            {
+                T = (float)Math.Round(now - huntStart, 2), X = (float)Math.Round(them.x, 2), Y = (float)Math.Round(them.y, 2), Z = (float)Math.Round(them.z, 2),
+                DX = (float)Math.Round(me.x, 2), DZ = (float)Math.Round(me.z, 2), Gap = (float)Math.Round(dist, 1), Seen = visible, Duck = low, Sprint = p.modelState != null && p.modelState.sprinting,
+            });
+            if (visible) { huntSeen += dt; huntHiddenSince = -1f; }
+            else if (huntHiddenSince < 0f) huntHiddenSince = now;
+            if (!visible && now - huntHiddenSince >= CalmAfter) { EndHunt("escaped"); return; }
+            if (now - huntStart > 120f) { EndHunt("survived 2 min"); return; }
+            if (visible)
+            {
+                if (Vector3.Distance(them, lastSeen) > 2f) prevSeen = lastSeen;
+                lastSeen = them;
+                chaserWalker.Face(them + Vector3.up * 1.2f);
+                if (dist < 35f && now >= nextShot) FireNailAt(now, p, () => p.modelState != null && p.modelState.ducked, false, () => huntHits++);
+            }
+            if (now < nextChaserPlan) return;
+            nextChaserPlan = now + 1f;
+            Vector3 goal;
+            if (visible) { if (dist < 5f) { chaserWalker.Halt(); return; } goal = them; }
+            else if (Vector3.Distance(me, lastSeen) > 3f) goal = lastSeen;
+            else
+            {
+                var way = lastSeen - prevSeen; way.y = 0f;
+                if (way.sqrMagnitude < 0.01f) way = lastSeen - me;
+                way.y = 0f;
+                goal = lastSeen + (way.sqrMagnitude > 0.01f ? way.normalized : Vector3.forward) * 15f;
+                prevSeen = lastSeen;
+                lastSeen = goal;
+            }
+            Vector3 g;
+            if (!Walker.Nearest(goal, 4f, out g)) return;
+            if (chaserWalker.Busy && Vector3.Distance(chaserWalker.Route().LastOrDefault(), g) < 2f) return;
+            chaserWalker.GoTo(g, true);
+        }
+
+        private void EndHunt(string how)
+        {
+            if (!huntRunning) return;
+            huntRunning = false;
+            huntTimer?.Destroy(); huntTimer = null;
+            if (chaserWalker != null) chaserWalker.Halt();
+            var p = huntTarget;
+            if (how == null || how == "left" || how == "Dusty died" || p == null) return;
+            var secs = Mathf.Max(0f, Time.time - huntStart);
+            var run = new HuntRun
+            {
+                When = DateTime.UtcNow.ToString("u"), Player = p.displayName, Ended = how, Died = how == "died",
+                Seconds = (float)Math.Round(secs, 1), SeenSeconds = (float)Math.Round(huntSeen, 1), Hits = huntHits,
+                AvgGap = huntGapTime > 0f ? (float)Math.Round(huntGapSum / huntGapTime, 1) : 0f, EndGap = (float)Math.Round(Mathf.Max(huntLastGap, 0f), 1),
+                Damage = (float)Math.Round(Mathf.Max(0f, huntStartHealth - (p.IsDead() ? 0f : p.health)), 1), MaxGap = (float)Math.Round(huntMaxGap, 1),
+                SightBreaks = huntBreaks, FirstBreak = huntFirstBreak >= 0f ? (float)Math.Round(huntFirstBreak, 1) : -1f, Path = huntPath,
+            };
+            run.Score = (float)Math.Round(CloseScoreOf(new Chase { AvgGap = run.AvgGap, EndGap = run.EndGap, Ended = run.Died ? "killed" : how, Seconds = run.Seconds, SeenSeconds = run.SeenSeconds }), 3);
+            var h = LoadHunts();
+            h.Runs.Add(run);
+            Interface.Oxide.DataFileSystem.WriteObject(HuntFile, h);
+            var msg = (run.Died ? "Dusty got you" : how == "escaped" ? "You escaped!" : "You survived 2 minutes") + " - " + run.Seconds.ToString("0") + " s, in its view " + run.SeenSeconds.ToString("0") + " s, " + run.Hits + " nails hit you (" + run.Damage.ToString("0") + " damage), broke its sight " + run.SightBreaks + " times, average gap "
+                + run.AvgGap.ToString("0") + " m, ended " + run.EndGap.ToString("0") + " m apart -> score " + run.Score.ToString("0.00") + " (lower is better).\n" + HuntSummary(p);
+            Puts("[hunt] " + p.displayName + ": " + msg.Replace("\n", " | "));
+            if (p.IsConnected) SendReply(p, msg);
+        }
+
+        private Hunts LoadHunts()
+        {
+            Hunts h = null;
+            try { h = Interface.Oxide.DataFileSystem.ReadObject<Hunts>(HuntFile); } catch { }
+            if (h == null) h = new Hunts();
+            if (h.Runs == null) h.Runs = new List<HuntRun>();
+            return h;
+        }
+
+        // Your tally next to Kestrel's close chases (same score; lower is better).
+        private string HuntSummary(BasePlayer p)
+        {
+            var mine = LoadHunts().Runs.Where(r => p == null || r.Player == p.displayName).ToList();
+            var k = TrainClose().Chases.Where(c => !c.Excluded && c.AvgGap >= 0f).ToList();
+            var sb = new StringBuilder();
+            sb.Append(mine.Count == 0 ? "You: no runs yet." : "You: " + mine.Count + " runs, escaped " + mine.Count(r => r.Ended == "escaped") + ", died " + mine.Count(r => r.Died) + ", avg score " + mine.Average(r => r.Score).ToString("0.00") + ", avg gap " + mine.Average(r => r.AvgGap).ToString("0") + " m.");
+            if (k.Count > 0) sb.Append(" Kestrel (close chases): " + k.Count + " runs, died " + k.Count(c => c.Ended == "killed") + ", avg score " + k.Average(c => c.Score).ToString("0.00") + ", avg gap " + k.Average(c => c.AvgGap).ToString("0") + " m.");
+            return sb.ToString();
+        }
+
+        #endregion
 
         // Dusty: chase what it sees, shoot when close enough, hunt the last seen spot when it doesn't.
         private void ChaserTick()
