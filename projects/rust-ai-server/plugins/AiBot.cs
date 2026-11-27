@@ -2763,7 +2763,9 @@ namespace Oxide.Plugins
         private class Walker : MonoBehaviour
         {
             public const float MaxWater = 0.4f;
-            private const float WalkSpeed = 2.6f, RunSpeed = 5.2f;
+            // The game's own player speeds (BasePlayer.GetSpeed, checked on this server): walk
+            // 2.8, sprint 5.5 m/s. It used to run at 5.2, slower than any player chasing it.
+            private const float WalkSpeed = 2.8f, RunSpeed = 5.5f;
             public const float SprintSpeed = RunSpeed;
             private const float Step = 0.05f;
             private const float StuckSeconds = 3f, StuckDistance = 0.6f;
