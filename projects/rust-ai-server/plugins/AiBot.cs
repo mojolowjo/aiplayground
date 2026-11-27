@@ -2043,6 +2043,10 @@ namespace Oxide.Plugins
                     info.ProjectileVelocity = vel;
                     who.OnAttacked(info); // the same entry point a player's nail hit goes through
                     chaserHits++;
+                    // For checking hits like "it got me round a corner": where the nail came from,
+                    // how long it flew, and whether Dusty could still see the target at impact.
+                    if (who is BasePlayer bp && !bp.IsNpc && bp.IsConnected)
+                        Puts("[hunt] nail hit " + bp.displayName + " after " + (age + NailStep).ToString("0.00") + " s of flight, " + Vector3.Distance(chaser.eyes.position, hit.point).ToString("0.0") + " m from Dusty; Dusty can see them now: " + (CanSee(chaser.eyes.position, bp.transform.position) ? "yes" : "no"));
                     if (who == victim) onHit?.Invoke();
                 }
                 return;
@@ -2216,6 +2220,8 @@ namespace Oxide.Plugins
             huntLastTick = now;
             huntGapSum += dist * dt; huntGapTime += dt; huntLastGap = dist; huntMaxGap = Mathf.Max(huntMaxGap, dist);
             if (huntWasSeen && !visible) { huntBreaks++; if (huntFirstBreak < 0f) huntFirstBreak = now - huntStart; }
+            // A person needs a moment to react and get the gun on you when you pop back out.
+            if (!huntWasSeen && visible) nextShot = Mathf.Max(nextShot, now + UnityEngine.Random.Range(MinReaction + 0.05f, MaxReaction));
             huntWasSeen = visible;
             huntPath.Add(new HuntSample
             {
