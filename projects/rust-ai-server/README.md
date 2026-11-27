@@ -70,6 +70,8 @@ Windows Firewall needs an inbound allow rule for RustDedicated.exe on Private ne
 | `/bot train [on\|off]` | `aibot.train` | Training for running away: each chase (attacker within 30 m) tries a variation of the flee settings and is scored by how much of the first 30 s it was in view (+0.1 per extra hit, +1 if killed); a variation that beats the best over 2 chases becomes the best. Without on/off: status and last chases. Data in `carbon\data\AiBotTraining.json`. |
 | `/bot odds` | `aibot.odds` | Shows the brain's numbers in plain words. |
 | `/bot set <choice> <field> <value>` | `aibot.set ...` | Changes one, e.g. `/bot set chop base 2`, `/bot set barrel nearboost 8`, `/bot set runshare 0.5`. Saved to `AiBotBrain.json`; used from the next decision. |
+| `/bot trip [wood\|stone\|loot\|food\|none\|off]` | `aibot.trip ...` | A planned roam, like a player leaving base (see Roaming). No reason given: one is picked by the odds. `off` ends it. |
+| `/bot plan` | `aibot.plan` | The roam's plan in words, the last things it decided, and (in game) the plan drawn on the map for 60 s. |
 | `/bot roam` / `/bot stop` | `aibot.roam` / `aibot.stop` | Start or stop wandering. |
 | `/bot here` | | Moves it in front of you and stops it. |
 | `/bot kill` | `aibot.kill` | Removes it. |
@@ -104,6 +106,30 @@ real players did next, given what was around them and what they carried) and wri
 same shape; copy it over `AiBotBrain.json` and the bot picks it up within a second. Numbers the
 recordings say too little about keep the hand guess. `tools/baseline.py` measures a recording's
 movement rhythm (legs, stops, turns, jumps, sprinting); `baselines/` holds the results.
+
+### Roaming
+
+A roam (`/bot trip`, or the brain's `roam` choice) is a trip out and back, after how m0j roams:
+
+- **A reason**: wood, stone, loot, food, or none (just picking things up). Odds in `RoamReasons`.
+- **A loose plan from the map**: get to a road within 150 m and follow it 250 to 600 m, toward a
+  monument it hasn't been to; a monument near the road is a stop to decide at, and half the time
+  it leaves the road there. With no road: the nearest monument ahead, or open ground. Monuments
+  with radiation, safe zones and offshore ones are left out. Wood or stone: it goes straight for
+  the nearest tree or node and only walks open ground when none is within 120 m.
+- **Deciding at monuments**: it goes in with the odds in `RoamEnter` (loot 0.7, none 0.45...),
+  loots 2 to 6 barrels and crates there, nearest first, and leaves by the far side.
+- **Detours**: things it can see within 25 m get one roll each: barrels, crates, food crates,
+  food plants, hemp, stone and wood piles; trees and nodes rarely (unless it's out for them).
+  Likelier when they fit the reason, less likely after many detours.
+- **Being sporadic**: at each stop it may change its mind and re-plan (`RoamChangeMind`), sometimes
+  stands a moment, skips stops it can't reach, and re-plans when a plan runs out.
+- **Going home**: once it has what it came for, bags are full, or 10 to 25 min have passed, it walks
+  back to where it set off (still taking some detours).
+- **Danger**: when hit, the running-away code takes over; afterwards it re-plans away from that spot
+  and avoids it for 10 min. A player it sees within 70 m makes it turn off its route 6 times in 10.
+
+Every decision is logged as `[roam] ...`.
 
 ### Danger
 
