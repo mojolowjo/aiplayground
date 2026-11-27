@@ -2615,6 +2615,7 @@ namespace Oxide.Plugins
             public Dictionary<string, int> Before;
             public float Next, Until, Started;
             public bool Approached, Opened, Stepped;
+            public float StopAt; // how close it stops this approach (tool reach, varied)
             public int Swings, Taken, Misses;
             public string LastHit;
             public List<BaseEntity> Drops;
@@ -2738,17 +2739,39 @@ namespace Oxide.Plugins
             return d;
         }
 
+        // m0j: it stopped short of barrels, trees and nodes. It now stops by the reach of the
+        // tool it will use (the game's own melee maxDistance), varied each approach like a
+        // person: usually a bit closer than needed, now and then just out of reach (then it
+        // misses, and steps in, as people do).
         private bool InReach(Job j)
         {
+            if (j.StopAt <= 0f) j.StopAt = ToolReach(j) * UnityEngine.Random.Range(0.7f, 1.08f);
             var t = j.Target;
             if (t is TreeEntity)
             {
                 var flat = t.transform.position - bot.transform.position;
                 flat.y = 0f;
-                return flat.magnitude <= Reach + 0.6f;
+                return flat.magnitude <= j.StopAt + 0.6f; // trunk radius
             }
             var eyes = bot.eyes.position;
-            return Vector3.Distance(eyes, t.ClosestPoint(eyes)) <= Reach;
+            return Vector3.Distance(eyes, t.ClosestPoint(eyes)) <= j.StopAt;
+        }
+
+        // The reach of the tool it would pick for this target.
+        private float ToolReach(Job j)
+        {
+            if (j.Kind == "loot") return Reach; // opening a crate, not swinging at it
+            var type = GatherOf(j.Target);
+            BaseMelee best = null;
+            var bestScore = 0f;
+            foreach (var item in bot.inventory.containerBelt.itemList)
+            {
+                var m = item.GetHeldEntity() as BaseMelee;
+                if (m == null || m.IsItemBroken()) continue;
+                var score = type == ResourceDispenser.GatherType.UNSET ? m.TotalDamage() : m.GetGatherInfoFromIndex(type).gatherDamage;
+                if (score > bestScore) { best = m; bestScore = score; }
+            }
+            return best != null && best.maxDistance > 0.5f ? best.maxDistance : Reach;
         }
 
         private void TickJob()
@@ -2800,7 +2823,7 @@ namespace Oxide.Plugins
                         return;
                     }
                     if (Time.time > j.Until) { EndJob(name + " gave up on the " + Noun(j.Kind) + "."); return; }
-                    if (!InReach(j)) { j.Phase = "walk"; j.Approached = false; j.Until = Time.time + 20f; return; }
+                    if (!InReach(j)) { j.Phase = "walk"; j.Approached = false; j.StopAt = 0f; j.Until = Time.time + 20f; return; }
                     if (walker.Busy) return; // stepping closer
                     if (j.Misses >= 8) { EndJob(name + " kept missing the " + Noun(j.Kind) + " (last swing hit " + j.LastHit + ") and gave up."); return; }
                     if (j.Misses >= 2 && j.Misses % 2 == 0 && !j.Stepped)
