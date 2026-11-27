@@ -3310,7 +3310,8 @@ namespace Oxide.Plugins
                 }
 
                 if (corners.Count > 0 || !Working) lookPitch = 0f; // eyes ahead while walking or idle
-                if (!Airborne) yaw = Mathf.MoveTowardsAngle(yaw, lookYaw, 300f * dt); // no turning in mid-air
+                // No turning in mid-air; big turns are quick (a flick of the mouse), small ones smooth.
+                if (!Airborne) yaw = Mathf.MoveTowardsAngle(yaw, lookYaw, (Mathf.Abs(Mathf.DeltaAngle(yaw, lookYaw)) > 45f ? 720f : 300f) * dt);
                 pitch = Mathf.MoveTowards(pitch, lookPitch, 200f * dt);
                 SetLook();
                 updateWatch.Stop();
@@ -4347,9 +4348,20 @@ namespace Oxide.Plugins
                 // m0j: it changed direction in mid-air and looked like it flew sideways. Once off
                 // the ground it keeps the direction it took off in (and its facing, below).
                 if (Airborne) dir = airDir; else airDir = dir;
+                // m0j: running a line back and forth, it ran backwards while turning. A player
+                // turns first: facing more than 30 deg off the way it's about to go, it slows
+                // down (stopped at 90 deg or more) while it turns, which it now does quickly.
+                var turnFactor = 1f;
+                if (!Airborne)
+                {
+                    var off = Mathf.Abs(Mathf.DeltaAngle(yaw, Mathf.Atan2(baseDir.x, baseDir.z) * Mathf.Rad2Deg));
+                    turnFactor = Mathf.Clamp01(1f - (off - 30f) / 60f);
+                    if (turnFactor < 1f) lookYaw = Mathf.Atan2(baseDir.x, baseDir.z) * Mathf.Rad2Deg;
+                }
                 // In the air after a planned jump (a gap, or where a player jumped): carry the
                 // speed of a sprint jump, as a player would take it.
-                var next = MoveBody(pos, dir, !landedSinceHop && cornerJumps.Count > 0 ? Mathf.Max(speed, RunSpeed) : speed, dt);
+                var next = MoveBody(pos, dir, (!landedSinceHop && cornerJumps.Count > 0 ? Mathf.Max(speed, RunSpeed) : speed) * turnFactor, dt);
+                if (turnFactor < 0.5f) { ResetStuck(); lastDir = dir; return; } // turning on the spot, not stuck
                 var progress = new Vector2(next.x - pos.x, next.z - pos.z).magnitude;
                 if (progress < 0.25f * speed * dt)
                 {
