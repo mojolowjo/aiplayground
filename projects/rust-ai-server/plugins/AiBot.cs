@@ -2566,7 +2566,8 @@ namespace Oxide.Plugins
             public float RunShare = 0.4f; // share of wander trips run rather than walked
             public bool Dodge; // being watched while running away: weave
             public static float DodgeAngle = 35f;
-            private float dodgeSwitch, dodgeSide, dodgeNow;
+            private float dodgeSwitch, dodgeSide, dodgeNow, dodgeCur;
+            public static float MaxDodge = 40f, DodgeTurn = 150f;
 
             // One wander trip, chosen by the brain rather than by roaming.
             public void WanderOnce() => PickTrip();
@@ -3735,16 +3736,20 @@ namespace Oxide.Plugins
                 // Dodging while being watched: zigzag off the line by up to DodgeAngle, switching
                 // sides every 0.5 to 1.2 s, the way players weave when they're being shot at. Not
                 // close to a corner (it would miss it) or on a planned jump.
-                if (Dodge && DodgeAngle > 0f && flat.magnitude > 1.5f && !cornerJumps.ContainsKey(corner) && landedSinceHop)
+                // m0j: snapping straight to a wide angle every half second looked glitchy. Now the
+                // swing eases over (at most DodgeTurn deg/s), is capped at MaxDodge, switches every
+                // 0.7 to 1.5 s, and the body keeps looking mostly along the route, the way a player
+                // strafes with A/D while looking ahead.
+                var baseDir = dir;
+                var dodging = Dodge && DodgeAngle > 0f && flat.magnitude > 1.5f && !cornerJumps.ContainsKey(corner) && landedSinceHop;
+                if (dodging && Time.time >= dodgeSwitch)
                 {
-                    if (Time.time >= dodgeSwitch)
-                    {
-                        dodgeSide = dodgeSide >= 0f ? -1f : 1f;
-                        dodgeNow = dodgeSide * UnityEngine.Random.Range(0.5f, 1f) * DodgeAngle;
-                        dodgeSwitch = Time.time + UnityEngine.Random.Range(0.5f, 1.2f);
-                    }
-                    dir = Quaternion.Euler(0f, dodgeNow, 0f) * dir;
+                    dodgeSide = dodgeSide >= 0f ? -1f : 1f;
+                    dodgeNow = dodgeSide * UnityEngine.Random.Range(0.5f, 1f) * Mathf.Min(DodgeAngle, MaxDodge);
+                    dodgeSwitch = Time.time + UnityEngine.Random.Range(0.7f, 1.5f);
                 }
+                dodgeCur = Mathf.MoveTowards(dodgeCur, dodging ? dodgeNow : 0f, DodgeTurn * dt);
+                if (Mathf.Abs(dodgeCur) > 0.5f) dir = Quaternion.Euler(0f, dodgeCur, 0f) * dir;
                 // In the air after a planned jump (a gap, or where a player jumped): carry the
                 // speed of a sprint jump, as a player would take it.
                 var next = MoveBody(pos, dir, !landedSinceHop && cornerJumps.Count > 0 ? Mathf.Max(speed, RunSpeed) : speed, dt);
@@ -3765,7 +3770,7 @@ namespace Oxide.Plugins
                     if (!jumped && landedSinceHop && Vector3.Distance(pos, goal) < 2f && goal.y - pos.y < 0.6f) { EndTrip(Working ? "working" : "pausing"); return; } // close enough
                 }
                 lastDir = dir;
-                lookYaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
+                lookYaw = Mathf.Atan2(baseDir.x, baseDir.z) * Mathf.Rad2Deg + 0.3f * dodgeCur;
                 if (Guard.Kicked) { Roaming = false; EndTrip("kicked by anti-cheat"); return; }
                 CheckStuck();
             }
