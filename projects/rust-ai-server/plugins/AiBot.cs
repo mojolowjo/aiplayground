@@ -1952,8 +1952,8 @@ namespace Oxide.Plugins
             nextShot = Time.time + 1f;
             nextChaserPlan = 0f;
             firstShot = true;
-            nailsLeft = NailMag;
             reloadUntil = 0f;
+            if (ChaserAlive) TopUpNails(chaser);
             Crouch(false);
             return true;
         }
@@ -1968,18 +1968,47 @@ namespace Oxide.Plugins
         // with nothing solid in between. So moving sideways makes it miss, like it would for m0j.
         private const float NailDamage = 18f, NailSpeed = 50f, NailReload = 3.1f, NailCone = 3.5f;
         private const int NailMag = 16;
-        private int nailsLeft = NailMag;
         private float reloadUntil;
+        private const string NailAmmo = "ammo.nailgun.nails";
 
         private void FireNail(float now)
         {
-            if (now < reloadUntil || nailsLeft <= 0) { FireNailAt(now, bot, () => crouched, false); return; }
-            var sure = firstShot; // the first nail starts the chase
             firstShot = false;
-            FireNailAt(now, bot, () => crouched, sure);
+            FireNailAt(now, bot, () => crouched, false);
         }
 
-        private const float NailGravity = 0.75f, NailDrag = 0.005f, NailStep = 0.05f;
+        // A reload like a player's: the gun's reload signal (animation and sound for everyone
+        // nearby), the game's reload time, then nails move from the inventory into the magazine.
+        private void StartReload(BaseProjectile gun, float now)
+        {
+            var def = ItemManager.FindItemDefinition(NailAmmo);
+            if (def == null) return;
+            if (chaser.inventory.GetAmount(def.itemid) <= 0) TopUpNails(chaser); // never run dry in training/hunts
+            var time = gun.reloadTime > 0f ? gun.reloadTime : NailReload;
+            reloadUntil = now + time;
+            gun.SignalBroadcast(BaseEntity.Signal.Reload, string.Empty);
+            timer.Once(time, () =>
+            {
+                if (!ChaserAlive || gun == null || gun.IsDestroyed) return;
+                var cap = gun.primaryMagazine.capacity > 0 ? gun.primaryMagazine.capacity : NailMag;
+                var take = Mathf.Min(cap - gun.primaryMagazine.contents, chaser.inventory.GetAmount(def.itemid));
+                if (take <= 0) return;
+                chaser.inventory.Take(null, def.itemid, take);
+                gun.primaryMagazine.contents += take;
+                gun.SendNetworkUpdateImmediate();
+            });
+        }
+
+        // Nails in Dusty's pockets: topped up to 64 at the start of each round.
+        private static void TopUpNails(BasePlayer p)
+        {
+            var def = ItemManager.FindItemDefinition(NailAmmo);
+            if (def == null) return;
+            var have = p.inventory.GetAmount(def.itemid);
+            if (have < 64) { var it = ItemManager.CreateByName(NailAmmo, 64 - have); if (it != null && !it.MoveToContainer(p.inventory.containerMain)) it.Remove(); }
+        }
+
+        private const float NailGravity = 0.75f, NailDrag = 0.005f, NailStep = 0.05f, NailThickness = 0.1f;
 
         // The nail in flight, 0.05 s at a time: it hits the target if it passes within 0.45 m of
         // its body (feet to head, lower when crouched) where the target is at that moment, and
@@ -1991,11 +2020,19 @@ namespace Oxide.Plugins
         {
             if (age > 2f || !ChaserAlive) return;
             var next = pos + vel * NailStep;
-            RaycastHit hit;
-            if (Physics.Linecast(pos, next, out hit, SightMask | BodyMask, QueryTriggerInteraction.Ignore))
+            // The nail is as thick as the game's own (Projectile.thickness 0.1 m): it hits a body
+            // it passes within 0.1 m of, and stops at the first world surface in its way.
+            var step = next - pos;
+            RaycastHit wallHit, bodyHit;
+            var wall = Physics.Linecast(pos, next, out wallHit, SightMask, QueryTriggerInteraction.Ignore);
+            var body = Physics.SphereCast(pos, NailThickness, step.normalized, out bodyHit, step.magnitude, BodyMask, QueryTriggerInteraction.Ignore)
+                && bodyHit.GetEntity() != chaser && (!wall || bodyHit.distance <= wallHit.distance);
+            if (wall || body)
             {
                 // The first thing in the nail's way: ground, a wall, or someone's body.
-                var who = hit.GetEntity() as BaseCombatEntity;
+                var hit = body ? bodyHit : wallHit;
+                if (body && hit.distance <= 0f) hit.point = pos; // started inside it
+                var who = body ? hit.GetEntity() as BaseCombatEntity : null;
                 if (who != null && who != chaser && !who.IsDead())
                 {
                     var gun = chaser.GetHeldEntity() as BaseProjectile;
@@ -2060,8 +2097,13 @@ namespace Oxide.Plugins
         private void FireNailAt(float now, BasePlayer victim, Func<bool> low, bool sure, Action onHit = null)
         {
             if (now < reloadUntil) return;
-            if (nailsLeft <= 0) { nailsLeft = NailMag; reloadUntil = now + NailReload; return; }
-            nailsLeft--;
+            // Real ammo (m0j): the gun's own magazine, refilled from nail items in Dusty's
+            // inventory. An empty magazine means a reload, heard by everyone like a player's.
+            var held = chaser.GetHeldEntity() as BaseProjectile;
+            if (held == null) { ArmChaser(chaser); return; }
+            if (held.primaryMagazine.contents <= 0) { StartReload(held, now); return; }
+            held.primaryMagazine.contents--;
+            held.SendNetworkUpdate();
             nextShot = now + UnityEngine.Random.Range(0.22f, 0.35f);
             chaserShots++;
             var muzzle = chaser.eyes.position;
@@ -2150,7 +2192,7 @@ namespace Oxide.Plugins
             lastSeen = prevSeen = at;
             nextShot = huntGo;
             nextChaserPlan = 0f;
-            nailsLeft = NailMag; reloadUntil = 0f;
+            reloadUntil = 0f; TopUpNails(chaser);
             huntTimer?.Destroy();
             huntTimer = timer.Every(0.25f, HuntTick);
             return "Dusty is " + Vector3.Distance(best, at).ToString("0") + " m away with a nail gun. Run in 3 s! Break its line of sight for 10 s to escape. /bot hunt stop to end.";
