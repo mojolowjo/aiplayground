@@ -833,7 +833,8 @@ namespace Oxide.Plugins
         // attacker moves. Once the attacker hasn't been able to see it for 10 s, it calms down
         // and goes back to what it was doing.
         private const float MinReaction = 0.15f, MaxReaction = 0.4f, CalmAfter = 10f, CoverSearch = 35f;
-        private static readonly int SightMask = LayerMask.GetMask("World", "Terrain", "Construction", "Tree", "Default", "Deployed");
+        // Vehicle Large/World/Detailed: the harbor cranes and containers, cargo ship, bridges and other big moving prefabs block sight too (m0j found one it could see through).
+        private static readonly int SightMask = LayerMask.GetMask("World", "Terrain", "Construction", "Tree", "Default", "Deployed", "Vehicle Large", "Vehicle World", "Vehicle Detailed");
 
         private class Danger
         {
@@ -1302,7 +1303,7 @@ namespace Oxide.Plugins
         private class Cand { public Vector3 Spot; public float Depth, Time, Exposed, Away, Climb, Gain, Score; public bool Routed, Close; public int Exits; }
 
         // Fences block feet, not eyes.
-        private static readonly int ExitMask = LayerMask.GetMask("World", "Terrain", "Construction", "Tree", "Default", "Deployed", "Transparent");
+        private static readonly int ExitMask = LayerMask.GetMask("World", "Terrain", "Construction", "Tree", "Default", "Deployed", "Transparent", "Vehicle Large", "Vehicle World");
 
         // Ways on from a spot: of 5 directions within 60 deg of straight away from the attacker,
         // how many have walkable ground 10 m on (not more than 3 m up or down) with a clear lane.
@@ -1324,7 +1325,7 @@ namespace Oxide.Plugins
             return n;
         }
 
-        private static readonly int FloorMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed");
+        private static readonly int FloorMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed", "Vehicle Large");
 
         // A hiding spot is somewhere with something solid right next to it on the attacker's side
         // (a rock, tree, wall, or ground rising towards them), not the top of something where it
@@ -3125,7 +3126,7 @@ namespace Oxide.Plugins
             private static readonly int GroundMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed", "Vehicle Large"); // Vehicle Large: the harbor bridge and other big things players stand on
             // Transparent: chain-link fences and the like. Players can't walk through them (though
             // they can see through, so they're not in the sight checks).
-            private static readonly int BlockMask = LayerMask.GetMask("World", "Default", "Construction", "Deployed", "Tree", "Transparent");
+            private static readonly int BlockMask = LayerMask.GetMask("World", "Default", "Construction", "Deployed", "Tree", "Transparent", "Vehicle Large", "Vehicle World");
 
             public bool Roaming { get; private set; }
             public bool Working; // an action is running: no wandering or looking around
