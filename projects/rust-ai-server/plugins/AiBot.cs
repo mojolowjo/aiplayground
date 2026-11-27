@@ -2417,7 +2417,7 @@ namespace Oxide.Plugins
             if (e is ResourceEntity)
             {
                 var g = GatherOf(e);
-                if (g == ResourceDispenser.GatherType.Tree) return n.Contains("sapling") ? null : "tree";
+                if (g == ResourceDispenser.GatherType.Tree) return n.Contains("sapling") || n.Contains("log") ? null : "tree";
                 if (g == ResourceDispenser.GatherType.Ore) return "ore node";
             }
             return null;
@@ -2848,7 +2848,7 @@ namespace Oxide.Plugins
             public Dictionary<string, int> Before;
             public float Next, Until, Started;
             public bool Approached, Opened, Stepped;
-            public int Swings, Taken, Misses;
+            public int Swings, Taken, Misses, TotalMisses;
             public string LastHit;
             public List<BaseEntity> Drops;
 
@@ -2874,7 +2874,8 @@ namespace Oxide.Plugins
             switch (kind)
             {
                 // By what the node gives, not its class: wood piles are ore entities that give wood.
-                case "chop": return e is ResourceEntity && GatherOf(e) == ResourceDispenser.GatherType.Tree;
+                // Not fallen logs: they lie on the ground and its swings go over them.
+                case "chop": return e is ResourceEntity && GatherOf(e) == ResourceDispenser.GatherType.Tree && !e.ShortPrefabName.Contains("log");
                 case "mine": return e is ResourceEntity && GatherOf(e) == ResourceDispenser.GatherType.Ore;
                 case "barrel": return e is LootContainer && e.ShortPrefabName.Contains("barrel");
                 case "collect": return e is CollectibleEntity;
@@ -3038,17 +3039,18 @@ namespace Oxide.Plugins
                     if (Time.time > j.Until) { EndJob(name + " gave up on the " + Noun(j.Kind) + "."); return; }
                     if (!InReach(j)) { j.Phase = "walk"; j.Approached = false; j.Until = Time.time + 20f; return; }
                     if (walker.Busy) return; // stepping closer
-                    if (j.Misses >= 8) { EndJob(name + " kept missing the " + Noun(j.Kind) + " (last swing hit " + j.LastHit + ") and gave up."); return; }
-                    if (j.Misses >= 2 && j.Misses % 2 == 0 && !j.Stepped)
+                    // m0j: a player misses twice at most, then gives up (something in the way, like a
+                    // truck bed in front of a barrel). After the first miss it steps in once.
+                    if (j.TotalMisses >= 2) { EndJob(name + " missed the " + Noun(j.Kind) + " twice (last swing hit " + j.LastHit + ") and gave up."); return; }
+                    if (j.Misses >= 1 && !j.Stepped)
                     {
-                        // Two misses in a row: out of the tool's reach, or something in the way. Step in.
+                        // A miss: out of the tool's reach, or something in the way. Step in.
                         j.Stepped = true;
                         var toward = t.transform.position - bot.transform.position;
                         toward.y = 0f;
                         walker.WalkStraight(bot.transform.position + toward.normalized * 0.6f);
                         return;
                     }
-                    if (j.Misses % 2 == 1) j.Stepped = false;
                     var melee = EquipTool(j);
                     if (melee == null) return; // switching, or EndJob already said why
                     if (melee.HasAttackCooldown()) return;
@@ -3172,6 +3174,7 @@ namespace Oxide.Plugins
                 var hit = Strike(melee);
                 if (hit == t) { j.Misses = 0; return; }
                 j.Misses++;
+                j.TotalMisses++;
                 j.LastHit = hit == null ? "nothing" : hit is BasePlayer ? ((BasePlayer)hit).displayName : hit.ShortPrefabName;
                 Puts(saved.Name + "'s swing at the " + Noun(j.Kind) + " hit " + j.LastHit + " instead");
             });
