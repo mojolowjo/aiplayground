@@ -1298,7 +1298,30 @@ namespace Oxide.Plugins
             return null;
         }
 
-        private class Cand { public Vector3 Spot; public float Depth, Time, Exposed, Away, Climb, Gain, Score; public bool Routed, Close; }
+        private class Cand { public Vector3 Spot; public float Depth, Time, Exposed, Away, Climb, Gain, Score; public bool Routed, Close; public int Exits; }
+
+        // Fences block feet, not eyes.
+        private static readonly int ExitMask = LayerMask.GetMask("World", "Terrain", "Construction", "Tree", "Default", "Deployed", "Transparent");
+
+        // Ways on from a spot: of 5 directions within 60 deg of straight away from the attacker,
+        // how many have walkable ground 10 m on (not more than 3 m up or down) with a clear lane.
+        private static int Exits(Vector3 spot, Vector3 attacker)
+        {
+            var away = spot - attacker; away.y = 0f;
+            if (away.sqrMagnitude < 0.01f) return 0;
+            away.Normalize();
+            var n = 0;
+            for (var a = -60; a <= 60; a += 30)
+            {
+                var dir = Quaternion.Euler(0f, a, 0f) * away;
+                Vector3 g;
+                if (!Walker.Nearest(spot + dir * 10f, 2f, out g)) continue;
+                if (Mathf.Abs(g.y - spot.y) > 3f || Walker.WaterDepth(g) > Walker.MaxWater) continue;
+                if (Physics.Linecast(spot + Vector3.up * 1f, g + Vector3.up * 1f, ExitMask, QueryTriggerInteraction.Ignore)) continue;
+                n++;
+            }
+            return n;
+        }
 
         private static readonly int FloorMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed");
 
@@ -1372,6 +1395,14 @@ namespace Oxide.Plugins
                     var hidden = 0;
                     foreach (var v in views) { if (!SeesHead(v, spot)) hidden++; if (!SeesChest(v, spot)) hidden++; }
                     var c = new Cand { Spot = spot, Depth = hidden / (views.Length * 2f), Away = awayFrom, Climb = Mathf.Max(0f, spot.y - me.y), Close = myDist < o.FleeCloseRange };
+                    // m0j: "it keeps boxing itself in". Close up (and in distance training), a spot
+                    // needs ways on: open lanes 10 m further away from the attacker. Dead ends and
+                    // corners are skipped; more ways out score higher.
+                    if (c.Close || closeMode)
+                    {
+                        c.Exits = Exits(spot, them);
+                        if (c.Exits < 2) { no("dead end"); continue; }
+                    }
                     c.Time = Vector3.Distance(me, spot) / Walker.SprintSpeed;
                     c.Gain = awayFrom - myDist;
                     c.Score = CoverScore(c, retreat);
@@ -1386,7 +1417,8 @@ namespace Oxide.Plugins
             var o = odds;
             return c.Depth * o.FleeDepth - c.Time * o.FleeTime - c.Exposed * o.FleeExposed + c.Away * o.FleeDistance - c.Climb * o.FleeClimb
                 + (retreat ? c.Gain * o.FleeRetreat : 0f)
-                + (c.Close ? c.Away * o.FleeCloseAway : 0f);
+                + (c.Close ? c.Away * o.FleeCloseAway : 0f)
+                + (c.Close || closeMode ? c.Exits * 0.5f : 0f);
         }
 
         private void PickCover(Danger d, BasePlayer a, bool retreat = false)
@@ -1457,7 +1489,7 @@ namespace Oxide.Plugins
                     {
                         var dir = Quaternion.Euler(0f, UnityEngine.Random.Range(-35f, 35f), 0f) * runOff.normalized;
                         Vector3 spot;
-                        if (Walker.Nearest(me + dir * 20f, 4f, out spot) && Walker.WaterDepth(spot) <= Walker.MaxWater && Vector3.Distance(spot, them) > Vector3.Distance(me, them) + 8f && walker.GoTo(spot, true)) return;
+                        if (Walker.Nearest(me + dir * 20f, 4f, out spot) && Walker.WaterDepth(spot) <= Walker.MaxWater && Vector3.Distance(spot, them) > Vector3.Distance(me, them) + 8f && Exits(spot, them) >= 1 && walker.GoTo(spot, true)) return;
                     }
             }
             // Already hidden with nowhere better: stay put rather than step into view.
