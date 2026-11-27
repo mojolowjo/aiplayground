@@ -4347,7 +4347,7 @@ namespace Oxide.Plugins
                 if (Mathf.Abs(dodgeCur) > 0.5f) dir = Quaternion.Euler(0f, dodgeCur, 0f) * dir;
                 // m0j: it changed direction in mid-air and looked like it flew sideways. Once off
                 // the ground it keeps the direction it took off in (and its facing, below).
-                if (Airborne) dir = airDir; else airDir = dir;
+                if (Airborne) dir = airDir; else { airDir = dir; airTarget = corners[corner]; }
                 // m0j: running a line back and forth, it ran backwards while turning. A player
                 // turns first: facing more than 30 deg off the way it's about to go, it slows
                 // down (stopped at 90 deg or more) while it turns, which it now does quickly.
@@ -4360,7 +4360,12 @@ namespace Oxide.Plugins
                 }
                 // In the air after a planned jump (a gap, or where a player jumped): carry the
                 // speed of a sprint jump, as a player would take it.
-                var next = MoveBody(pos, dir, (!landedSinceHop && cornerJumps.Count > 0 ? Mathf.Max(speed, RunSpeed) : speed) * turnFactor, dt);
+                var moveSpeed = (!landedSinceHop && cornerJumps.Count > 0 ? Mathf.Max(speed, RunSpeed) : speed) * turnFactor;
+                // m0j: it over-jumped spots once it stopped steering in the air. Like a player
+                // timing a hop, it now carries only the speed it needs to come down on the spot
+                // it jumped for (and none once it's over it), never more than it had.
+                if (Airborne) moveSpeed = Mathf.Min(moveSpeed, AirSpeedToLand(pos));
+                var next = MoveBody(pos, dir, moveSpeed, dt);
                 if (turnFactor < 0.5f) { ResetStuck(); lastDir = dir; return; } // turning on the spot, not stuck
                 var progress = new Vector2(next.x - pos.x, next.z - pos.z).magnitude;
                 if (progress < 0.25f * speed * dt)
@@ -4524,7 +4529,22 @@ namespace Oxide.Plugins
             // for 1.4 m, carrying on in the direction it was going), used for steep bits, for
             // anything in the way, and where a recorded player jumped. Like a player: only from
             // proper footing, and only once it has landed from the last one. Returns true if it jumped.
-            private Vector3 airDir = Vector3.forward;
+            private Vector3 airDir = Vector3.forward, airTarget;
+
+            // Horizontal speed that brings it down on airTarget: the distance left along its
+            // take-off direction over the time until it falls to that height. Far targets
+            // (over 4 m) don't limit it; past the target it stops pushing forward.
+            private float AirSpeedToLand(Vector3 pos)
+            {
+                var flat = new Vector3(airTarget.x - pos.x, 0f, airTarget.z - pos.z);
+                if (flat.magnitude > 4f) return float.MaxValue;
+                var ahead = Vector3.Dot(flat, airDir);
+                if (ahead < 0.15f) return 0f;
+                var g = -Physics.gravity.y;
+                var disc = fallSpeed * fallSpeed + 2f * g * (pos.y - airTarget.y);
+                var t = disc > 0f ? (fallSpeed + Mathf.Sqrt(disc)) / g : 0.1f;
+                return ahead / Mathf.Max(t, 0.1f);
+            }
 
             // Is the body already facing (within deg) the way it would jump?
             private bool FacingWithin(Vector3 d, float deg)
