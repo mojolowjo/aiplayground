@@ -852,6 +852,7 @@ namespace Oxide.Plugins
             public bool Skip; // /bot train skip: don't count this chase
             public float FirstBreak = -1f; // seconds from reacting until the attacker first lost sight of it
             public bool Juked; // made its first sharp turn (close range)
+            public float GapSum, GapTime, LastGap = -1f; // distance to the attacker, summed over time
             public float CrouchRoll = UnityEngine.Random.value; // crouches behind low cover this chase if below FleeCrouch
         }
 
@@ -884,6 +885,7 @@ namespace Oxide.Plugins
             public string When, Attacker, Ended, Source, Reason;
             public float Seconds, SeenSeconds, Score, Closest;
             public float FirstBreak = -1f; // seconds from reacting until the attacker first lost sight of it (-1: never)
+            public float AvgGap = -1f, EndGap = -1f; // metres between them: average over the chase, and at the end
             public int Hits;
             public bool Excluded; // left out of the averages (a bug spoiled it, say)
             public Dictionary<string, float> Settings;
@@ -916,6 +918,15 @@ namespace Oxide.Plugins
             if (closeTraining.Chases == null) closeTraining.Chases = new List<Chase>();
             closeTraining.Close = true;
             foreach (var c in closeTraining.Chases) c.Score = (float)Math.Round(CloseScoreOf(c), 3);
+            // The goal changed to distance before any chase counted: start again from the new
+            // starting values (and leave out chases from before the change).
+            foreach (var c in closeTraining.Chases.Where(c => c.AvgGap < 0f && !c.Excluded)) { c.Excluded = true; c.Reason = "before the distance score"; }
+            if (!closeTraining.Chases.Any(c => !c.Excluded))
+            {
+                var def = new Odds();
+                foreach (var f in CloseFields) typeof(Odds).GetField(f).SetValue(odds, typeof(Odds).GetField(f).GetValue(def));
+                closeTraining.Best = null; closeTraining.BestChases = 0; closeTraining.BestScore = float.MaxValue; closeTraining.Pending = null;
+            }
             return closeTraining;
         }
 
@@ -924,8 +935,14 @@ namespace Oxide.Plugins
         // Close-range score (lower is better, m0j: how fast it breaks line of sight and whether it
         // lives): seconds until the shooter first lost sight of it (capped at 10) / 10, plus the
         // share of the chase in view, plus 1 if it died.
-        private static float CloseScoreOf(Chase c) =>
-            Mathf.Min(c.FirstBreak < 0f ? 10f : c.FirstBreak, 10f) / 10f + Mathf.Clamp01(c.SeenSeconds / Mathf.Max(c.Seconds, 1f)) + (c.Ended == "killed" ? 1f : 0f);
+        // m0j (later): "putting as much distance from me as possible". So the close score is now
+        // mostly distance: half from the average gap over the chase, half from the gap at the end
+        // (each 0 at 60 m or more, 1 at 0 m), plus 1 if it died.
+        private static float CloseScoreOf(Chase c)
+        {
+            if (c.AvgGap < 0f) return Mathf.Min(c.FirstBreak < 0f ? 10f : c.FirstBreak, 10f) / 10f + Mathf.Clamp01(c.SeenSeconds / Mathf.Max(c.Seconds, 1f)) + (c.Ended == "killed" ? 1f : 0f);
+            return 0.5f * (1f - Mathf.Min(c.AvgGap, 60f) / 60f) + 0.5f * (1f - Mathf.Min(Mathf.Max(c.EndGap, 0f), 60f) / 60f) + (c.Ended == "killed" ? 1f : 0f);
+        }
 
         // The score (lower is better), after m0j: mostly how much of the chase it was in view;
         // hits count a little and are capped (being in view is what gets you shot anyway);
@@ -937,7 +954,7 @@ namespace Oxide.Plugins
         }
 
         // Close-range settings: only these vary in close self-play (the rest stay at the main best).
-        private static readonly string[] CloseFields = { "FleeCloseRadius", "FleeCloseTurn", "FleeCrouch", "FleeCloseSwitch" };
+        private static readonly string[] CloseFields = { "FleeCloseRadius", "FleeCloseTurn", "FleeCrouch", "FleeCloseSwitch", "FleeCloseAway" };
 
         private Dictionary<string, float> CurrentFlee()
         {
@@ -972,7 +989,8 @@ namespace Oxide.Plugins
                 if (kv.Key == "FleeCloseRadius") v = Mathf.Clamp(v, 4f, 20f);
                 if (kv.Key == "FleeCloseTurn") v = Mathf.Clamp(v, 0f, 90f);
                 if (kv.Key == "FleeCrouch") v = Mathf.Clamp01(v);
-                if (kv.Key == "FleeCloseSwitch") v = Mathf.Clamp(v, 0.5f, 10f);
+                if (kv.Key == "FleeCloseSwitch") v = Mathf.Clamp(v, 0f, 10f);
+                if (kv.Key == "FleeCloseAway") v = Mathf.Clamp(v, 0f, 3f);
                 trial[kv.Key] = (float)Math.Round(v, 3);
             }
             return trial;
@@ -1010,11 +1028,13 @@ namespace Oxide.Plugins
                 Closest = d.Closest < float.MaxValue ? (float)Math.Round(d.Closest, 1) : -1f, Hits = d.Hits, Settings = d.Trial ?? CurrentFlee(), Excluded = invalid != null,
                 Source = d.SelfPlay ? "selfplay" : "player", Reason = invalid,
                 FirstBreak = d.FirstBreak >= 0f ? (float)Math.Round(d.FirstBreak, 2) : -1f,
+                AvgGap = d.GapTime > 0f ? (float)Math.Round(d.GapSum / d.GapTime, 1) : -1f,
+                EndGap = d.LastGap >= 0f ? (float)Math.Round(d.LastGap, 1) : -1f,
             };
             if (t.Close) { score = CloseScoreOf(chase); chase.Score = (float)Math.Round(score, 3); }
             t.Chases.Add(chase);
             var msg = "[train] " + (t.Close ? "close " : "") + "chase " + t.Chases.Count + (d.SelfPlay ? " (self-play)" : "") + ": in view " + chase.SeenSeconds + " of " + chase.Seconds + " s, " + d.Hits + " hits" + (died ? ", died" : "")
-                + (t.Close ? ", first broke sight after " + (chase.FirstBreak >= 0f ? chase.FirstBreak.ToString("0.0") + " s" : "never") : "") + " -> score " + chase.Score.ToString("0.00")
+                + (t.Close ? ", average gap " + chase.AvgGap.ToString("0") + " m, ended " + chase.EndGap.ToString("0") + " m apart" : "") + " -> score " + chase.Score.ToString("0.00")
                 + (invalid != null ? "; NOT COUNTED: " + invalid : "");
             if (d.SelfPlay) { selfPlayRounds++; if (invalid == null) selfPlayValid++; else { int n; invalidReasons.TryGetValue(invalid.Split('(')[0].Trim(), out n); invalidReasons[invalid.Split('(')[0].Trim()] = n + 1; } }
             if (invalid != null && t.On && t.Best != null) { ApplyFlee(t.Best); SaveTrain(t); Puts(msg); return; }
@@ -1129,9 +1149,9 @@ namespace Oxide.Plugins
             if (mineCounted.Count > 0) sb.Append(", " + mineCounted.Count + " of yours counted (avg score " + mineCounted.Average(c => c.Score).ToString("0.00") + ", died " + mineCounted.Count(c => c.Ended == "killed") + ")");
             sb.Append(".\n");
             if (t.Best != null) sb.AppendLine("Best so far (score " + (t.BestScore < 1e30f ? t.BestScore.ToString("0.00") : "not scored yet") + " over " + t.BestChases + " chases): " + string.Join(", ", t.Best.Select(kv => kv.Key.Replace("Flee", "").ToLowerInvariant() + " " + kv.Value.ToString("0.###")).ToArray()));
-            foreach (var c in t.Chases.Skip(Math.Max(0, t.Chases.Count - 5))) sb.AppendLine("  " + c.When.Substring(11, 5) + " in view " + c.SeenSeconds + "/" + c.Seconds + " s, hits " + c.Hits + (t.Close ? ", broke sight " + (c.FirstBreak >= 0f ? c.FirstBreak.ToString("0.0") + " s" : "never") : "") + (c.Excluded ? " (not counted: " + c.Reason + ")" : "") + ", score " + c.Score.ToString("0.00"));
+            foreach (var c in t.Chases.Skip(Math.Max(0, t.Chases.Count - 5))) sb.AppendLine("  " + c.When.Substring(11, 5) + " in view " + c.SeenSeconds + "/" + c.Seconds + " s, hits " + c.Hits + (t.Close ? ", avg gap " + c.AvgGap.ToString("0") + " m, end gap " + c.EndGap.ToString("0") + " m" : "") + (c.Excluded ? " (not counted: " + c.Reason + ")" : "") + ", score " + c.Score.ToString("0.00"));
             sb.Append(t.Close
-                ? "Score = seconds until it first broke your sight (max 10) / 10 + share of the chase in view + 1 if it died; lower is better. /bot train close|on|off|skip"
+                ? "Score = distance: half from the average gap, half from the gap at the end (0 at 60 m+, 1 at 0 m), +1 if it died; lower is better. /bot train close|on|off|skip"
                 : "Score = share of the whole chase in view, +0.02 per extra hit (at most +0.5), +1 if it died; lower is better. /bot train on|close|off|skip");
             return sb.ToString();
         }
@@ -1181,7 +1201,7 @@ namespace Oxide.Plugins
             var a = d.Attacker;
             var gone = a == null || a.IsDestroyed || a.IsDead() || (!a.IsConnected && a != chaser);
             var dist = gone ? float.MaxValue : Vector3.Distance(a.transform.position, bot.transform.position);
-            if (!gone) d.Closest = Mathf.Min(d.Closest, dist);
+            if (!gone) { d.Closest = Mathf.Min(d.Closest, dist); d.GapSum += dist * (now - d.LastTick); d.GapTime += now - d.LastTick; d.LastGap = dist; }
             var seenStanding = !gone && dist < 300f && CanSee(a.eyes.position, bot.transform.position);
             var seenLow = !gone && dist < 300f && CanSeeCrouched(a.eyes.position, bot.transform.position);
             // Close range: crouch behind low cover when standing it could be seen and crouched it
@@ -1272,7 +1292,7 @@ namespace Oxide.Plugins
             return null;
         }
 
-        private class Cand { public Vector3 Spot; public float Depth, Time, Exposed, Away, Climb, Gain, Score; public bool Routed; }
+        private class Cand { public Vector3 Spot; public float Depth, Time, Exposed, Away, Climb, Gain, Score; public bool Routed, Close; }
 
         private static readonly int FloorMask = LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed");
 
@@ -1345,7 +1365,7 @@ namespace Oxide.Plugins
                     if (why2 == 2) { open++; no("open"); continue; }
                     var hidden = 0;
                     foreach (var v in views) { if (!SeesHead(v, spot)) hidden++; if (!SeesChest(v, spot)) hidden++; }
-                    var c = new Cand { Spot = spot, Depth = hidden / (views.Length * 2f), Away = awayFrom, Climb = Mathf.Max(0f, spot.y - me.y) };
+                    var c = new Cand { Spot = spot, Depth = hidden / (views.Length * 2f), Away = awayFrom, Climb = Mathf.Max(0f, spot.y - me.y), Close = myDist < o.FleeCloseRange };
                     c.Time = Vector3.Distance(me, spot) / Walker.SprintSpeed;
                     c.Gain = awayFrom - myDist;
                     c.Score = CoverScore(c, retreat);
@@ -1359,7 +1379,8 @@ namespace Oxide.Plugins
         {
             var o = odds;
             return c.Depth * o.FleeDepth - c.Time * o.FleeTime - c.Exposed * o.FleeExposed + c.Away * o.FleeDistance - c.Climb * o.FleeClimb
-                + (retreat ? c.Gain * o.FleeRetreat : 0f);
+                + (retreat ? c.Gain * o.FleeRetreat : 0f)
+                + (c.Close ? c.Away * o.FleeCloseAway : 0f);
         }
 
         private void PickCover(Danger d, BasePlayer a, bool retreat = false)
@@ -1419,6 +1440,19 @@ namespace Oxide.Plugins
                     a.SendConsoleCommand("ddraw.text", 3f, Color.white, best.Spot + Vector3.up * 2f, "cover " + best.Score.ToString("0.0"));
                 }
                 return;
+            }
+            // Distance training (close mode): hidden with no better hiding spot further away, keep
+            // running straight away from them rather than standing still.
+            if (retreat && closeMode)
+            {
+                var runOff = me - them; runOff.y = 0f;
+                if (runOff.sqrMagnitude > 0.01f)
+                    for (var tries = 0; tries < 5; tries++)
+                    {
+                        var dir = Quaternion.Euler(0f, UnityEngine.Random.Range(-35f, 35f), 0f) * runOff.normalized;
+                        Vector3 spot;
+                        if (Walker.Nearest(me + dir * 20f, 4f, out spot) && Walker.WaterDepth(spot) <= Walker.MaxWater && Vector3.Distance(spot, them) > Vector3.Distance(me, them) + 8f && walker.GoTo(spot, true)) return;
+                    }
             }
             // Already hidden with nowhere better: stay put rather than step into view.
             if (retreat) { walker.Halt(); return; }
@@ -2039,7 +2073,9 @@ namespace Oxide.Plugins
             // FleeCloseRadius m, start with a sharp turn of FleeCloseTurn deg off straight away,
             // crouch behind low cover when that hides it (FleeCrouch: share of the time it does),
             // and stay at close cover FleeCloseSwitch s before slipping off to deeper cover.
-            public float FleeCloseRange = 15f, FleeCloseRadius = 10f, FleeCloseTurn = 45f, FleeCrouch = 0.5f, FleeCloseSwitch = 2f;
+            // FleeCloseAway: in close range, each metre a spot ends up from the attacker is worth
+            // this much (m0j: get as far away as possible).
+            public float FleeCloseRange = 15f, FleeCloseRadius = 10f, FleeCloseTurn = 45f, FleeCrouch = 0.3f, FleeCloseSwitch = 1f, FleeCloseAway = 0.3f;
             // Standing on an edge: ground must be within this many metres of its middle, or it
             // slides off (0.5 = never slide, like the plain character controller).
             public float PerchRadius = 0.25f;
