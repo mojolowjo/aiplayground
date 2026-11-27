@@ -80,6 +80,8 @@ namespace Oxide.Plugins
             jobTimer = timer.Every(0.2f, TickJob);
             brainTimer = timer.Every(0.5f, BrainTick);
             Trails.Load();
+            FindRadiation();
+            RoadPoints();
             timer.Every(600f, Trails.Load); // pick up new recordings every 10 minutes
             if (saved == null || string.IsNullOrEmpty(saved.Name)) { saved = null; return; }
             var index = Array.IndexOf(Names, saved.Name);
@@ -2568,13 +2570,17 @@ namespace Oxide.Plugins
             var prefab = m.name.ToLowerInvariant();
             if (SkipMonuments.Any(s => prefab.Contains(s))) return false;
             if (Walker.WaterDepth(m.transform.position) > 1f) return false;
-            if (radiation == null)
-            {
-                radiation = new List<Vector3>();
-                foreach (var t in UnityEngine.Object.FindObjectsOfType<TriggerRadiation>()) radiation.Add(t.transform.position);
-            }
+            FindRadiation();
             foreach (var p in radiation) if (m.IsInBounds(p)) return false;
             return true;
+        }
+
+        // Searching the whole scene is slow (it stalled a frame for about a second), so it runs once, at load.
+        private static void FindRadiation()
+        {
+            if (radiation != null) return;
+            radiation = new List<Vector3>();
+            foreach (var t in UnityEngine.Object.FindObjectsOfType<TriggerRadiation>()) radiation.Add(t.transform.position);
         }
 
         private List<MonumentInfo> MonumentsNear(Vector3 p, float range)
