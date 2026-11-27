@@ -3155,7 +3155,16 @@ namespace Oxide.Plugins
                 p.y = Mathf.Max(p.y + 0.5f, eyes.y - 0.4f);
                 return p;
             }
-            return t.CenterPoint();
+            // Like a player, aim at a part it can actually reach: a barrel on a truck bed has the
+            // bed's edge between its middle and the eyes, but its top half is in plain view.
+            var c = t.CenterPoint();
+            var side = Vector3.Cross(Vector3.up, c - eyes).normalized;
+            foreach (var p in new[] { c, c + Vector3.up * 0.25f, c + Vector3.up * 0.45f, c + side * 0.2f, c - side * 0.2f, c + Vector3.up * 0.3f + side * 0.15f, c + Vector3.up * 0.3f - side * 0.15f })
+            {
+                RaycastHit hit;
+                if (!Physics.Linecast(eyes, p, out hit, SightMask, QueryTriggerInteraction.Ignore) || hit.GetEntity() == t) return p;
+            }
+            return c;
         }
 
         private void Swing(Job j, BaseMelee melee)
