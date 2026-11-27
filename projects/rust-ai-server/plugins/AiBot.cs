@@ -14,9 +14,10 @@ namespace Oxide.Plugins
     // plugin moves the body itself, because a BasePlayer has no navigator.
     // Actions (chop, mine, barrel, loot) use the game's own melee, gather and loot code, so they
     // work the way they do for a player. There is no decision making: each runs only on command.
-    // Chat (admins): /bot spawn|info|roam|stop|here|kill|chop|mine|barrel|loot|inv
+    // Roams (/bot trip, or the brain's "roam") plan a loose trip from the map's roads and monuments.
+    // Chat (admins): /bot spawn|info|trip|plan|roam|stop|here|kill|chop|mine|barrel|loot|inv
     // Console/RCON: aibot.<same>
-    [Info("AiBot", "mojolowjo", "0.5.0")]
+    [Info("AiBot", "mojolowjo", "0.6.0")]
     public class AiBot : RustPlugin
     {
         private const string PlayerPrefab = "assets/prefabs/player/player.prefab";
@@ -79,6 +80,8 @@ namespace Oxide.Plugins
             jobTimer = timer.Every(0.2f, TickJob);
             brainTimer = timer.Every(0.5f, BrainTick);
             Trails.Load();
+            FindRadiation();
+            RoadPoints();
             timer.Every(600f, Trails.Load); // pick up new recordings every 10 minutes
             if (saved == null || string.IsNullOrEmpty(saved.Name)) { saved = null; return; }
             var index = Array.IndexOf(Names, saved.Name);
@@ -103,6 +106,8 @@ namespace Oxide.Plugins
             respawnTimer?.Destroy();
             jobTimer?.Destroy();
             brainTimer?.Destroy();
+            roamTimer?.Destroy();
+            planDraw?.Destroy();
             dangerTimer?.Destroy();
             // Self-play picks up again after a reload (the flag lives in the training file).
             selfPlayTimer?.Destroy(); chaserTimer?.Destroy(); probeTimer?.Destroy();
@@ -227,6 +232,7 @@ namespace Oxide.Plugins
             EndChase(danger, "killed", true);
             if (danger != null) Puts("[danger] " + saved?.Name + " was killed by " + (danger.Attacker != null ? danger.Attacker.displayName : "?") + " after " + (Time.time - danger.Started).ToString("0") + " s on the run (" + danger.Picks + " runs, broke line of sight " + danger.LosBreaks + " times).");
             danger = null;
+            EndRoam("died");
             EndJob(saved?.Name + " died.");
             if (walker != null) UnityEngine.Object.Destroy(walker);
             bot = null;
@@ -294,8 +300,10 @@ namespace Oxide.Plugins
                     return "Bot removed.";
             }
             if (!Alive) return "No bot. Use /bot spawn.";
+            if (roam != null && verb != "info" && verb != "inv" && verb != "route" && verb != "plan" && verb != "hide") EndRoam("stopped by /bot " + verb);
             switch (verb)
             {
+                case "plan": return PlanCommand(user);
                 case "roam": BrainOff(); EndJob(null); walker.SetRoaming(true); Save(); return saved.Name + " is roaming.";
                 case "stop": BrainOff(); EndJob(null); walker.SetRoaming(false); Save(); return saved.Name + " stopped.";
                 case "brain": return BrainOn();
@@ -336,7 +344,7 @@ namespace Oxide.Plugins
                     Save();
                     return saved.Name + " is here, standing still.";
             }
-            return "Use spawn, info, brain, roam, stop, here, unstuck, kill, chop, mine, barrel, loot or inv.";
+            return "Use spawn, info, brain, trip, plan, roam, stop, here, unstuck, kill, chop, mine, barrel, loot or inv.";
         }
 
         // /bot path (here): walk from wherever it is to the spot under your crosshair, with the
@@ -412,6 +420,7 @@ namespace Oxide.Plugins
             sb.AppendLine("wearing " + ItemNames(bot.inventory.containerWear) + "; belt " + ItemNames(bot.inventory.containerBelt));
             sb.AppendLine(job != null ? "job: " + job.Describe(bot) : "job: none");
             sb.AppendLine(saved.Brain ? "brain: " + mind.Describe() : "brain: off");
+            if (roam != null) sb.AppendLine("roam: " + RoamDescribe());
             if (danger != null) sb.AppendLine("DANGER from " + (danger.Attacker != null ? danger.Attacker.displayName : "?") + ": " + (danger.Seen ? "in sight" : "hidden " + (Time.time - danger.HiddenSince).ToString("0") + " s") + ", " + danger.Picks + " runs, " + danger.LosBreaks + " line-of-sight breaks");
             sb.Append(walker.Describe());
             sb.Append("\nserver fps " + Performance.current.frameRate);
@@ -434,6 +443,7 @@ namespace Oxide.Plugins
             if (verb == "train") { SendReply(player, TrainCommand(args.Length > 1 ? args[1].ToLowerInvariant() : "")); return; }
             if (verb == "selfplay") { SendReply(player, SelfPlayCommand(args.Length > 1 ? args[1].ToLowerInvariant() : "")); return; }
             if (verb == "set") { SendReply(player, SetOdd(args.Skip(1).ToArray())); return; }
+            if (verb == "trip") { SendReply(player, TripCommand(args.Length > 1 ? args[1] : "")); return; }
             if (verb == "test") { SendReply(player, ScenarioCommand(args.Length > 1 ? args[1].ToLowerInvariant() : "")); return; }
             SendReply(player, Run(verb, player));
         }
@@ -585,6 +595,13 @@ namespace Oxide.Plugins
         [ConsoleCommand("aibot.loot")] private void ConLoot(ConsoleSystem.Arg arg) => FromConsole(arg, "loot");
         [ConsoleCommand("aibot.inv")] private void ConInv(ConsoleSystem.Arg arg) => FromConsole(arg, "inv");
         [ConsoleCommand("aibot.route")] private void ConRoute(ConsoleSystem.Arg arg) => FromConsole(arg, "route");
+        [ConsoleCommand("aibot.plan")] private void ConPlan(ConsoleSystem.Arg arg) => FromConsole(arg, "plan");
+        [ConsoleCommand("aibot.trip")]
+        private void ConTrip(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !arg.IsAdmin) return;
+            arg.ReplyWith(TripCommand(arg.GetString(0) ?? ""));
+        }
         [ConsoleCommand("aibot.unstuck")] private void ConUnstuck(ConsoleSystem.Arg arg) => FromConsole(arg, "unstuck");
 
         // Admin teleport to map coordinates: aibot.tp <x> <z>
@@ -1865,6 +1882,13 @@ namespace Oxide.Plugins
             // Standing on an edge: ground must be within this many metres of its middle, or it
             // slides off (0.5 = never slide, like the plain character controller).
             public float PerchRadius = 0.25f;
+            // Roaming (/bot trip, or the brain's "roam"): how often each reason comes up, how
+            // likely it goes into a monument it reaches (by reason), the chance it changes its
+            // mind at a stop, how long a trip lasts, how far it notices things, whether it turns
+            // away from players it sees (1 = yes), and how long it avoids a spot it was attacked.
+            public Dictionary<string, float> RoamReasons = new Dictionary<string, float> { { "none", 0.35f }, { "loot", 0.3f }, { "food", 0.15f }, { "wood", 0.1f }, { "stone", 0.1f } };
+            public Dictionary<string, float> RoamEnter = new Dictionary<string, float> { { "loot", 0.7f }, { "none", 0.45f }, { "food", 0.5f }, { "wood", 0.15f }, { "stone", 0.15f } };
+            public float RoamChangeMind = 0.12f, RoamMinutesMin = 10f, RoamMinutesMax = 25f, RoamSeeRadius = 25f, RoamAvoidPlayers = 1f, RoamDangerMinutes = 10f;
             public Dictionary<string, BrainOption> Options = new Dictionary<string, BrainOption>
             {
                 { "chop", new BrainOption { Base = 1f, NearBoost = 3f, Want = "wood", WantAmount = 1000, NeedBoost = 2f } },
@@ -1872,6 +1896,7 @@ namespace Oxide.Plugins
                 { "barrel", new BrainOption { Base = 0.6f, NearBoost = 5f } },
                 { "loot", new BrainOption { Base = 0.4f, NearBoost = 5f } },
                 { "wander", new BrainOption { Base = 1.5f } },
+                { "roam", new BrainOption { Base = 2.5f } },
                 { "rest", new BrainOption { Base = 0.3f } },
             };
         }
@@ -1922,6 +1947,7 @@ namespace Oxide.Plugins
         {
             LoadOdds();
             EndJob(null);
+            EndRoam("the brain took over");
             saved.Brain = true;
             walker.SetRoaming(false);
             walker.LookAround = true;
@@ -1933,6 +1959,7 @@ namespace Oxide.Plugins
         private void BrainOff()
         {
             if (saved == null) return;
+            EndRoam("brain turned off");
             saved.Brain = false;
             if (walker != null) walker.LookAround = false;
         }
@@ -1943,7 +1970,7 @@ namespace Oxide.Plugins
             var now = Time.time;
             if (mind.Acting)
             {
-                if (job != null || walker.Busy) return;
+                if (job != null || walker.Busy || roam != null) return;
                 // Just finished something: stand a moment, like a player deciding what's next.
                 mind.Acting = false;
                 mind.Until = now + (mind.Choice == "rest" ? UnityEngine.Random.Range(odds.RestMin, odds.RestMax) : StopLength());
@@ -1976,6 +2003,7 @@ namespace Oxide.Plugins
                 float blockedUntil;
                 if (mind.Unavailable.TryGetValue(kv.Key, out blockedUntil) && now < blockedUntil) continue;
                 if (full && kv.Key != "wander" && kv.Key != "rest") continue;
+                if (kv.Key == "roam" && bot.inventory.containerMain.IsFull()) continue;
                 var w = o.Base;
                 if (o.NearBoost != 1f)
                 {
@@ -1991,7 +2019,7 @@ namespace Oxide.Plugins
                 if (w > 0f) weights[kv.Key] = w;
             }
             // In the mood for something: keep at it while it's still possible.
-            if (mind.Choice != "" && now < mind.StickUntil && weights.ContainsKey(mind.Choice) && mind.Choice != "rest" && mind.Choice != "wander")
+            if (mind.Choice != "" && now < mind.StickUntil && weights.ContainsKey(mind.Choice) && mind.Choice != "rest" && mind.Choice != "wander" && mind.Choice != "roam")
             {
                 Act(mind.Choice, weights, true);
                 return;
@@ -2017,6 +2045,10 @@ namespace Oxide.Plugins
                     result = walker.Busy ? "wandering" : "nowhere to wander";
                     mind.Acting = walker.Busy;
                     break;
+                case "roam":
+                    result = StartRoam(PickReason());
+                    mind.Acting = roam != null;
+                    break;
                 case "rest":
                     result = "resting and looking around";
                     mind.Acting = true;
@@ -2030,6 +2062,776 @@ namespace Oxide.Plugins
             if (!mind.Acting) mind.Until = Time.time + 2f;
             Puts("[brain] " + (sticking ? "still in the mood for " : "chose ") + choice + " (" + mind.Weights + "): " + result);
         }
+
+        #endregion
+
+        #region Roam
+
+        // A roam, like a player's trip out of base (after m0j): a reason (wood, stone, loot, food,
+        // or none at all), a loose plan from the real map (get to a road, follow it, a monument to
+        // decide about, open ground), detours for things it happens to see on the way, changes of
+        // mind, re-planning after danger, and the walk back to where it set off. The brain plans
+        // here; the body only gets "walk here" legs and the usual jobs, through the same code as
+        // /bot chop, barrel, loot and so on.
+        private class RoamStop
+        {
+            public Vector3 Pos;
+            public string Kind, Name; // road, monument, ground, leave, home
+            public MonumentInfo Monument;
+            public int Fails;
+        }
+
+        private class Roam
+        {
+            public string Reason;
+            public Vector3 Home;
+            public List<RoamStop> Stops = new List<RoamStop>();
+            public RoamStop Current;
+            public float Started, Until, NextLook, PauseUntil;
+            public int Detours, Looted, Plans, Want, FoodBefore, OffGathers;
+            public bool GoingHome, InDanger;
+            public Dictionary<string, int> Before;
+            public string JobFor, JobKind; // why the running job was started (detour, monument, goal)
+            public Queue<BaseEntity> Inside; // loot it chose inside a monument, in walking order
+            public RoamStop LeaveStop;
+            public readonly HashSet<BaseEntity> Considered = new HashSet<BaseEntity>();
+            public readonly HashSet<MonumentInfo> Visited = new HashSet<MonumentInfo>();
+            public readonly List<string> Log = new List<string>();
+        }
+
+        private class DangerZone { public Vector3 Pos; public float Until; public string Why; }
+
+        private Roam roam;
+        private Timer roamTimer, planDraw;
+        private readonly List<DangerZone> dangerZones = new List<DangerZone>();
+        private readonly Dictionary<BasePlayer, float> playersNoticed = new Dictionary<BasePlayer, float>();
+        private static readonly string[] RoamReasonsAll = { "none", "loot", "food", "wood", "stone" };
+
+        private string ReasonWords(string r) =>
+            r == "none" ? "no reason, just picking things up" : r == "loot" ? "loot" : r == "food" ? "food" : r == "wood" ? "wood" : "stone";
+
+        private void Note(string msg)
+        {
+            if (roam == null) return;
+            Puts("[roam] " + saved.Name + ": " + msg);
+            roam.Log.Add(((Time.time - roam.Started) / 60f).ToString("0.0") + " min: " + msg);
+            if (roam.Log.Count > 40) roam.Log.RemoveAt(0);
+        }
+
+        private string PickReason()
+        {
+            var w = odds.RoamReasons ?? new Dictionary<string, float>();
+            var total = w.Where(kv => RoamReasonsAll.Contains(kv.Key) && kv.Value > 0f).Sum(kv => kv.Value);
+            if (total <= 0f) return "none";
+            var pick = UnityEngine.Random.value * total;
+            foreach (var kv in w)
+            {
+                if (!RoamReasonsAll.Contains(kv.Key) || kv.Value <= 0f) continue;
+                pick -= kv.Value;
+                if (pick <= 0f) return kv.Key;
+            }
+            return "none";
+        }
+
+        private string TripCommand(string arg)
+        {
+            if (!Alive) return "No bot. Use /bot spawn.";
+            arg = (arg ?? "").ToLowerInvariant();
+            if (arg == "off" || arg == "stop") { if (roam == null) return "Not on a roam."; EndRoam("told to stop"); walker.Halt(); return saved.Name + " stopped roaming."; }
+            if (arg == "") arg = PickReason();
+            if (arg == "any" || arg == "nothing") arg = "none";
+            if (!RoamReasonsAll.Contains(arg)) return "Use /bot trip [wood|stone|loot|food|none|off].";
+            EndRoam("started a new trip");
+            BrainOff();
+            return StartRoam(arg);
+        }
+
+        private string StartRoam(string reason)
+        {
+            EndJob(null);
+            walker.SetRoaming(false);
+            var now = Time.time;
+            roam = new Roam
+            {
+                Reason = reason, Home = bot.transform.position, Started = now,
+                Until = now + UnityEngine.Random.Range(odds.RoamMinutesMin, odds.RoamMinutesMax) * 60f,
+                Before = Counts(bot), FoodBefore = FoodCount(),
+                Want = reason == "wood" || reason == "stone" ? UnityEngine.Random.Range(300, 800) : reason == "loot" ? UnityEngine.Random.Range(4, 11) : UnityEngine.Random.Range(2, 6),
+                PauseUntil = now + UnityEngine.Random.Range(0.5f, 2f),
+            };
+            roam.Stops = Plan(bot.transform.position, null);
+            Note("set off for " + ReasonWords(reason) + (reason != "none" ? " (wants " + WantWords() + ")" : "") + "; plan: " + PlanWords());
+            if (roamTimer == null) roamTimer = timer.Every(0.5f, RoamTick);
+            return saved.Name + " is going out for " + ReasonWords(reason) + ". Plan: " + PlanWords() + ". /bot plan shows it.";
+        }
+
+        private string WantWords() =>
+            roam.Reason == "wood" ? roam.Want + " wood" : roam.Reason == "stone" ? roam.Want + " stone" : roam.Reason == "loot" ? roam.Want + " barrels or crates" : roam.Reason == "food" ? roam.Want + " food items" : "nothing in particular";
+
+        private void EndRoam(string why)
+        {
+            if (roam == null) return;
+            Note("roam over: " + why + " (" + ((Time.time - roam.Started) / 60f).ToString("0.0") + " min, " + roam.Detours + " detours, " + roam.Looted + " looted, " + roam.Plans + " plans)" + GainWords());
+            roam = null;
+        }
+
+        private string GainWords()
+        {
+            if (roam == null || !Alive) return "";
+            var gained = new List<string>();
+            foreach (var kv in Counts(bot))
+            {
+                int had;
+                roam.Before.TryGetValue(kv.Key, out had);
+                if (kv.Value > had) gained.Add("+" + (kv.Value - had) + " " + kv.Key);
+            }
+            return gained.Count > 0 ? "; got " + string.Join(", ", gained) : "; got nothing";
+        }
+
+        private int Gained(string displayName)
+        {
+            int now, had;
+            Counts(bot).TryGetValue(displayName, out now);
+            roam.Before.TryGetValue(displayName, out had);
+            return now - had;
+        }
+
+        private int FoodCount()
+        {
+            var n = 0;
+            foreach (var c in Containers(bot)) foreach (var i in c.itemList) if (i.info.category == ItemCategory.Food) n += i.amount;
+            return n;
+        }
+
+        private bool GoalMet()
+        {
+            switch (roam.Reason)
+            {
+                case "wood": return Gained("Wood") >= roam.Want;
+                case "stone": return Gained("Stones") >= roam.Want;
+                case "loot": return roam.Looted >= roam.Want;
+                case "food": return FoodCount() - roam.FoodBefore >= roam.Want;
+            }
+            return false;
+        }
+
+        private void GoHome(string why)
+        {
+            roam.GoingHome = true;
+            roam.Stops.Clear();
+            roam.Inside = null;
+            roam.LeaveStop = null;
+            roam.Current = new RoamStop { Pos = roam.Home, Kind = "home", Name = "home" };
+            Note(why + "; heading home (" + Vector3.Distance(bot.transform.position, roam.Home).ToString("0") + " m)");
+        }
+
+        private void Replan(string why)
+        {
+            if (roam.GoingHome) { Note(why + "; still heading home"); return; }
+            roam.Current = null;
+            roam.Inside = null;
+            roam.LeaveStop = null;
+            roam.Stops = Plan(bot.transform.position, why);
+            Note(why + "; new plan: " + PlanWords());
+        }
+
+        private void RoamTick()
+        {
+            var r = roam;
+            if (r == null) return;
+            if (!Alive) { roam = null; return; }
+            var now = Time.time;
+            dangerZones.RemoveAll(z => now > z.Until);
+
+            // Hit: the running-away code has the body. Afterwards, stay away from that spot a while.
+            if (danger != null)
+            {
+                if (!r.InDanger) { r.InDanger = true; Note("got hit by " + (danger.Attacker != null ? danger.Attacker.displayName : "something") + ", running for cover"); }
+                return;
+            }
+            if (r.InDanger)
+            {
+                r.InDanger = false;
+                r.JobFor = null;
+                dangerZones.Add(new DangerZone { Pos = bot.transform.position, Until = now + odds.RoamDangerMinutes * 60f, Why = "got attacked here" });
+                Replan("got away from danger, keeping clear of that spot for " + odds.RoamDangerMinutes.ToString("0") + " min");
+                r.PauseUntil = now + StopLength();
+                return;
+            }
+            if (job != null) return;
+            if (r.JobFor != null)
+            {
+                if (r.JobKind == "barrel" || r.JobKind == "loot") r.Looted++;
+                r.JobFor = null;
+                r.PauseUntil = now + Mathf.Min(StopLength(), 4f);
+                return;
+            }
+            if (now < r.PauseUntil) return;
+
+            if (!r.GoingHome)
+            {
+                if (bot.inventory.containerMain.IsFull() && bot.inventory.containerBelt.IsFull()) { GoHome("bags are full"); return; }
+                if (GoalMet()) { GoHome("got what it came for (" + WantWords() + ")"); return; }
+                if (now > r.Until) { GoHome("been out long enough"); return; }
+            }
+
+            if (walker.Busy)
+            {
+                if (now >= r.NextLook)
+                {
+                    r.NextLook = now + 1.5f;
+                    if (WatchForPlayers()) return;
+                    LookAroundForThings();
+                }
+                return;
+            }
+
+            // Inside a monument: the loot it picked, one by one, then out the far side.
+            if (r.Inside != null)
+            {
+                while (r.Inside.Count > 0)
+                {
+                    var e = r.Inside.Dequeue();
+                    if (e == null || e.IsDestroyed || ThingOf(e) == null) continue;
+                    if (RoamJob(JobKindOf(ThingOf(e)), e, "monument")) return;
+                }
+                r.Inside = null;
+                if (r.LeaveStop != null) { r.Current = r.LeaveStop; r.LeaveStop = null; Note("done inside, leaving by " + r.Current.Name); }
+            }
+
+            if (LookAroundForThings()) return;
+
+            // Out for wood or stone: go straight for the nearest tree or node.
+            if (!r.GoingHome && (r.Reason == "wood" || r.Reason == "stone"))
+            {
+                var kind = r.Reason == "wood" ? "chop" : "mine";
+                var said = StartJob(kind, null);
+                if (job != null) { r.JobFor = "goal"; r.JobKind = kind; Note(said); return; }
+            }
+
+            if (r.Current == null)
+            {
+                if (r.Stops.Count == 0)
+                {
+                    if (r.GoingHome) { EndRoam("back home"); return; }
+                    if (r.Plans >= (r.Reason == "none" ? 2 : 3)) { GoHome("ran out of places to go"); return; }
+                    Replan("plan done, still wants " + WantWords());
+                    return;
+                }
+                r.Current = r.Stops[0];
+                r.Stops.RemoveAt(0);
+            }
+            var stop = r.Current;
+            var flat = stop.Pos - bot.transform.position;
+            flat.y = 0f;
+            if (flat.magnitude <= 12f) { r.Current = null; Arrive(stop); return; }
+            if (!Leg(stop.Pos))
+            {
+                stop.Fails++;
+                if (stop.Fails >= 3)
+                {
+                    r.Current = null;
+                    if (stop.Kind == "home") { EndRoam("couldn't find a way home from here"); return; }
+                    Note("can't find a way to " + stop.Name + ", skipping it");
+                }
+                else r.PauseUntil = now + 1f;
+            }
+        }
+
+        private void Arrive(RoamStop stop)
+        {
+            var r = roam;
+            var now = Time.time;
+            if (stop.Kind == "home") { EndRoam("back home"); return; }
+            if (stop.Kind == "monument" && stop.Monument != null)
+            {
+                r.Visited.Add(stop.Monument);
+                float p;
+                if (!odds.RoamEnter.TryGetValue(r.Reason, out p)) p = 0.4f;
+                if (r.GoingHome) p *= 0.3f;
+                var inside = LootInside(stop.Monument);
+                if (inside.Count == 0) Note("reached " + stop.Name + ", nothing left to loot in there, moving on");
+                else if (UnityEngine.Random.value < p)
+                {
+                    r.Inside = new Queue<BaseEntity>(inside);
+                    var c = stop.Monument.transform.position;
+                    var away = c - bot.transform.position;
+                    away.y = 0f;
+                    Vector3 far;
+                    if (Walker.Nearest(c + away.normalized * MonRadius(stop.Monument) * 0.9f, 15f, out far))
+                        r.LeaveStop = new RoamStop { Pos = far, Kind = "leave", Name = "the far side of " + stop.Name };
+                    Note("reached " + stop.Name + " and decided to go in (" + inside.Count + " things to loot)");
+                    return;
+                }
+                else Note("reached " + stop.Name + " and decided not to go in");
+            }
+            else Note("reached " + stop.Name);
+            if (!r.GoingHome && UnityEngine.Random.value < odds.RoamChangeMind) { Replan("changed its mind at " + stop.Name); return; }
+            if (UnityEngine.Random.value < 0.35f) r.PauseUntil = now + StopLength();
+        }
+
+        // One stretch of walking toward a stop: straight there if it's close, otherwise 55 to 90 m
+        // of the way, trying a little off the line when the first try has no route.
+        private bool Leg(Vector3 target)
+        {
+            var from = bot.transform.position;
+            var flat = target - from;
+            flat.y = 0f;
+            var d = flat.magnitude;
+            for (var i = 0; i < 6; i++)
+            {
+                Vector3 want;
+                if (d <= 90f) want = target + (i == 0 ? Vector3.zero : new Vector3(UnityEngine.Random.Range(-1f, 1f), 0f, UnityEngine.Random.Range(-1f, 1f)) * 4f * i);
+                else
+                {
+                    var turn = i == 0 ? 0f : (i % 2 == 0 ? 1f : -1f) * 20f * ((i + 1) / 2);
+                    want = from + Quaternion.Euler(0f, turn, 0f) * flat.normalized * UnityEngine.Random.Range(55f, 90f);
+                    want.y = TerrainMeta.HeightMap.GetHeight(want);
+                }
+                Vector3 spot;
+                if (!Walker.Nearest(want, 10f, out spot)) continue;
+                if (Walker.WaterDepth(spot) > Walker.MaxWater) continue;
+                if (walker.GoTo(spot, UnityEngine.Random.value < odds.RunShare)) return true;
+            }
+            return false;
+        }
+
+        // What a thing is, as far as a roam cares.
+        private static string ThingOf(BaseEntity e)
+        {
+            if (e == null || e.IsDestroyed || e.HasParent()) return null;
+            var n = e.ShortPrefabName;
+            if (e is LootContainer)
+            {
+                if (n.Contains("barrel")) return "barrel";
+                if (!Matches("loot", e)) return null;
+                return n.Contains("food") ? "food crate" : "crate";
+            }
+            if (e is CollectibleEntity)
+            {
+                if (n.Contains("hemp")) return "hemp";
+                if (n.Contains("wood")) return "wood pile";
+                if (n.Contains("stone") || n.Contains("metal") || n.Contains("sulfur")) return "stone pile";
+                if (n.Contains("mushroom") || n.Contains("corn") || n.Contains("pumpkin") || n.Contains("potato") || n.Contains("berry")) return "food plant";
+                return "pickup";
+            }
+            if (e is ResourceEntity)
+            {
+                var g = GatherOf(e);
+                if (g == ResourceDispenser.GatherType.Tree) return n.Contains("sapling") || n.Contains("log") ? null : "tree";
+                if (g == ResourceDispenser.GatherType.Ore) return "ore node";
+            }
+            return null;
+        }
+
+        private static string JobKindOf(string thing) =>
+            thing == "barrel" ? "barrel" : thing == "crate" || thing == "food crate" ? "loot" : thing == "tree" ? "chop" : thing == "ore node" ? "mine" : "collect";
+
+        // How likely it walks over to a thing it sees, by what it's out for. m0j: trees and nodes
+        // stay rare unless it's out for wood or stone (then it goes for them anyway, see RoamTick).
+        private static float DetourChance(string thing, string reason)
+        {
+            switch (thing)
+            {
+                case "barrel": return reason == "loot" ? 0.6f : reason == "none" ? 0.45f : reason == "food" ? 0.35f : 0.2f;
+                case "crate": return reason == "loot" ? 0.75f : reason == "none" ? 0.5f : reason == "food" ? 0.4f : 0.25f;
+                case "food crate": return reason == "food" ? 0.95f : 0.4f;
+                case "food plant": return reason == "food" ? 0.75f : 0.15f;
+                case "hemp": return 0.15f;
+                // Every tree and pile it passes gets a roll, so these are kept very low; on top of
+                // that, at most one wood or stone detour per roam that isn't for wood or stone.
+                case "wood pile": return reason == "wood" ? 0.8f : 0.03f;
+                case "stone pile": return reason == "stone" ? 0.8f : 0.03f;
+                case "tree": return reason == "wood" ? 0f : 0.004f;
+                case "ore node": return reason == "stone" ? 0f : 0.008f;
+            }
+            return 0.1f;
+        }
+
+        // Things nearby it can actually see. Each thing gets one roll per roam, the first time
+        // it's seen, so it doesn't keep re-thinking the same barrel. Returns true if it went for one.
+        private bool LookAroundForThings()
+        {
+            var r = roam;
+            if (r == null || job != null) return false;
+            if (bot.inventory.containerMain.IsFull() && bot.inventory.containerBelt.IsFull()) return false;
+            var near = new List<BaseEntity>();
+            var radius = odds.RoamSeeRadius;
+            Vis.Entities(bot.transform.position, radius, near);
+            BaseEntity pick = null;
+            string pickThing = null;
+            var pickDist = float.MaxValue;
+            foreach (var e in near)
+            {
+                if (e == null || r.Considered.Contains(e)) continue;
+                var thing = ThingOf(e);
+                if (thing == null) continue;
+                float badUntil;
+                if (badTargets.TryGetValue(e, out badUntil) && Time.time < badUntil) continue;
+                if (Walker.WaterDepth(e.transform.position) > Walker.MaxWater) continue;
+                if (!Sees(e)) continue;
+                r.Considered.Add(e);
+                var d = Vector3.Distance(bot.transform.position, e.transform.position);
+                var gather = thing == "tree" || thing == "ore node" || thing == "wood pile" || thing == "stone pile";
+                var forIt = (r.Reason == "wood" && (thing == "tree" || thing == "wood pile")) || (r.Reason == "stone" && (thing == "ore node" || thing == "stone pile"));
+                if (gather && !forIt && r.OffGathers >= 1) continue;
+                var chance = DetourChance(thing, r.Reason) * (r.GoingHome ? 0.6f : 1f) / (1f + 0.12f * r.Detours) * (0.6f + 0.4f * (1f - d / radius));
+                if (UnityEngine.Random.value < chance && d < pickDist) { pick = e; pickThing = thing; pickDist = d; }
+            }
+            if (pick == null) return false;
+            walker.Halt();
+            if (!RoamJob(JobKindOf(pickThing), pick, "detour")) return false;
+            r.Detours++;
+            if ((pickThing == "tree" || pickThing == "ore node" || pickThing == "wood pile" || pickThing == "stone pile") && r.Reason != "wood" && r.Reason != "stone") r.OffGathers++;
+            Note("saw a " + pickThing + " " + pickDist.ToString("0") + " m away and went for it" + (r.Current != null ? " (on the way to " + r.Current.Name + ")" : ""));
+            return true;
+        }
+
+        private bool Sees(BaseEntity e)
+        {
+            var to = e.CenterPoint();
+            RaycastHit hit;
+            if (!Physics.Linecast(bot.eyes.position, to, out hit, SightMask, QueryTriggerInteraction.Ignore)) return true;
+            return hit.GetEntity() == e || (hit.point - to).sqrMagnitude < 0.5f;
+        }
+
+        private bool RoamJob(string kind, BaseEntity target, string why)
+        {
+            var said = StartJob(kind, null, target);
+            if (job == null)
+            {
+                badTargets[target] = Time.time + 300f; // no way to it from here: leave it alone a few minutes
+                Note("wanted the " + target.ShortPrefabName + " but: " + said);
+                return false;
+            }
+            roam.JobFor = why;
+            roam.JobKind = kind;
+            return true;
+        }
+
+        // A player it can see, close enough to worry about: usually it turns away and re-plans.
+        private bool WatchForPlayers()
+        {
+            if (odds.RoamAvoidPlayers <= 0f) return false;
+            var now = Time.time;
+            foreach (var p in BasePlayer.activePlayerList)
+            {
+                if (p == null || p == bot || p.IsDead() || p.IsSleeping() || p.IsFlying) continue;
+                var d = Vector3.Distance(p.transform.position, bot.transform.position);
+                if (d > 70f) continue;
+                float until;
+                if (playersNoticed.TryGetValue(p, out until) && now < until) continue;
+                if (Physics.Linecast(bot.eyes.position, p.eyes.position, SightMask, QueryTriggerInteraction.Ignore)) continue;
+                playersNoticed[p] = now + 180f;
+                if (UnityEngine.Random.value < 0.6f && !roam.GoingHome)
+                {
+                    dangerZones.Add(new DangerZone { Pos = p.transform.position, Until = now + 300f, Why = "saw " + p.displayName });
+                    walker.Halt();
+                    Replan("saw " + p.displayName + " " + d.ToString("0") + " m away and turned off its route");
+                    return true;
+                }
+                Note("saw " + p.displayName + " " + d.ToString("0") + " m away but kept going");
+            }
+            return false;
+        }
+
+        private bool InDangerZone(Vector3 p, float margin)
+        {
+            foreach (var z in dangerZones) if (Time.time < z.Until && (z.Pos - p).sqrMagnitude < margin * margin) return true;
+            return false;
+        }
+
+        #region Roam planning
+
+        private class RoadPoint { public PathList Road; public int Index; public Vector3 Pos; }
+        private static List<RoadPoint> roadPoints;
+        private static List<Vector3> radiation;
+
+        private static List<RoadPoint> RoadPoints()
+        {
+            if (roadPoints != null) return roadPoints;
+            roadPoints = new List<RoadPoint>();
+            if (TerrainMeta.Path != null && TerrainMeta.Path.Roads != null)
+                foreach (var road in TerrainMeta.Path.Roads)
+                {
+                    if (road?.Path?.Points == null) continue;
+                    for (var i = 0; i < road.Path.Points.Length; i++) roadPoints.Add(new RoadPoint { Road = road, Index = i, Pos = road.Path.Points[i] });
+                }
+            return roadPoints;
+        }
+
+        private static float MonRadius(MonumentInfo m)
+        {
+            var e = m.Bounds.extents;
+            var s = m.transform.lossyScale;
+            return Mathf.Clamp(new Vector2(e.x * s.x, e.z * s.z).magnitude, 15f, 120f);
+        }
+
+        private static string MonName(MonumentInfo m)
+        {
+            var n = m.displayPhrase != null ? m.displayPhrase.english : null;
+            return string.IsNullOrEmpty(n) ? null : n;
+        }
+
+        private static readonly string[] SkipMonuments = { "oilrig", "underwater", "iceberg", "ice_lake", "cave", "power_sub", "tunnel", "lake", "rock", "mountain", "swamp", "canyon", "oasis", "entrance" };
+
+        // A monument a player in a hoodie would walk to: on land, not a safe zone, no radiation.
+        private static bool GoodMonument(MonumentInfo m)
+        {
+            if (m == null || m.IsSafeZone || MonName(m) == null) return false;
+            var prefab = m.name.ToLowerInvariant();
+            if (SkipMonuments.Any(s => prefab.Contains(s))) return false;
+            if (Walker.WaterDepth(m.transform.position) > 1f) return false;
+            FindRadiation();
+            foreach (var p in radiation) if (m.IsInBounds(p)) return false;
+            return true;
+        }
+
+        // Searching the whole scene is slow (it stalled a frame for about a second), so it runs once, at load.
+        private static void FindRadiation()
+        {
+            if (radiation != null) return;
+            radiation = new List<Vector3>();
+            foreach (var t in UnityEngine.Object.FindObjectsOfType<TriggerRadiation>()) radiation.Add(t.transform.position);
+        }
+
+        private List<MonumentInfo> MonumentsNear(Vector3 p, float range)
+        {
+            var list = new List<MonumentInfo>();
+            if (TerrainMeta.Path == null || TerrainMeta.Path.Monuments == null) return list;
+            foreach (var m in TerrainMeta.Path.Monuments)
+            {
+                if (!GoodMonument(m) || roam.Visited.Contains(m)) continue;
+                var d = m.transform.position - p;
+                d.y = 0f;
+                if (d.magnitude <= range + MonRadius(m) && !InDangerZone(m.transform.position, 120f)) list.Add(m);
+            }
+            return list;
+        }
+
+        // The stop for a monument: its edge on the side it comes from, where it decides.
+        private RoamStop MonumentStop(MonumentInfo m, Vector3 from)
+        {
+            var c = m.transform.position;
+            var toward = from - c;
+            toward.y = 0f;
+            if (toward.sqrMagnitude < 1f) toward = Vector3.forward;
+            Vector3 edge;
+            if (!Walker.Nearest(c + toward.normalized * MonRadius(m) * 0.8f, 15f, out edge)) return null;
+            return new RoamStop { Pos = edge, Kind = "monument", Name = MonName(m), Monument = m };
+        }
+
+        private List<BaseEntity> LootInside(MonumentInfo m)
+        {
+            var near = new List<BaseEntity>();
+            Vis.Entities(m.transform.position, MonRadius(m), near);
+            var left = near.Where(e => { var t = ThingOf(e); float bad; return (t == "barrel" || t == "crate" || t == "food crate") && !(badTargets.TryGetValue(e, out bad) && Time.time < bad) && Walker.WaterDepth(e.transform.position) <= Walker.MaxWater; }).Distinct().ToList();
+            // Walking order: always the nearest one next, from where it stands.
+            var order = new List<BaseEntity>();
+            var at = bot.transform.position;
+            var take = roam.Reason == "loot" ? UnityEngine.Random.Range(3, 7) : UnityEngine.Random.Range(2, 5);
+            while (left.Count > 0 && order.Count < take)
+            {
+                var next = left.OrderBy(e => (e.transform.position - at).sqrMagnitude).First();
+                order.Add(next);
+                left.Remove(next);
+                at = next.transform.position;
+            }
+            return order;
+        }
+
+        // A loose plan of 2 to 6 stops. Loot, food or no reason: get to a road if one is close and
+        // follow it a few hundred metres, with any monument near the road as a stop to decide
+        // at; with no road, the nearest monument or open ground. Wood or stone: open ground only
+        // (it goes straight for trees or nodes whenever one is within reach).
+        private List<RoamStop> Plan(Vector3 from, string why)
+        {
+            roam.Plans++;
+            var stops = new List<RoamStop>();
+            var heading = Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f) * Vector3.forward;
+            DangerZone near = null;
+            foreach (var z in dangerZones) if (near == null || (z.Pos - from).sqrMagnitude < (near.Pos - from).sqrMagnitude) near = z;
+            if (near != null && Vector3.Distance(near.Pos, from) < 300f)
+            {
+                var away = from - near.Pos;
+                away.y = 0f;
+                if (away.sqrMagnitude > 0.01f) heading = Quaternion.Euler(0f, UnityEngine.Random.Range(-40f, 40f), 0f) * away.normalized;
+            }
+
+            if (roam.Reason != "wood" && roam.Reason != "stone")
+            {
+                RoadPoint road = null;
+                var best = 150f * 150f;
+                foreach (var rp in RoadPoints())
+                {
+                    var d = rp.Pos - from;
+                    d.y = 0f;
+                    // Not behind it when it's turning away from danger.
+                    if (near != null && Vector3.Dot(d, heading) < 0f && d.sqrMagnitude > 400f) continue;
+                    if (d.sqrMagnitude < best && !InDangerZone(rp.Pos, 100f)) { best = d.sqrMagnitude; road = rp; }
+                }
+                if (road != null && UnityEngine.Random.value < 0.8f) FollowRoad(road, from, heading, stops);
+                else
+                {
+                    var mons = MonumentsNear(from, 500f);
+                    var ahead = mons.Where(m => Vector3.Dot(m.transform.position - from, heading) > 0f).ToList();
+                    var mon = (ahead.Count > 0 ? ahead : mons).OrderBy(m => (m.transform.position - from).sqrMagnitude).FirstOrDefault();
+                    if (mon != null && UnityEngine.Random.value < 0.7f)
+                    {
+                        var s = MonumentStop(mon, from);
+                        if (s != null) { stops.Add(s); heading = (mon.transform.position - from).normalized; }
+                    }
+                }
+            }
+            var cursor = stops.Count > 0 ? stops[stops.Count - 1].Pos : from;
+            var extra = stops.Count == 0 ? UnityEngine.Random.Range(2, 4) : stops.Count < 3 ? UnityEngine.Random.Range(1, 3) : stops.Count < 5 ? UnityEngine.Random.Range(0, 2) : 0;
+            for (var i = 0; i < extra && stops.Count < 6; i++)
+            {
+                for (var t = 0; t < 6; t++)
+                {
+                    var dir = Quaternion.Euler(0f, UnityEngine.Random.Range(-40f, 40f) * (1 + t), 0f) * heading;
+                    var want = cursor + dir * UnityEngine.Random.Range(60f, 110f);
+                    want.y = TerrainMeta.HeightMap.GetHeight(want);
+                    Vector3 spot;
+                    if (Walker.WaterDepth(want) > Walker.MaxWater || InDangerZone(want, 100f) || !Walker.Nearest(want, 10f, out spot)) continue;
+                    stops.Add(new RoamStop { Pos = spot, Kind = "ground", Name = "open ground " + MapHelper.PositionToString(spot) });
+                    heading = dir;
+                    cursor = spot;
+                    break;
+                }
+            }
+            return stops;
+        }
+
+        // Along a road, one stop every 70 m or so for 250 to 600 m, the way that leads to a
+        // monument it hasn't been to (or the way it's facing). A monument close to the road
+        // becomes a stop; half the time it leaves the road there.
+        private void FollowRoad(RoadPoint start, Vector3 from, Vector3 heading, List<RoamStop> stops)
+        {
+            var pts = start.Road.Path.Points;
+            stops.Add(new RoamStop { Pos = Snap(start.Pos), Kind = "road", Name = "the road " + MapHelper.PositionToString(start.Pos) });
+            var mons = MonumentsNear(start.Pos, 600f);
+            Func<int, float> score = dir =>
+            {
+                var j = start.Index;
+                var walked = 0f;
+                while (walked < 300f && j + dir >= 0 && j + dir < pts.Length) { walked += Vector3.Distance(pts[j], pts[j + dir]); j += dir; }
+                var end = pts[j];
+                var s = Vector3.Dot((end - start.Pos).normalized, heading) * 50f;
+                foreach (var m in mons) s = Mathf.Max(s, 300f - Vector3.Distance(end, m.transform.position));
+                if (InDangerZone(end, 150f)) s -= 1000f;
+                return s + UnityEngine.Random.Range(0f, 80f);
+            };
+            var way = score(1) >= score(-1) ? 1 : -1;
+            var length = UnityEngine.Random.Range(250f, 600f);
+            var since = 0f;
+            var total = 0f;
+            var used = new HashSet<MonumentInfo>();
+            for (var i = start.Index; i + way >= 0 && i + way < pts.Length && total < length && stops.Count < 6; i += way)
+            {
+                var step = Vector3.Distance(pts[i], pts[i + way]);
+                since += step;
+                total += step;
+                var p = pts[i + way];
+                if (InDangerZone(p, 100f)) break;
+                var mon = mons.FirstOrDefault(m => !used.Contains(m) && Vector3.Distance(new Vector3(m.transform.position.x, 0f, m.transform.position.z), new Vector3(p.x, 0f, p.z)) < MonRadius(m) + 60f);
+                if (mon != null)
+                {
+                    used.Add(mon);
+                    var s = MonumentStop(mon, p);
+                    if (s != null)
+                    {
+                        stops.Add(s);
+                        since = 0f;
+                        if (UnityEngine.Random.value < 0.5f) return; // leaves the road here
+                        continue;
+                    }
+                }
+                if (since >= 70f)
+                {
+                    since = 0f;
+                    stops.Add(new RoamStop { Pos = Snap(p), Kind = "road", Name = "the road " + MapHelper.PositionToString(p) });
+                }
+            }
+        }
+
+        private static Vector3 Snap(Vector3 p)
+        {
+            Vector3 spot;
+            return Walker.Nearest(p, 10f, out spot) ? spot : p;
+        }
+
+        private string PlanWords()
+        {
+            var r = roam;
+            if (r == null) return "none";
+            var all = new List<RoamStop>();
+            if (r.Current != null) all.Add(r.Current);
+            all.AddRange(r.Stops);
+            if (all.Count == 0) return r.GoingHome ? "home" : "nothing planned (it will think again)";
+            var words = new List<string>();
+            string lastKind = null;
+            var roadRun = 0;
+            foreach (var s in all)
+            {
+                if (s.Kind == "road" && lastKind == "road") { roadRun++; continue; }
+                if (roadRun > 0) { words[words.Count - 1] += " (" + (roadRun + 1) + " stops)"; roadRun = 0; }
+                words.Add(s.Kind == "road" ? "follow the road" : s.Kind == "monument" ? "decide about " + s.Name : s.Kind == "ground" ? "open ground" : s.Name);
+                lastKind = s.Kind;
+            }
+            if (roadRun > 0) words[words.Count - 1] += " (" + (roadRun + 1) + " stops)";
+            return string.Join(", then ", words) + (r.GoingHome ? "" : ", then home");
+        }
+
+        private string RoamDescribe()
+        {
+            var r = roam;
+            var where = r.Current != null ? (r.GoingHome ? "heading home" : "going to " + r.Current.Name) + ", " + Vector3.Distance(bot.transform.position, r.Current.Pos).ToString("0") + " m" : r.Inside != null ? "looting inside a monument" : "deciding where next";
+            if (job != null && r.JobFor != null) where = r.JobFor + ": " + job.Kind + " " + (job.Target != null ? job.Target.ShortPrefabName : "");
+            if (r.InDanger) where = "running from danger";
+            return "for " + ReasonWords(r.Reason) + (r.Reason != "none" ? " (wants " + WantWords() + ")" : "") + ": " + where + "; " + r.Stops.Count + " more stops planned; "
+                + r.Detours + " detours, " + r.Looted + " looted, plan #" + r.Plans + ", " + ((Time.time - r.Started) / 60f).ToString("0.0") + " min out" + GainWords();
+        }
+
+        // /bot plan: the plan in words, the last things it decided, and lines on the map for you.
+        private string PlanCommand(BasePlayer user)
+        {
+            if (!Alive) return "No bot.";
+            if (roam == null) return saved.Name + " isn't on a roam. /bot trip [wood|stone|loot|food|none] starts one.";
+            var sb = new StringBuilder(saved.Name + " " + RoamDescribe() + "\nPlan: " + PlanWords());
+            foreach (var l in roam.Log.Skip(Math.Max(0, roam.Log.Count - 8))) sb.Append("\n  " + l);
+            if (user != null) { DrawPlan(user); sb.Append("\nDrawn for 60 s: yellow = monument to decide about, blue = road, white = open ground, green = home."); }
+            return sb.ToString();
+        }
+
+        private void DrawPlan(BasePlayer user)
+        {
+            planDraw?.Destroy();
+            var until = Time.time + 60f;
+            Action draw = () =>
+            {
+                if (user == null || !user.IsConnected || roam == null || !Alive) return;
+                var up = Vector3.up * 1f;
+                var pts = new List<RoamStop>();
+                if (roam.Current != null) pts.Add(roam.Current);
+                pts.AddRange(roam.Stops);
+                if (!roam.GoingHome) pts.Add(new RoamStop { Pos = roam.Home, Kind = "home", Name = "home" });
+                var prev = bot.transform.position;
+                foreach (var s in pts)
+                {
+                    var c = s.Kind == "monument" ? Color.yellow : s.Kind == "road" ? Color.cyan : s.Kind == "home" ? Color.green : Color.white;
+                    user.SendConsoleCommand("ddraw.line", 3.2f, c, prev + up, s.Pos + up);
+                    user.SendConsoleCommand("ddraw.sphere", 3.2f, c, s.Pos + up, s.Kind == "monument" ? 2f : 0.8f);
+                    if (s.Kind != "road") user.SendConsoleCommand("ddraw.text", 3.2f, c, s.Pos + up * 3f, s.Name);
+                    prev = s.Pos;
+                }
+                user.SendConsoleCommand("ddraw.text", 3.2f, Color.white, bot.transform.position + Vector3.up * 2.4f, saved.Name + ": " + (roam.Current != null ? roam.Current.Name : "thinking"));
+            };
+            draw();
+            planDraw = timer.Every(3f, () => { if (Time.time > until || roam == null || !Alive) { planDraw?.Destroy(); return; } draw(); });
+        }
+
+        #endregion
 
         #endregion
 
@@ -2047,7 +2849,7 @@ namespace Oxide.Plugins
             public Dictionary<string, int> Before;
             public float Next, Until, Started;
             public bool Approached, Opened, Stepped;
-            public int Swings, Taken, Misses;
+            public int Swings, Taken, Misses, TotalMisses;
             public string LastHit;
             public List<BaseEntity> Drops;
 
@@ -2065,7 +2867,7 @@ namespace Oxide.Plugins
         }
 
         private static string Noun(string kind) =>
-            kind == "chop" ? "tree" : kind == "mine" ? "ore node" : kind == "barrel" ? "barrel" : "crate";
+            kind == "chop" ? "tree" : kind == "mine" ? "ore node" : kind == "barrel" ? "barrel" : kind == "collect" ? "thing on the ground" : "crate";
 
         private static bool Matches(string kind, BaseEntity e)
         {
@@ -2073,23 +2875,27 @@ namespace Oxide.Plugins
             switch (kind)
             {
                 // By what the node gives, not its class: wood piles are ore entities that give wood.
-                case "chop": return e is ResourceEntity && GatherOf(e) == ResourceDispenser.GatherType.Tree;
+                // Not fallen logs: they lie on the ground and its swings go over them.
+                case "chop": return e is ResourceEntity && GatherOf(e) == ResourceDispenser.GatherType.Tree && !e.ShortPrefabName.Contains("log");
                 case "mine": return e is ResourceEntity && GatherOf(e) == ResourceDispenser.GatherType.Ore;
                 case "barrel": return e is LootContainer && e.ShortPrefabName.Contains("barrel");
+                case "collect": return e is CollectibleEntity;
                 case "loot":
                     var lc = e as LootContainer;
-                    return lc != null && e.ShortPrefabName.Contains("crate") && !e.ShortPrefabName.Contains("hack")
+                    return lc != null && (e.ShortPrefabName.Contains("crate") || e.ShortPrefabName.Contains("foodbox")) && !e.ShortPrefabName.Contains("hack")
                         && !lc.IsLocked() && lc.inventory != null && lc.inventory.itemList.Count > 0;
             }
             return false;
         }
 
-        private string StartJob(string kind, BasePlayer asker)
+        // only: go for that one thing (a roam detour) instead of the nearest of its kind.
+        private string StartJob(string kind, BasePlayer asker, BaseEntity only = null)
         {
             EndJob(null);
             var from = bot.transform.position;
             var found = new List<BaseEntity>();
-            foreach (var net in BaseNetworkable.serverEntities)
+            if (only != null) { if (!only.IsDestroyed) found.Add(only); }
+            else foreach (var net in BaseNetworkable.serverEntities)
             {
                 var e = net as BaseEntity;
                 if (e == null || e.IsDestroyed || !Matches(kind, e)) continue;
@@ -2200,7 +3006,7 @@ namespace Oxide.Plugins
                     if (InReach(j))
                     {
                         walker.Halt();
-                        j.Phase = j.Kind == "loot" ? "take" : "work";
+                        j.Phase = j.Kind == "loot" ? "take" : j.Kind == "collect" ? "grab" : "work";
                         j.Until = Time.time + 120f;
                         j.Next = Time.time + 0.3f;
                         return;
@@ -2234,21 +3040,31 @@ namespace Oxide.Plugins
                     if (Time.time > j.Until) { EndJob(name + " gave up on the " + Noun(j.Kind) + "."); return; }
                     if (!InReach(j)) { j.Phase = "walk"; j.Approached = false; j.Until = Time.time + 20f; return; }
                     if (walker.Busy) return; // stepping closer
-                    if (j.Misses >= 8) { EndJob(name + " kept missing the " + Noun(j.Kind) + " (last swing hit " + j.LastHit + ") and gave up."); return; }
-                    if (j.Misses >= 2 && j.Misses % 2 == 0 && !j.Stepped)
+                    // m0j: a player misses twice at most, then gives up (something in the way, like a
+                    // truck bed in front of a barrel). After the first miss it steps in once.
+                    if (j.TotalMisses >= 2) { EndJob(name + " missed the " + Noun(j.Kind) + " twice (last swing hit " + j.LastHit + ") and gave up."); return; }
+                    if (j.Misses >= 1 && !j.Stepped)
                     {
-                        // Two misses in a row: out of the tool's reach, or something in the way. Step in.
+                        // A miss: out of the tool's reach, or something in the way. Step in.
                         j.Stepped = true;
                         var toward = t.transform.position - bot.transform.position;
                         toward.y = 0f;
                         walker.WalkStraight(bot.transform.position + toward.normalized * 0.6f);
                         return;
                     }
-                    if (j.Misses % 2 == 1) j.Stepped = false;
                     var melee = EquipTool(j);
                     if (melee == null) return; // switching, or EndJob already said why
                     if (melee.HasAttackCooldown()) return;
                     Swing(j, melee);
+                    return;
+
+                case "grab":
+                    if (gone) { EndJob(name + " found the " + Noun(j.Kind) + " already gone."); return; }
+                    walker.Face(t.CenterPoint());
+                    if (!j.Opened) { j.Opened = true; j.Next = Time.time + 0.4f; return; } // turn to it first
+                    var grabbed = t.ShortPrefabName;
+                    var no = Collect(t as CollectibleEntity);
+                    EndJob(no == null ? name + " picked up the " + grabbed + "." : name + " could not pick up the " + grabbed + ": " + no + ".");
                     return;
 
                 case "pickup":
@@ -2340,7 +3156,16 @@ namespace Oxide.Plugins
                 p.y = Mathf.Max(p.y + 0.5f, eyes.y - 0.4f);
                 return p;
             }
-            return t.CenterPoint();
+            // Like a player, aim at a part it can actually reach: a barrel on a truck bed has the
+            // bed's edge between its middle and the eyes, but its top half is in plain view.
+            var c = t.CenterPoint();
+            var side = Vector3.Cross(Vector3.up, c - eyes).normalized;
+            foreach (var p in new[] { c, c + Vector3.up * 0.25f, c + Vector3.up * 0.45f, c + side * 0.2f, c - side * 0.2f, c + Vector3.up * 0.3f + side * 0.15f, c + Vector3.up * 0.3f - side * 0.15f })
+            {
+                RaycastHit hit;
+                if (!Physics.Linecast(eyes, p, out hit, SightMask, QueryTriggerInteraction.Ignore) || hit.GetEntity() == t) return p;
+            }
+            return c;
         }
 
         private void Swing(Job j, BaseMelee melee)
@@ -2359,6 +3184,7 @@ namespace Oxide.Plugins
                 var hit = Strike(melee);
                 if (hit == t) { j.Misses = 0; return; }
                 j.Misses++;
+                j.TotalMisses++;
                 j.LastHit = hit == null ? "nothing" : hit is BasePlayer ? ((BasePlayer)hit).displayName : hit.ShortPrefabName;
                 Puts(saved.Name + "'s swing at the " + Noun(j.Kind) + " hit " + j.LastHit + " instead");
             });
@@ -2497,6 +3323,20 @@ namespace Oxide.Plugins
         private void CloseLoot()
         {
             if (bot.inventory.loot.IsLooting()) bot.inventory.loot.Clear();
+        }
+
+        // Hemp, mushrooms, stones and the like on the ground: CollectibleEntity.Pickup, the
+        // handler the client's "pick up" calls (rule IsVisible(3)).
+        private string Collect(CollectibleEntity ce)
+        {
+            if (ce == null) return "it is not something you pick up";
+            if (!BaseEntity.RPC_Server.IsVisible.Test(0u, "Pickup", ce, bot, 3f)) return "it is not within 3 m in plain sight";
+            var handler = FindMethod(ce.GetType(), "Pickup");
+            if (handler == null) return "it has no pickup handler";
+            handler.Invoke(ce, new object[] { FromBot() });
+            if (!ce.IsDestroyed) return "the game refused the pickup";
+            if (job != null) job.Taken++;
+            return null;
         }
 
         // The pickup button: WorldItem.Pickup, rule IsVisible(3). A dropped bag is opened and
