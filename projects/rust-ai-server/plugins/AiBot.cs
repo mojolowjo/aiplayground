@@ -1666,7 +1666,15 @@ namespace Oxide.Plugins
             chaser = null;
         }
 
-        private bool ChaserAlive => chaser != null && !chaser.IsDestroyed && chaser.IsAlive();
+        private static void ArmChaser(BasePlayer p)
+        {
+            if (p.GetHeldEntity() is BaseProjectile) return;
+            if (p.inventory.containerBelt.GetSlot(0) == null) Give(p, "pistol.nailgun", p.inventory.containerBelt);
+            var gunItem = p.inventory.containerBelt.GetSlot(0);
+            if (gunItem != null) p.UpdateActiveItem(gunItem.uid);
+        }
+
+        private bool ChaserAlive =>chaser != null && !chaser.IsDestroyed && chaser.IsAlive();
 
         private bool SpawnChaser(Vector3 pos)
         {
@@ -1683,6 +1691,8 @@ namespace Oxide.Plugins
             p.displayName = "Dusty";
             p.InitializeHealth(100f, 100f);
             foreach (var item in Clothes) Give(p, item, p.inventory.containerWear);
+            // A real nail gun in its hands, so you see it holding one and hear/see each shot.
+            ArmChaser(p);
             chaser = p;
             chaserWalker = p.gameObject.AddComponent<Walker>();
             chaserWalker.Init(p, 0f, false);
@@ -1969,6 +1979,67 @@ namespace Oxide.Plugins
             FireNailAt(now, bot, () => crouched, sure);
         }
 
+        private const float NailGravity = 0.75f, NailDrag = 0.005f, NailStep = 0.05f;
+
+        // The nail in flight, 0.05 s at a time: it hits the target if it passes within 0.45 m of
+        // its body (feet to head, lower when crouched) where the target is at that moment, and
+        // stops at the first solid thing (ground, rock, wall) in its way. Gone after 2 s.
+        private void FlyNail(Vector3 pos, Vector3 vel, BasePlayer victim, Func<bool> low, Action hit, float age)
+        {
+            if (age > 2f || victim == null || victim.IsDestroyed || victim.IsDead() || !ChaserAlive) return;
+            var next = pos + vel * NailStep;
+            var feet = victim.transform.position + Vector3.up * 0.1f;
+            var head = victim.transform.position + Vector3.up * (low() ? 1.2f : 1.85f);
+            RaycastHit wall;
+            var blocked = Physics.Linecast(pos, next, out wall, SightMask, QueryTriggerInteraction.Ignore);
+            var end = blocked ? wall.point : next;
+            if (SegmentGap(pos, end, feet, head) < 0.45f) { hit(); return; }
+            if (blocked) return;
+            var nvel = vel + Physics.gravity * NailGravity * NailStep;
+            nvel -= nvel * NailDrag * NailStep;
+            timer.Once(NailStep, () => FlyNail(next, nvel, victim, low, hit, age + NailStep));
+        }
+
+        // Shortest distance between two line segments (the nail's step and the body's axis).
+        private static float SegmentGap(Vector3 p1, Vector3 q1, Vector3 p2, Vector3 q2)
+        {
+            Vector3 d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
+            float a = Vector3.Dot(d1, d1), e = Vector3.Dot(d2, d2), f = Vector3.Dot(d2, r);
+            float s, t;
+            if (a < 1e-6f) { s = 0f; t = e > 1e-6f ? Mathf.Clamp01(f / e) : 0f; }
+            else
+            {
+                var c = Vector3.Dot(d1, r);
+                if (e < 1e-6f) { t = 0f; s = Mathf.Clamp01(-c / a); }
+                else
+                {
+                    var b = Vector3.Dot(d1, d2);
+                    var den = a * e - b * b;
+                    s = den > 1e-6f ? Mathf.Clamp01((b * f - c * e) / den) : 0f;
+                    t = (b * s + f) / e;
+                    if (t < 0f) { t = 0f; s = Mathf.Clamp01(-c / a); }
+                    else if (t > 1f) { t = 1f; s = Mathf.Clamp01((b - c) / a); }
+                }
+            }
+            return Vector3.Distance(p1 + d1 * s, p2 + d2 * t);
+        }
+
+        // What players see and hear: the gun's own fire signal (shot sound, muzzle flash, recoil
+        // animation) and the nail itself drawn by their game, flying with the same speed and drop.
+        private void ShowShot(Vector3 muzzle, Vector3 vel)
+        {
+            var gun = chaser?.GetHeldEntity() as BaseProjectile;
+            if (gun == null) return;
+            try
+            {
+                gun.SignalBroadcast(BaseEntity.Signal.Attack, string.Empty);
+                var ammo = ItemManager.FindItemDefinition("ammo.nailgun.nails")?.GetComponent<ItemModProjectile>();
+                if (ammo != null && ammo.projectileObject != null)
+                    gun.CreateProjectileEffectClientside(ammo.projectileObject.resourcePath, muzzle, vel, UnityEngine.Random.Range(0, int.MaxValue), null, false, true);
+            }
+            catch (Exception e) { Puts("shot effect failed: " + e.Message); }
+        }
+
         // One nail from Dusty at a player (Kestrel, or a person in /bot hunt). The same rules
         // for both, so a person's run can be compared with the bot's.
         private void FireNailAt(float now, BasePlayer victim, Func<bool> low, bool sure, Action onHit = null)
@@ -1986,23 +2057,21 @@ namespace Oxide.Plugins
             var right = Vector3.Cross(Vector3.up, fwd).normalized;
             var up = Vector3.Cross(fwd, right);
             var aim = target + right * off.x + up * off.y;
-            timer.Once(dist / NailSpeed, () =>
+            // m0j: "just like the normal nail gun with the bullet speed and drop". The nail flies
+            // at 50 m/s and falls with the game's gravity for nails (x0.75), with its drag; a
+            // person aims a little high for the drop at that range, but doesn't lead a runner.
+            var flight = dist / NailSpeed;
+            var lift = 0.5f * -Physics.gravity.y * NailGravity * flight * flight;
+            var vel = ((aim + Vector3.up * lift) - muzzle).normalized * NailSpeed;
+            ShowShot(muzzle, vel);
+            Action hit = () =>
             {
-                if (victim == null || victim.IsDestroyed || victim.IsDead() || !ChaserAlive) return;
-                var body = victim.transform.position;
-                var path = aim - muzzle;
-                var flatPath = new Vector2(path.x, path.z);
-                var rel = new Vector2(body.x - muzzle.x, body.z - muzzle.z);
-                var k = flatPath.sqrMagnitude > 0.01f ? Mathf.Clamp(Vector2.Dot(rel, flatPath) / flatPath.sqrMagnitude, 0f, 1.5f) : 1f;
-                var p = muzzle + path * k;
-                var side = (new Vector2(p.x, p.z) - new Vector2(body.x, body.z)).magnitude;
-                var h = p.y - body.y;
-                if (!sure && (side > 0.45f || h < 0f || h > (low() ? 1.2f : 1.85f))) return; // missed: it moved off the line
-                if (!sure && Physics.Linecast(muzzle, p, SightMask, QueryTriggerInteraction.Ignore)) return; // into cover
                 chaserHits++;
                 victim.Hurt(new HitInfo(chaser, victim, Rust.DamageType.Arrow, NailDamage));
                 onHit?.Invoke();
-            });
+            };
+            if (sure) { timer.Once(flight, () => { if (victim != null && !victim.IsDestroyed && !victim.IsDead() && ChaserAlive) hit(); }); return; }
+            FlyNail(muzzle, vel, victim, low, hit, 0f);
         }
 
         #region Hunt (m0j: "have a bot chase me with a nail gun ... see if I can do better than the bot")
@@ -2057,6 +2126,7 @@ namespace Oxide.Plugins
             if (!have) return "Couldn't find a spot for Dusty near you; move somewhere more open and try again.";
             if (!ChaserAlive) { if (!SpawnChaser(best)) return "Couldn't spawn Dusty."; }
             else { chaserWalker.TeleportTo(best); chaser.health = chaser.MaxHealth(); }
+            ArmChaser(chaser);
             chaserWalker.Face(at + Vector3.up * 1.2f);
             huntTarget = player;
             huntRunning = true;
