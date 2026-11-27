@@ -2088,7 +2088,7 @@ namespace Oxide.Plugins
             public List<RoamStop> Stops = new List<RoamStop>();
             public RoamStop Current;
             public float Started, Until, NextLook, PauseUntil;
-            public int Detours, Looted, Plans, Want, FoodBefore;
+            public int Detours, Looted, Plans, Want, FoodBefore, OffGathers;
             public bool GoingHome, InDanger;
             public Dictionary<string, int> Before;
             public string JobFor, JobKind; // why the running job was started (detour, monument, goal)
@@ -2313,7 +2313,7 @@ namespace Oxide.Plugins
                 if (r.Stops.Count == 0)
                 {
                     if (r.GoingHome) { EndRoam("back home"); return; }
-                    if (r.Reason == "none" || r.Plans >= 3) { GoHome("ran out of places to go"); return; }
+                    if (r.Plans >= (r.Reason == "none" ? 2 : 3)) { GoHome("ran out of places to go"); return; }
                     Replan("plan done, still wants " + WantWords());
                     return;
                 }
@@ -2417,7 +2417,7 @@ namespace Oxide.Plugins
             if (e is ResourceEntity)
             {
                 var g = GatherOf(e);
-                if (g == ResourceDispenser.GatherType.Tree) return "tree";
+                if (g == ResourceDispenser.GatherType.Tree) return n.Contains("sapling") ? null : "tree";
                 if (g == ResourceDispenser.GatherType.Ore) return "ore node";
             }
             return null;
@@ -2437,10 +2437,12 @@ namespace Oxide.Plugins
                 case "food crate": return reason == "food" ? 0.95f : 0.4f;
                 case "food plant": return reason == "food" ? 0.75f : 0.15f;
                 case "hemp": return 0.15f;
-                case "wood pile": return reason == "wood" ? 0.8f : 0.08f;
-                case "stones": return reason == "stone" ? 0.8f : 0.08f;
-                case "tree": return reason == "wood" ? 0f : 0.02f;
-                case "ore node": return reason == "stone" ? 0f : 0.03f;
+                // Every tree and pile it passes gets a roll, so these are kept very low; on top of
+                // that, at most one wood or stone detour per roam that isn't for wood or stone.
+                case "wood pile": return reason == "wood" ? 0.8f : 0.03f;
+                case "stones": return reason == "stone" ? 0.8f : 0.03f;
+                case "tree": return reason == "wood" ? 0f : 0.004f;
+                case "ore node": return reason == "stone" ? 0f : 0.008f;
             }
             return 0.1f;
         }
@@ -2469,6 +2471,9 @@ namespace Oxide.Plugins
                 if (!Sees(e)) continue;
                 r.Considered.Add(e);
                 var d = Vector3.Distance(bot.transform.position, e.transform.position);
+                var gather = thing == "tree" || thing == "ore node" || thing == "wood pile" || thing == "stones";
+                var forIt = (r.Reason == "wood" && (thing == "tree" || thing == "wood pile")) || (r.Reason == "stone" && (thing == "ore node" || thing == "stones"));
+                if (gather && !forIt && r.OffGathers >= 1) continue;
                 var chance = DetourChance(thing, r.Reason) * (r.GoingHome ? 0.6f : 1f) / (1f + 0.12f * r.Detours) * (0.6f + 0.4f * (1f - d / radius));
                 if (UnityEngine.Random.value < chance && d < pickDist) { pick = e; pickThing = thing; pickDist = d; }
             }
@@ -2476,6 +2481,7 @@ namespace Oxide.Plugins
             walker.Halt();
             if (!RoamJob(JobKindOf(pickThing), pick, "detour")) return false;
             r.Detours++;
+            if ((pickThing == "tree" || pickThing == "ore node" || pickThing == "wood pile" || pickThing == "stones") && r.Reason != "wood" && r.Reason != "stone") r.OffGathers++;
             Note("saw a " + pickThing + " " + pickDist.ToString("0") + " m away and went for it" + (r.Current != null ? " (on the way to " + r.Current.Name + ")" : ""));
             return true;
         }
@@ -2491,7 +2497,12 @@ namespace Oxide.Plugins
         private bool RoamJob(string kind, BaseEntity target, string why)
         {
             var said = StartJob(kind, null, target);
-            if (job == null) { Note("wanted the " + target.ShortPrefabName + " but: " + said); return false; }
+            if (job == null)
+            {
+                badTargets[target] = Time.time + 300f; // no way to it from here: leave it alone a few minutes
+                Note("wanted the " + target.ShortPrefabName + " but: " + said);
+                return false;
+            }
             roam.JobFor = why;
             roam.JobKind = kind;
             return true;
@@ -2672,7 +2683,7 @@ namespace Oxide.Plugins
                 }
             }
             var cursor = stops.Count > 0 ? stops[stops.Count - 1].Pos : from;
-            var extra = stops.Count == 0 ? UnityEngine.Random.Range(2, 4) : stops.Count < 4 ? UnityEngine.Random.Range(0, 2) : 0;
+            var extra = stops.Count == 0 ? UnityEngine.Random.Range(2, 4) : stops.Count < 3 ? UnityEngine.Random.Range(1, 3) : stops.Count < 5 ? UnityEngine.Random.Range(0, 2) : 0;
             for (var i = 0; i < extra && stops.Count < 6; i++)
             {
                 for (var t = 0; t < 6; t++)
