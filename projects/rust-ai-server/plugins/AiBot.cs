@@ -348,14 +348,16 @@ namespace Oxide.Plugins
         {
             if (user == null) return "Only works in game.";
             RaycastHit aim;
-            if (!Physics.Raycast(user.eyes.HeadRay(), out aim, 400f, LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed"), QueryTriggerInteraction.Ignore))
+            if (!Physics.Raycast(user.eyes.HeadRay(), out aim, 400f, LayerMask.GetMask("Terrain", "World", "Default", "Construction", "Deployed", "Vehicle Large"), QueryTriggerInteraction.Ignore))
                 return "Point your crosshair at the ground (within 400 m).";
             Vector3 spot;
             // The exact spot you point at, if a player could stand there (flat enough, room
             // for the body). The navigation map leaves out thin things like the top of a half
             // wall, so its nearest point would be the ground beside it.
             var standable = Vector3.Angle(aim.normal, Vector3.up) <= 50f
-                && !Physics.CheckCapsule(aim.point + Vector3.up * 0.55f, aim.point + Vector3.up * 1.4f, 0.4f, LayerMask.GetMask("World", "Default", "Construction", "Deployed", "Tree"), QueryTriggerInteraction.Ignore);
+                // Room for the body above step height (0.5 m, what it can step over): on stairs
+                // the next step up is within reach and shouldn't count as "no room".
+                && !Physics.CheckCapsule(aim.point + Vector3.up * 0.85f, aim.point + Vector3.up * 1.45f, 0.35f, LayerMask.GetMask("World", "Default", "Construction", "Deployed", "Tree", "Vehicle Large", "Vehicle World"), QueryTriggerInteraction.Ignore);
             if (standable) spot = aim.point;
             else if (!Walker.Nearest(aim.point, 6f, out spot)) return "That spot isn't walkable.";
             EndJob(null);
@@ -3416,7 +3418,7 @@ namespace Oxide.Plugins
                             if (Vector3.Angle(h.normal, Vector3.up) > 50f) continue;
                             var p = h.point;
                             if (WaterDepth(p) > MaxWater) continue;
-                            if (Physics.CheckCapsule(p + Vector3.up * 0.55f, p + Vector3.up * 1.45f, 0.4f, BlockMask, QueryTriggerInteraction.Ignore)) continue; // no room for a player here
+                            if (Physics.CheckCapsule(p + Vector3.up * 0.85f, p + Vector3.up * 1.45f, 0.35f, BlockMask, QueryTriggerInteraction.Ignore)) continue; // no room for a player here (above step height, so stairs count)
                             var list = cols[ix, iz] ?? (cols[ix, iz] = new List<Node>());
                             if (list.Any(o => Mathf.Abs(o.Y - p.y) < 0.3f)) continue;
                             var node = new Node { X = ix, Z = iz, Y = p.y, Id = nodes.Count };
