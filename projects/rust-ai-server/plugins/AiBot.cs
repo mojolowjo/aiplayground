@@ -72,7 +72,9 @@ namespace Oxide.Plugins
             KeepIdsReserved();
             LoadOdds();
             Walker.DoorUse = (d, open) => UseDoor(d, open);
-            if (Train().SelfPlay) timer.Once(10f, () => { if (Alive) ProbeLine("resuming after a reload: " + SelfPlayCommand("on")); });
+            try { scen = Interface.Oxide.DataFileSystem.ReadObject<Scenarios>(ScenarioFile); } catch { scen = null; }
+            if (scen != null && !scen.Running) scen = null;
+            if (Train().SelfPlay) timer.Once(10f,() => { if (Alive) ProbeLine("resuming after a reload: " + SelfPlayCommand("on")); });
             Walker.DoorOpenable = d => CanOpen(d, bot);
             jobTimer = timer.Every(0.2f, TickJob);
             brainTimer = timer.Every(0.5f, BrainTick);
@@ -432,6 +434,7 @@ namespace Oxide.Plugins
             if (verb == "train") { SendReply(player, TrainCommand(args.Length > 1 ? args[1].ToLowerInvariant() : "")); return; }
             if (verb == "selfplay") { SendReply(player, SelfPlayCommand(args.Length > 1 ? args[1].ToLowerInvariant() : "")); return; }
             if (verb == "set") { SendReply(player, SetOdd(args.Skip(1).ToArray())); return; }
+            if (verb == "test") { SendReply(player, ScenarioCommand(args.Length > 1 ? args[1].ToLowerInvariant() : "")); return; }
             SendReply(player, Run(verb, player));
         }
 
@@ -440,6 +443,13 @@ namespace Oxide.Plugins
         {
             if (arg.Connection != null && !arg.IsAdmin) return;
             arg.ReplyWith(SelfPlayCommand((arg.GetString(0) ?? "").ToLowerInvariant()));
+        }
+
+        [ConsoleCommand("aibot.test")]
+        private void ConTest(ConsoleSystem.Arg arg)
+        {
+            if (arg.Connection != null && !arg.IsAdmin) return;
+            arg.ReplyWith(ScenarioCommand((arg.GetString(0) ?? "").ToLowerInvariant()));
         }
 
         [ConsoleCommand("aibot.train")]
@@ -944,6 +954,15 @@ namespace Oxide.Plugins
             else if (d.Spoiled != null) invalid = d.Spoiled;
             var window = Mathf.Min(secs, 30f);
             var score = ScoreOf(d.SeenTime, secs, d.Hits, died);
+            if (d.SelfPlay && ScenarioOn && scenRound >= 0)
+            {
+                // Same-spot test rounds go to their own file, not the training data.
+                selfPlayRounds++;
+                if (invalid == null) selfPlayValid++;
+                else { int n0; invalidReasons.TryGetValue(invalid.Split('(')[0].Trim(), out n0); invalidReasons[invalid.Split('(')[0].Trim()] = n0 + 1; }
+                Puts("[test] " + ScenarioRecord(d, secs, score, died, ended, invalid));
+                return;
+            }
             var t = Train();
             var chase = new Chase
             {
@@ -1088,7 +1107,8 @@ namespace Oxide.Plugins
                 walker.Working = false;
                 Puts("[danger] " + saved.Name + " was hit by " + d.Attacker.displayName + ", reacted after " + ((d.ReactAt - d.Started) * 1000f).ToString("0") + " ms; running for cover.");
                 d.LastTick = now;
-                if (Train().On) { d.Trial = NextTrial(); ApplyFlee(d.Trial); }
+                if (d.SelfPlay && ScenarioOn) ApplyFlee(scen.Settings); // same-spot test: fixed settings, only the rules change
+                else if (Train().On) { d.Trial = NextTrial(); ApplyFlee(d.Trial); }
             }
             if (bot.health < d.LastHealth) d.Damage += d.LastHealth - bot.health;
             d.LastHealth = bot.health;
@@ -1107,7 +1127,8 @@ namespace Oxide.Plugins
             if (seen) d.HiddenSince = -1f;
             else if (d.HiddenSince < 0f) d.HiddenSince = now;
 
-            if (!seen && now - d.HiddenSince >= CalmAfter) { CalmDown(gone ? "the attacker is gone" : "out of sight for " + CalmAfter + " s"); return; }
+            var hideNeeded = d.SelfPlay ? HideNeeded : CalmAfter;
+            if (!seen && now - d.HiddenSince >= hideNeeded) { CalmDown(gone ? "the attacker is gone" : "out of sight for " + hideNeeded + " s"); return; }
 
             // Re-pick cover twice a second while it can be seen, or when it got where it was going.
             if (now < d.NextPick) return;
@@ -1524,8 +1545,135 @@ namespace Oxide.Plugins
             EndRound(null);
         }
 
+        // Same-spot test (/bot test start|stop|status, m0j's idea): 5 spots, and on each spot 5 reps
+        // of three rule sets in turn: normal (hidden 10 s ends it), hidden 20 s, and hidden 20 s
+        // with Dusty pointed once at roughly where Kestrel is after it loses it. Kestrel uses the
+        // best settings with training paused; results go to AiBotScenarios.json. Only clean rounds
+        // move it on; a new spot that keeps failing is swapped for another.
+        private const string ScenarioFile = "AiBotScenarios";
+        private static readonly string[] ScenarioTests = { "normal", "hide 20 s", "hide 20 s + hint" };
+        private const int ScenarioSpots = 5, ScenarioReps = 5;
+
+        private class ScenarioSpot { public float KX, KY, KZ, DX, DY, DZ; }
+
+        private class ScenarioRound
+        {
+            public string When, Test, Ended, Reason;
+            public int Spot, Rep, Hits;
+            public float Seconds, SeenSeconds, Score, EndDistance;
+            public bool Died, Hinted, FoundAfterHint, Counted;
+        }
+
+        private class Scenarios
+        {
+            public bool Running;
+            public int Next;
+            public Dictionary<string, float> Settings;
+            public List<ScenarioSpot> Spots = new List<ScenarioSpot>();
+            public List<ScenarioRound> Rounds = new List<ScenarioRound>();
+        }
+
+        private Scenarios scen;
+        private int scenRound = -1, scenFails;
+        private bool hintUsed, foundAfterHint;
+
+        private static int ScenarioTotal => ScenarioSpots * ScenarioReps * 3;
+        private static int ScenTest(int i) => i % 3;
+        private static int ScenSpot(int i) => i / (ScenarioReps * 3);
+        private static int ScenRep(int i) => i / 3 % ScenarioReps;
+        private bool ScenarioOn => scen != null && scen.Running && selfPlayOn;
+        private float HideNeeded => ScenarioOn && scenRound >= 0 && ScenTest(scenRound) > 0 ? 20f : CalmAfter;
+        private bool HintRound => ScenarioOn && scenRound >= 0 && ScenTest(scenRound) == 2;
+
+        private void SaveScen() { if (scen != null) Interface.Oxide.DataFileSystem.WriteObject(ScenarioFile, scen); }
+
+        private string ScenarioCommand(string arg)
+        {
+            if (arg == "start")
+            {
+                if (!Alive) return "Kestrel isn't alive; /bot spawn first.";
+                if (danger != null && danger.SelfPlay) { danger.Spoiled = "same-spot test started"; CalmDown("same-spot test started"); }
+                var t = Train();
+                scen = new Scenarios { Running = true, Settings = new Dictionary<string, float>(t.Best ?? CurrentFlee()) };
+                scenRound = -1; scenFails = 0;
+                SaveScen();
+                if (!selfPlayOn) SelfPlayCommand("on");
+                else EndRound(null);
+                ProbeLine("[test] same-spot test started: " + ScenarioTotal + " rounds");
+                return "Same-spot test started: " + ScenarioSpots + " spots x " + ScenarioReps + " reps x 3 rule sets (" + string.Join(", ", ScenarioTests) + "), best settings fixed, training paused. Results: carbon\\data\\" + ScenarioFile + ".json. /bot test for progress.";
+            }
+            if (arg == "stop")
+            {
+                if (scen != null) { scen.Running = false; SaveScen(); }
+                scenRound = -1;
+                return "Same-spot test stopped; normal self-play training goes on. " + ScenarioSummary();
+            }
+            if (scen == null) { try { scen = Interface.Oxide.DataFileSystem.ReadObject<Scenarios>(ScenarioFile); } catch { } }
+            return ScenarioSummary();
+        }
+
+        private string ScenarioSummary()
+        {
+            if (scen == null || (scen.Rounds.Count == 0 && !scen.Running)) return "No same-spot test yet. /bot test start";
+            var sb = new StringBuilder();
+            var n = Mathf.Min(scen.Next, ScenarioTotal);
+            sb.Append("Same-spot test " + (scen.Running ? "running" : "not running") + ": " + n + " of " + ScenarioTotal + " rounds done" + (scen.Running ? ", now spot " + (ScenSpot(n) + 1) + " rep " + (ScenRep(n) + 1) + " (" + ScenarioTests[ScenTest(n)] + ")" : ""));
+            foreach (var name in ScenarioTests)
+            {
+                var rs = scen.Rounds.Where(r => r.Counted && r.Test == name).ToList();
+                if (rs.Count == 0) continue;
+                sb.Append("\n" + name + ": " + rs.Count + " rounds, got away " + rs.Count(r => !r.Died && r.Ended != null && r.Ended.StartsWith("out of sight")) + ", died " + rs.Count(r => r.Died)
+                    + ", avg score " + rs.Average(r => r.Score).ToString("0.00") + ", in view " + (100f * rs.Sum(r => r.SeenSeconds) / Mathf.Max(1f, rs.Sum(r => r.Seconds))).ToString("0") + "%"
+                    + ", avg length " + rs.Average(r => r.Seconds).ToString("0") + " s"
+                    + (name.EndsWith("hint") ? ", found again after the hint " + rs.Count(r => r.FoundAfterHint) + " of " + rs.Count(r => r.Hinted) : ""));
+            }
+            return sb.ToString();
+        }
+
+        private string ScenarioRecord(Danger d, float secs, float score, bool died, string ended, string invalid)
+        {
+            var i = scenRound;
+            scenRound = -1;
+            var r = new ScenarioRound
+            {
+                When = DateTime.UtcNow.ToString("u"), Spot = ScenSpot(i) + 1, Rep = ScenRep(i) + 1, Test = ScenarioTests[ScenTest(i)],
+                Seconds = (float)Math.Round(secs, 1), SeenSeconds = (float)Math.Round(d.SeenTime, 1), Score = (float)Math.Round(score, 3), Hits = d.Hits,
+                Died = died, Ended = ended, Hinted = hintUsed, FoundAfterHint = foundAfterHint, Counted = invalid == null, Reason = invalid,
+                EndDistance = ChaserAlive && Alive ? (float)Math.Round(Vector3.Distance(chaser.transform.position, bot.transform.position), 1) : -1f,
+            };
+            scen.Rounds.Add(r);
+            ScenarioAdvance(i, invalid == null);
+            return "spot " + r.Spot + " rep " + r.Rep + " (" + r.Test + "): in view " + r.SeenSeconds + " of " + r.Seconds + " s, " + r.Hits + " hits" + (died ? ", died" : "") + (r.Hinted ? ", hint given" + (r.FoundAfterHint ? ", found again" : ", not found") : "")
+                + " -> score " + r.Score.ToString("0.00") + (invalid != null ? "; NOT COUNTED: " + invalid : "");
+        }
+
+        private void ScenarioAdvance(int i, bool ok)
+        {
+            if (ok) { scen.Next = i + 1; scenFails = 0; }
+            else if (++scenFails >= 4)
+            {
+                scenFails = 0;
+                // The first round on a new spot keeps failing: that spot is no good, find another.
+                if (i % (ScenarioReps * 3) == 0 && ScenSpot(i) < scen.Spots.Count) { scen.Spots.RemoveAt(ScenSpot(i)); ProbeLine("[test] dropped spot " + (ScenSpot(i) + 1) + ": it kept failing"); }
+                else { scen.Next = i + 1; ProbeLine("[test] skipped round " + (i + 1) + " after 4 failed tries"); }
+            }
+            if (scen.Next >= ScenarioTotal)
+            {
+                scen.Running = false;
+                ProbeLine("[test] same-spot test finished. " + ScenarioSummary());
+                Puts("[test] same-spot test finished. " + ScenarioSummary());
+            }
+            SaveScen();
+        }
+
         private void EndRound(string noChase)
         {
+            if (noChase != null && ScenarioOn && scenRound >= 0)
+            {
+                var i0 = scenRound;
+                scenRound = -1;
+                ScenarioAdvance(i0, false);
+            }
             if (noChase != null)
             {
                 selfPlayRounds++;
@@ -1546,6 +1694,19 @@ namespace Oxide.Plugins
             walker.SetRoaming(false);
             Vector3 spot = Vector3.zero;
             var found = false;
+            Vector3 best = Vector3.zero;
+            var haveBest = false;
+            scenRound = -1;
+            hintUsed = foundAfterHint = false;
+            // Same-spot test: reuse this spot's saved starts once it has them.
+            var scenNow = ScenarioOn && scen.Next < ScenarioTotal;
+            if (scenNow && ScenSpot(scen.Next) < scen.Spots.Count)
+            {
+                var s0 = scen.Spots[ScenSpot(scen.Next)];
+                spot = new Vector3(s0.KX, s0.KY, s0.KZ);
+                best = new Vector3(s0.DX, s0.DY, s0.DZ);
+                found = haveBest = true;
+            }
             // Random places inland (spawn points are all on beaches, with nothing to hide behind).
             var half = World.Size / 2f - 150f;
             for (var i = 0; i < 30 && !found; i++)
@@ -1561,9 +1722,8 @@ namespace Oxide.Plugins
             bot.health = bot.MaxHealth();
             bot.metabolism.calories.value = bot.metabolism.calories.max;
             bot.metabolism.hydration.value = bot.metabolism.hydration.max;
-            Vector3 best = Vector3.zero;
-            var haveBest = false;
-            for (var i = 0; i < 16; i++)
+            var fixedStart = haveBest;
+            for (var i = 0; i < 16 && !fixedStart; i++)
             {
                 var dir = Quaternion.Euler(0f, UnityEngine.Random.Range(0f, 360f), 0f) * Vector3.forward;
                 Vector3 c;
@@ -1572,6 +1732,13 @@ namespace Oxide.Plugins
                 if (CanSee(c + Vector3.up * 1.5f, spot)) { best = c; break; }
             }
             if (!haveBest) return false;
+            if (scenNow)
+            {
+                if (ScenSpot(scen.Next) >= scen.Spots.Count)
+                    scen.Spots.Add(new ScenarioSpot { KX = spot.x, KY = spot.y, KZ = spot.z, DX = best.x, DY = best.y, DZ = best.z });
+                scenRound = scen.Next;
+                SaveScen();
+            }
             if (!ChaserAlive) { if (!SpawnChaser(best)) return false; }
             else { chaserWalker.TeleportTo(best); chaser.health = chaser.MaxHealth(); }
             lastSeen = prevSeen = spot;
@@ -1595,6 +1762,7 @@ namespace Oxide.Plugins
             var visible = dist < 80f && CanSee(chaser.eyes.position, them);
             if (visible)
             {
+                if (hintUsed) foundAfterHint = true;
                 if (Vector3.Distance(them, lastSeen) > 2f) prevSeen = lastSeen;
                 lastSeen = them;
                 lastSeenAt = now;
@@ -1614,6 +1782,15 @@ namespace Oxide.Plugins
             Vector3 goal;
             if (visible) { if (dist < 5f) { chaserWalker.Halt(); return; } goal = them; }
             else if (Vector3.Distance(me, lastSeen) > 3f) goal = lastSeen;
+            else if (HintRound && !hintUsed && roundHadChase)
+            {
+                // Same-spot test 3: lost it, so point Dusty once at roughly where Kestrel is (within 10 m).
+                hintUsed = true;
+                var off = UnityEngine.Random.insideUnitCircle * 10f;
+                goal = them + new Vector3(off.x, 0f, off.y);
+                prevSeen = lastSeen;
+                lastSeen = goal;
+            }
             else
             {
                 // At the last seen spot and nothing: carry on the way it was going.
