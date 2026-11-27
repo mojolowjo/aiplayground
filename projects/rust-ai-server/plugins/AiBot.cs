@@ -1984,20 +1984,35 @@ namespace Oxide.Plugins
         // The nail in flight, 0.05 s at a time: it hits the target if it passes within 0.45 m of
         // its body (feet to head, lower when crouched) where the target is at that moment, and
         // stops at the first solid thing (ground, rock, wall) in its way. Gone after 2 s.
-        private void FlyNail(Vector3 pos, Vector3 vel, BasePlayer victim, Func<bool> low, Action hit, float age)
+        // Players' bodies as the server sees them (the collider the game itself hits and moves).
+        private static readonly int BodyMask = LayerMask.GetMask("Player (Server)", "AI");
+
+        private void FlyNail(Vector3 pos, Vector3 vel, BasePlayer victim, Action onHit, float age)
         {
-            if (age > 2f || victim == null || victim.IsDestroyed || victim.IsDead() || !ChaserAlive) return;
+            if (age > 2f || !ChaserAlive) return;
             var next = pos + vel * NailStep;
-            var feet = victim.transform.position + Vector3.up * 0.1f;
-            var head = victim.transform.position + Vector3.up * (low() ? 1.2f : 1.85f);
-            RaycastHit wall;
-            var blocked = Physics.Linecast(pos, next, out wall, SightMask, QueryTriggerInteraction.Ignore);
-            var end = blocked ? wall.point : next;
-            if (SegmentGap(pos, end, feet, head) < 0.45f) { hit(); return; }
-            if (blocked) return;
+            RaycastHit hit;
+            if (Physics.Linecast(pos, next, out hit, SightMask | BodyMask, QueryTriggerInteraction.Ignore))
+            {
+                // The first thing in the nail's way: ground, a wall, or someone's body.
+                var who = hit.GetEntity() as BaseCombatEntity;
+                if (who != null && who != chaser && !who.IsDead())
+                {
+                    var gun = chaser.GetHeldEntity() as BaseProjectile;
+                    var info = new HitInfo(chaser, who, Rust.DamageType.Arrow, NailDamage, hit.point);
+                    info.Weapon = gun;
+                    info.WeaponPrefab = gun;
+                    info.HitNormalWorld = hit.normal;
+                    info.ProjectileVelocity = vel;
+                    who.OnAttacked(info); // the same entry point a player's nail hit goes through
+                    chaserHits++;
+                    if (who == victim) onHit?.Invoke();
+                }
+                return;
+            }
             var nvel = vel + Physics.gravity * NailGravity * NailStep;
             nvel -= nvel * NailDrag * NailStep;
-            timer.Once(NailStep, () => FlyNail(next, nvel, victim, low, hit, age + NailStep));
+            timer.Once(NailStep, () => FlyNail(next, nvel, victim, onHit, age + NailStep));
         }
 
         // Shortest distance between two line segments (the nail's step and the body's axis).
@@ -2064,14 +2079,10 @@ namespace Oxide.Plugins
             var lift = 0.5f * -Physics.gravity.y * NailGravity * flight * flight;
             var vel = ((aim + Vector3.up * lift) - muzzle).normalized * NailSpeed;
             ShowShot(muzzle, vel);
-            Action hit = () =>
-            {
-                chaserHits++;
-                victim.Hurt(new HitInfo(chaser, victim, Rust.DamageType.Arrow, NailDamage));
-                onHit?.Invoke();
-            };
-            if (sure) { timer.Once(flight, () => { if (victim != null && !victim.IsDestroyed && !victim.IsDead() && ChaserAlive) hit(); }); return; }
-            FlyNail(muzzle, vel, victim, low, hit, 0f);
+            // m0j: it has to work like a player's gun. No guaranteed or guessed hits: the nail is
+            // the same one your game draws, and it only does damage if it actually runs into a
+            // player's body collider on the way.
+            FlyNail(muzzle, vel, victim, onHit, 0f);
         }
 
         #region Hunt (m0j: "have a bot chase me with a nail gun ... see if I can do better than the bot")
